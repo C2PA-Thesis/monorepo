@@ -1,0 +1,34 @@
+name: c2pa pipeline
+
+on:
+  push:
+    paths: ['c2pa/**', '.github/workflows/c2pa-pipeline.yml']
+  pull_request:
+    paths: ['c2pa/**', '.github/workflows/c2pa-pipeline.yml']
+
+jobs:
+  sign-and-verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup toolchain and test certificates
+        working-directory: c2pa
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          C2PA_BIN_DIR: ${{ github.workspace }}/bin
+        run: ./scripts/setup.sh
+
+      - name: Sign, read back, and assert the custom assertion survived
+        working-directory: c2pa
+        env:
+          C2PA_BIN_DIR: ${{ github.workspace }}/bin
+        run: ./scripts/run.sh
+
+      - name: Upload signed artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: signed-image
+          path: c2pa/out/
+          if-no-files-found: warn

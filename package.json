@@ -1,0 +1,9 @@
+{
+  "name": "c2pa-thesis-monorepo",
+  "private": true,
+  "description": "Herramientas de repo. El codigo de la tesis vive en las carpetas por componente.",
+  "devDependencies": {
+    "@commitlint/cli": "^19.5.0",
+    "@commitlint/config-conventional": "^19.5.0"
+  }
+}
