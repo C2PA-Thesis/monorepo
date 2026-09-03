@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.utdt.edu/td8/zkloc/v1/assertion.schema.json",
+  "title": "edu.utdt.td8.zkloc assertion",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "receipt",
+    "region",
+    "location_proof",
+    "image_proof",
+    "binding"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "receipt": { "$ref": "receipt.schema.json" },
+    "region": { "$ref": "region.schema.json" },
+    "location_proof": { "$ref": "pi_loc.schema.json" },
+    "image_proof": { "$ref": "pi_img-bundle.schema.json" },
+    "binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "device_asserted_time"],
+      "properties": {
+        "kind": { "const": "device-signed-public-input-pair" },
+        "device_asserted_time": { "const": true }
+      }
+    }
+  }
+}

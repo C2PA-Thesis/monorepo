@@ -1,0 +1,86 @@
+name: binding pipeline
+
+on:
+  push:
+    paths:
+      - 'pipeline/**'
+      - 'fixtures/**'
+      - 'editproof/**'
+      - 'locproof/**'
+      - 'c2pa/**'
+      - '.gitmodules'
+      - '.github/workflows/binding-pipeline.yml'
+  pull_request:
+    paths:
+      - 'pipeline/**'
+      - 'fixtures/**'
+      - 'editproof/**'
+      - 'locproof/**'
+      - 'c2pa/**'
+      - '.gitmodules'
+      - '.github/workflows/binding-pipeline.yml'
+  workflow_dispatch:
+
+jobs:
+  schema-unit-and-negative-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: pipeline/requirements.txt
+
+      - name: Install pinned Python dependencies
+        run: python -m pip install --disable-pip-version-check -r pipeline/requirements.txt
+
+      - name: Check Python and shell entrypoints
+        run: |
+          python -m compileall -q pipeline
+          bash -n pipeline/setup.sh pipeline/run.sh c2pa/scripts/setup.sh c2pa/scripts/run.sh
+
+      - name: Run schema, unit, and negative packaged-flow tests
+        env:
+          PYTHONPATH: pipeline
+        run: python -m unittest discover -s pipeline/tests -t pipeline -v
+
+  full-proof-and-c2pa-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+          cache-dependency-path: locproof/go.sum
+
+      - uses: dtolnay/rust-toolchain@nightly
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: editproof/hyperveritas_impl
+
+      - name: Run real positive and negative proof and C2PA flows
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          C2PA_BIN_DIR: ${{ github.workspace }}/bin
+        run: ./pipeline/run.sh
+
+      - name: Upload proof and C2PA evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: binding-pipeline-output
+          path: |
+            pipeline/out/
+            pipeline/generated/tool-versions.json
+          if-no-files-found: warn

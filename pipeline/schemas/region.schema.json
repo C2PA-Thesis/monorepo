@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.utdt.edu/td8/zkloc/v1/region.schema.json",
+  "title": "Canonical public H3 region",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "scheme", "cell", "resolution", "face", "i", "j", "k"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "scheme": { "const": "h3" },
+    "cell": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{15}$"
+    },
+    "resolution": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 15
+    },
+    "face": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 19
+    },
+    "i": { "type": "integer" },
+    "j": { "type": "integer" },
+    "k": { "type": "integer" }
+  }
+}

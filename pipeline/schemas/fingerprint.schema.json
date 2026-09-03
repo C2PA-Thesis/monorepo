@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.utdt.edu/td8/zkloc/v1/fingerprint.schema.json",
+  "title": "HyperVerITAS image fingerprint",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "algorithm",
+    "field",
+    "matrix",
+    "original",
+    "channels"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "algorithm": { "const": "hyperveritas-ajtai-chacha8-v1" },
+    "field": { "const": "bls12-381-scalar" },
+    "matrix": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rows", "row_seed"],
+      "properties": {
+        "rows": { "const": 128 },
+        "row_seed": { "const": "ChaCha8Rng::seed_from_u64(row)" }
+      }
+    },
+    "original": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rows", "cols"],
+      "properties": {
+        "rows": { "type": "integer", "minimum": 1 },
+        "cols": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "channels": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["R", "G", "B"],
+      "properties": {
+        "R": { "$ref": "#/$defs/channel" },
+        "G": { "$ref": "#/$defs/channel" },
+        "B": { "$ref": "#/$defs/channel" }
+      }
+    }
+  },
+  "$defs": {
+    "channel": {
+      "type": "array",
+      "minItems": 128,
+      "maxItems": 128,
+      "items": { "$ref": "#/$defs/field_element" }
+    },
+    "field_element": {
+      "type": "string",
+      "pattern": "^0x[0-9a-f]{64}$"
+    }
+  }
+}
