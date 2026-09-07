@@ -50,9 +50,15 @@ non-disclosure by the published artifact, not secrecy of the source tree.
 
 ## Commands
 
-The run script executes these interfaces:
+After setup, these commands reproduce the individual stages from the repository
+root. The signing environment is needed by `package.py`; `run.sh` sets it
+automatically:
 
 ```bash
+export PATH="${C2PA_BIN_DIR:-$HOME/.local/bin}:$PATH"
+export C2PA_PRIVATE_KEY="$(cat c2pa/certs/es256_private.key)"
+export C2PA_SIGN_CERT="$(cat c2pa/certs/es256_certs.pem)"
+
 pipeline/.venv/bin/python pipeline/capture.py fixtures/generated/demo-input.jpg \
   --lat -34.5478 --lon -58.4462 \
   --device-key fixtures/generated/device-private.pem \
@@ -184,8 +190,11 @@ runs the same positive and negative entrypoint.
 
 ## Measurements
 
-The run writes wall timings to `pipeline/out/timings.tsv` and prints sizes for
-the PST proof, Groth16 proof, C2PA manifest store, and signed PNG.
+The run writes command wall timings to `pipeline/out/timings.tsv`, including
+the complete reader-side verifier, and prints sizes for the PST proof,
+Groth16 proof, C2PA manifest store, and signed PNG. The component verifier
+measurements below were collected separately from the same artifacts. The
+30-run Groth16 microbenchmark is historical data; `run.sh` does not repeat it.
 
 | Measurement | Result |
 | --- | --- |
@@ -205,7 +214,8 @@ the PST proof, Groth16 proof, C2PA manifest store, and signed PNG.
 | C2PA manifest store | 205,776 bytes |
 | Final signed PNG | 317,491 bytes |
 
-These results came from a real `pipeline/run.sh` on macOS 26.6.2 arm64. The
+These results came from a real `pipeline/run.sh` and separate verifier
+measurements on 2026-09-02, on macOS 26.6.2 arm64. The
 run used Python 3.9.6, Pillow 11.3.0, cryptography 45.0.6, jsonschema 4.25.1,
 h3 4.3.1, rustc 1.100.0-nightly (2026-09-01), Go 1.26.5, c2patool 0.27.16,
 hv 0.1.0, and zkloc-poc 0.1.0. It built directly from pinned submodule commits
@@ -236,6 +246,14 @@ cached and are not included in per-capture proof sizes.
 - Only the PST HyperVerITAS variant and Groth16 ZKLP variant are packaged.
 - The exact coordinates remain in the ignored prover secrets. The H3 cell,
   fingerprint, envelope, dimensions, device key ID, and capture time are public.
+- The public fingerprint is deterministic and permits candidate-image matching.
+  Omitting the original image and coordinates from the published asset is not
+  evidence of end-to-end zero knowledge for the pinned proof implementations.
+- The pinned HyperVerITAS PST implementation serializes unmasked evaluations
+  of the original-image polynomials in its proof. The full image is not
+  attached, but these values disclose additional information about its pixels.
+  Hiding commitments and zero-knowledge subprotocols need separate validation
+  before the complete artifact can be described as zero knowledge.
 - A valid proof says that the witness satisfies the implemented relations. It
   does not establish that a physical GPS sensor was honest.
 

@@ -23,11 +23,12 @@ to the secret coordinates. The measured row establishes honest-prover behavior
 and composition wiring only.
 
 The recursion row is deliberately not assigned a fabricated total. The
-[ZKLP paper, Appendix B](https://eprint.iacr.org/2024/1842.pdf) reports an
-emulated ECDSA verification at approximately `4 * 10^6` constraints. That is a
-cited cost for one emulated verification task, not a measurement or estimate
-for recursively verifying both PST and Groth16. The current composition would
-also need both pairing-based verifier stacks inside an outer relation.
+[ZKLP paper, Appendix C(ii), page 19](https://arxiv.org/pdf/2404.14983v2)
+states: "it requires 4·10⁶ constraints for in-circuit emulation over the circuit
+unfriendly curve secp256k1 in gnark." This concerns authenticated GNSS signals.
+It is a cited cost for emulated secp256k1 ECDSA, not this PoC's P-256 receipt
+check or an estimate for recursively verifying PST and Groth16. The current
+composition would need both pairing-based verifier stacks inside an outer relation.
 
 The [HyperVerITAS paper, Section 5](https://crysp.petsymposium.org/popets/2026/popets-2026-0036.php)
 reports: "our proof sizes for HyperVerITAS PST are between 49-55KB". That cited
@@ -36,9 +37,13 @@ is not recorded as a measurement of this 2^19 PoC.
 
 ## Measurement boundary
 
-`pipeline/run.sh` records component prover and verifier wall times and artifact
-sizes. The signed-pair row above comes from a real run with both fork binaries,
-real proof parameters, c2patool signing, and verification of the published PNG.
-It ran on macOS 26.6.2 arm64. The signature medians use 100 in-process runs; the
-Groth16 verifier median uses 30 subprocess runs. Stubbed unit tests are not
-measurement evidence.
+`pipeline/run.sh` records component prover command wall times, the complete
+reader verifier wall time, receipt microbenchmarks, and artifact sizes. The
+individual proof-verifier timings in the table were collected separately;
+the runner captures and discards those subprocess outputs.
+
+The signed-pair row comes from the 2026-09-02 run on macOS 26.6.2 arm64 with
+both fork binaries, real proof parameters, c2patool signing, and verification of
+the published PNG. Signature medians use 100 in-process runs. The historical
+Groth16 verifier median uses 30 subprocess runs, which the committed runner
+does not repeat. Stubbed unit tests are not measurement evidence.
