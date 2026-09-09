@@ -43,6 +43,43 @@ To reuse the cached setup:
 PIPELINE_SKIP_SETUP=1 ./pipeline/run.sh
 ```
 
+The default image is the C2PA SDK sample `cli/sample/image.jpg` from
+`contentauth/c2pa-rs` on GitHub. Setup downloads it to
+`c2pa/fixtures/image.jpg` and copies it to `fixtures/generated/demo-input.jpg`.
+To select your own photo, use:
+
+```bash
+DEMO_PHOTO="/absolute/path/my photo.jpg" PIPELINE_SKIP_SETUP=1 ./pipeline/run.sh
+```
+
+The display prints the exact selected path before setup. It shows the source
+dimensions and a terminal preview, then previews the prepared original and
+the crop. The coordinates remain the fixed demo inputs; they do not come
+from the photo. Each run replaces `pipeline/out/` after input checks pass.
+Keep your input photo outside that directory.
+
+`run.sh` launches `demo.py`, which explains eight numbered stages in simple
+English. The progress bar counts stages. The spinner shows elapsed time for
+the current command; it does not estimate proof completion. The image prover
+can take several minutes and does not report its internal phases.
+
+```bash
+./pipeline/run.sh --plain    # Static text, without colors or animation
+./pipeline/run.sh --verbose  # Also show exact commands and raw tool output
+```
+
+Redirected output and CI logs use static text with a heartbeat every 15
+seconds during long commands. `NO_COLOR=1` disables colors. Terminals that
+support colors show a small color preview; other terminals show an ASCII
+preview. Redirected output shows image paths and dimensions.
+
+Each run saves exact commands and full tool output in
+`pipeline/generated/logs/<UTC-time>-<process-id>/`. These logs survive the
+next run. A failed stage shows the last tool messages and its log path, then
+stops with a nonzero exit. Ctrl+C stops the active command and its child
+processes. Add `PIPELINE_EXPLAIN=1` to individual Python commands below to
+enable their progress messages; their default output stays unchanged.
+
 The public demo point is latitude `-34.5478`, longitude `-58.4462`, near
 Universidad Torcuato Di Tella in Buenos Aires. Its resolution-7 H3 cell is
 `87c2e3020ffffff`. These coordinates are committed test data. The demo tests
@@ -166,6 +203,8 @@ They validate every schema, validate the tracked C2PA example, and exercise the
 packaging and verification logic for the named negative cases. Those tests use
 stubbed c2patool, HyperVerITAS, and ZKLP process boundaries. They test binding
 and failure routing, but they do not establish proof-system or C2PA integration.
+Runner tests also exercise log capture, child-process failures and cancellation,
+image selection, and the static display with small local subprocesses.
 
 After the valid proof run, `pipeline/run.sh` invokes
 `pipeline/integration_negatives.py`. This real integration runner reuses the

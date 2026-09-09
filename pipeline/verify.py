@@ -12,6 +12,7 @@ from typing import Any, Dict
 from lib.c2pa import assertion_from_manifest, read_manifest
 from lib.contracts import load_json, validate, write_json
 from lib.images import CROP_SIZE, png_to_hv_json
+from lib.presentation import announce
 from lib.proofs import public_region, unpack_image_proof_bundle
 from lib.receipt import load_public_key, verify_receipt
 
@@ -136,6 +137,7 @@ def verify_asset(
     hv_params: Path,
     zkloc_vk: Path,
 ) -> None:
+    announce("Read the C2PA manifest from the signed PNG and verify its signature and file integrity.")
     manifest = read_manifest(signed_asset)
     if manifest.get("validation_state") != "Valid":
         raise ValueError("C2PA validation_state is not Valid")
@@ -143,7 +145,9 @@ def verify_asset(
     validate(assertion, "assertion")
     requested_region = load_json(region_path)
 
+    announce("C2PA is Valid. Check 1: verify the receipt signature with the trusted device public key.")
     check_device(assertion["receipt"], device_public_key_path)
+    announce("Check 1 passed. Check 2: decode the published pixels and verify the HyperVerITAS crop proof.")
     with tempfile.TemporaryDirectory(prefix="zkloc-verify-") as temporary:
         temporary_root = Path(temporary)
         check_image(
@@ -153,6 +157,7 @@ def verify_asset(
             hv_params,
             temporary_root,
         )
+        announce("Check 2 passed. Check 3: verify the ZKLP proof against the receipt envelope and requested region.")
         check_location(
             assertion["receipt"],
             assertion["region"],
@@ -161,6 +166,7 @@ def verify_asset(
             zkloc_vk,
             temporary_root,
         )
+        announce("Check 3 passed. All reader checks accepted this signed PNG.")
 
 
 def parse_args() -> argparse.Namespace:

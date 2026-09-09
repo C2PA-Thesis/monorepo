@@ -63,8 +63,15 @@ coordinates in Buenos Aires and resolution-7 H3 cell `87c2e3020ffffff`.
 `DEMO_PHOTO=/absolute/path/photo.jpg ./pipeline/run.sh` changes the input photo;
 it does not read that photo's GPS metadata or attest its real capture location.
 
-A successful run exits zero, prints `check 1`, `check 2`, `check 3`, reports
-the expected negative-case failures, and prints timings and artifact sizes.
+The guided display shows the selected image path and source, previews the
+photo and crop in your terminal, and explains all eight stages as they run.
+It shows elapsed time during long commands, each reader check, and the
+expected rejection for each negative test. A successful run exits zero and
+ends with `8/8 ALL DEMO STAGES PASSED`, timings, and artifact sizes.
+
+Use `./pipeline/run.sh --plain` for static text, or add `--verbose` to see
+the exact commands and raw tool output. Redirected output uses static text
+automatically. Full command logs are saved for every run.
 
 | Output | What to inspect |
 | --- | --- |
@@ -73,6 +80,7 @@ the expected negative-case failures, and prints timings and artifact sizes.
 | `pipeline/out/negative/results.json` | Expected and observed failure for each negative case |
 | `pipeline/out/timings.tsv` | Command wall times, including the complete reader verifier |
 | `pipeline/generated/tool-versions.json` | Tool versions recorded during setup |
+| `pipeline/generated/logs/<run-id>/` | Exact commands and complete output, including failed stages |
 
 The original image, coordinates, and salt remain in the local ignored output
 directories. Share the signed PNG for the demo, rather than the whole output
@@ -89,7 +97,7 @@ directory, which also contains private prover inputs.
 | [fixtures](fixtures/README.md) | Public demo-region configuration and generated device identity |
 
 For review, start with the [composition decision](pipeline/COMPOSITION-COMPARISON.md),
-then read [the runner](pipeline/run.sh), [the receipt](pipeline/lib/receipt.py),
+then read [the stage plan](pipeline/lib/workflow.py), [the CLI runner](pipeline/demo.py), [the receipt](pipeline/lib/receipt.py),
 and [the verifier](pipeline/verify.py). The component submodules pin the
 implementations reviewed in [HyperVerITAS PR #1](https://github.com/C2PA-Thesis/HyperVerITAS/pull/1)
 and [zk-Location PR #1](https://github.com/C2PA-Thesis/zk-Location/pull/1).

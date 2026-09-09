@@ -9,6 +9,7 @@ from pathlib import Path
 
 from lib.contracts import load_json, validate, write_json
 from lib.images import canonicalize_capture
+from lib.presentation import announce
 from lib.receipt import create_receipt, load_private_key, normalize_captured_at, utc_now
 
 
@@ -47,12 +48,15 @@ def capture(
     envelope_path = out_dir / "envelope.json"
     secrets_path = out_dir / "secrets.json"
 
+    announce("Read {}. Convert to RGB and resize to 1024 x 512 pixels.".format(photo))
     canonicalize_capture(photo, original_png, original_json)
+    announce("Save the original PNG and pixel JSON. Run HyperVerITAS to compute the image fingerprint.")
     subprocess.run(
         [hv_bin(), "hash", str(original_json), "--out", str(fingerprint_path)],
         check=True,
     )
 
+    announce("Image fingerprint complete. Create a fresh random salt for the location envelope.")
     salt = fresh_salt()
     normalized_captured_at = normalize_captured_at(captured_at)
     private_inputs = {
@@ -67,6 +71,7 @@ def capture(
     write_json(secrets_path, private_inputs)
     secrets_path.chmod(0o600)
 
+    announce("Save private inputs in secrets.json. Run ZKLP MiMC on the coordinates and salt.")
     subprocess.run(
         [
             zkloc_bin(),
@@ -90,6 +95,7 @@ def capture(
     if fingerprint["original"] != {"rows": 1024, "cols": 512}:
         raise ValueError("HyperVerITAS fingerprint has the wrong image dimensions")
 
+    announce("Location envelope complete. Sign both public values, dimensions, and capture time with the demo device key.")
     receipt = create_receipt(
         fingerprint,
         envelope,
@@ -97,6 +103,7 @@ def capture(
         load_private_key(device_key_path),
     )
     write_json(out_dir / "receipt.json", receipt)
+    announce("Save receipt.json. The receipt contains public evidence, not the private salt or raw coordinates.")
 
 
 def parse_args() -> argparse.Namespace:

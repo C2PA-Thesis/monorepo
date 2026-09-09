@@ -12,6 +12,7 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec, utils
 
 from lib.contracts import canonical_json, load_json, write_json
+from lib.presentation import announce
 from lib.receipt import load_public_key, signing_payload, verify_receipt
 
 
@@ -59,6 +60,10 @@ def main() -> int:
         ),
     }
     write_json(args.out, result)
+    announce("Median signature check: {:.3f} ms. Median complete receipt check: {:.3f} ms.".format(
+        result["signature_only_median_seconds"] * 1000,
+        result["complete_receipt_check_median_seconds"] * 1000,
+    ))
     print(
         "device signature median: {:.6f} seconds".format(
             result["signature_only_median_seconds"]

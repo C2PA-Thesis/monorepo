@@ -10,6 +10,7 @@ echo "==> c2patool ${C2PATOOL_VERSION}"
 if command -v c2patool >/dev/null 2>&1 && c2patool --version 2>/dev/null | grep -q "${C2PATOOL_VERSION#v}"; then
   echo "    already installed: $(c2patool --version)"
 else
+  echo "==> Download c2patool ${C2PATOOL_VERSION} from GitHub repository $REPO"
   mkdir -p "$BIN_DIR"
   case "$(uname -s)" in
     Darwin) ASSET="c2patool-${C2PATOOL_VERSION}-universal-apple-darwin.zip" ;;
@@ -32,9 +33,11 @@ echo "==> C2PA test certificates"
 # SDK sample certs. Public, not a trust chain, not committed.
 mkdir -p "$ROOT/certs" "$ROOT/fixtures"
 for f in es256_certs.pem es256_private.key trust_anchors.pem; do
+  echo "==> Download the public SDK test file cli/sample/$f from $REPO to $ROOT/certs/$f"
   gh api "repos/$REPO/contents/cli/sample/$f" --jq '.content' | base64 -d > "$ROOT/certs/$f"
 done
 chmod 600 "$ROOT/certs/es256_private.key"
+echo "==> Download the SDK sample photo cli/sample/image.jpg from $REPO to $ROOT/fixtures/image.jpg"
 gh api "repos/$REPO/contents/cli/sample/image.jpg" --jq '.content' | base64 -d > "$ROOT/fixtures/image.jpg"
 
 echo "==> setup complete"

@@ -10,6 +10,7 @@ from PIL import Image
 from lib.c2pa import ASSERTION_LABEL, manifest_store_info, sign_asset
 from lib.contracts import load_json, validate, write_json
 from lib.images import CROP_SIZE
+from lib.presentation import announce
 from lib.proofs import build_image_proof_bundle, public_region
 
 
@@ -67,10 +68,12 @@ def package_asset(
     edited_path: Path,
     output_path: Path,
 ) -> None:
+    announce("Read the edited PNG and verify its 512 x 512 dimensions.")
     with Image.open(edited_path) as image:
         if image.format != "PNG" or image.size != CROP_SIZE:
             raise ValueError("edited asset must be a 512x512 PNG")
 
+    announce("Read the receipt and both proofs. Verify their file checksums, envelope, and region before packaging.")
     assertion = build_assertion(
         load_json(receipt_path),
         load_json(region_path),
@@ -83,7 +86,9 @@ def package_asset(
     report_path = output_path.parent / "c2patool-sign.txt"
     info_path = output_path.parent / "manifest-store.txt"
     write_json(manifest_path, manifest)
+    announce("Save manifest.json with edu.utdt.td8.zkloc. Use c2patool to sign the published PNG.")
     sign_asset(edited_path, manifest_path, output_path, report_path)
+    announce("The signed PNG is ready. Read its C2PA manifest-store size.")
     info_path.write_text(manifest_store_info(output_path), encoding="utf-8")
 
 

@@ -25,7 +25,10 @@ done
 
 echo "==> Python dependencies"
 if [[ ! -x "$VENV/bin/python" ]]; then
+  echo "==> Create Python environment: $VENV"
   "$PYTHON_BIN" -m venv "$VENV"
+else
+  echo "==> Reuse Python environment: $VENV"
 fi
 "$VENV/bin/python" -m pip install --disable-pip-version-check -r "$PIPELINE/requirements.txt"
 
@@ -39,6 +42,7 @@ if [[ ! -f "$ROOT/.gitmodules" ]]; then
 fi
 
 echo "==> proof submodules"
+echo "==> Fetch the exact HyperVerITAS and ZKLP revisions pinned by this branch"
 git -C "$ROOT" submodule update --init --recursive -- editproof locproof
 
 echo "==> HyperVerITAS release CLI"
@@ -60,20 +64,30 @@ mkdir -p "$ROOT/fixtures/generated"
 
 echo "==> cached proof parameters"
 if [[ ! -f "$GENERATED/hv-pst/metadata.json" ]]; then
+  echo "==> Create PST test parameters: $GENERATED/hv-pst"
   "$HV_BIN" setup-pst --size 19 --out "$GENERATED/hv-pst"
+else
+  echo "==> Reuse PST test parameters: $GENERATED/hv-pst"
 fi
 if [[ ! -f "$GENERATED/zkloc-groth16/metadata.json" ]]; then
+  echo "==> Create Groth16 test parameters: $GENERATED/zkloc-groth16"
   "$ZKLOC_BIN" setup --out "$GENERATED/zkloc-groth16"
+else
+  echo "==> Reuse Groth16 test parameters: $GENERATED/zkloc-groth16"
 fi
 
 echo "==> separate demo device identity"
 DEVICE_PRIVATE="$ROOT/fixtures/generated/device-private.pem"
 DEVICE_PUBLIC="$ROOT/fixtures/generated/device-public.pem"
 if [[ ! -f "$DEVICE_PRIVATE" || ! -f "$DEVICE_PUBLIC" ]]; then
+  echo "==> Create a new P-256 demo device key pair in fixtures/generated"
   "$VENV/bin/python" "$PIPELINE/generate_device_key.py" \
     --private "$DEVICE_PRIVATE" \
     --public "$DEVICE_PUBLIC"
+else
+  echo "==> Reuse the existing demo device key pair in fixtures/generated"
 fi
+echo "==> Copy the SDK sample photo: $ROOT/c2pa/fixtures/image.jpg -> $ROOT/fixtures/generated/demo-input.jpg"
 cp "$ROOT/c2pa/fixtures/image.jpg" "$ROOT/fixtures/generated/demo-input.jpg"
 
 echo "==> exact tool versions"

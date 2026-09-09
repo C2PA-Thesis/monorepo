@@ -83,4 +83,5 @@ jobs:
           path: |
             pipeline/out/
             pipeline/generated/tool-versions.json
+            pipeline/generated/logs/
           if-no-files-found: warn
