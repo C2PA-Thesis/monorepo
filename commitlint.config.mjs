@@ -11,6 +11,7 @@ export default {
         'hyperveritas',
         'binding',
         'pipeline',
+        'web',
         'fixtures',
         'editproof',
         'locproof',

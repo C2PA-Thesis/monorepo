@@ -130,15 +130,17 @@ def canonical_neighbor(region: Dict[str, Any], out_path: Path) -> Dict[str, Any]
     neighbors = sorted(set(h3.grid_disk(region["cell"], 1)) - {region["cell"]})
     if not neighbors:
         raise RuntimeError("H3 did not return a neighboring cell")
-    subprocess.run(
-        [zkloc_bin(), "region", "--cell", neighbors[0], "--out", str(out_path)],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    neighbor = load_json(out_path)
-    validate(neighbor, "region")
-    return neighbor
+    for cell in neighbors:
+        completed = subprocess.run(
+            [zkloc_bin(), "region", "--cell", cell, "--out", str(out_path)],
+            capture_output=True,
+            text=True,
+        )
+        if completed.returncode == 0:
+            neighbor = load_json(out_path)
+            validate(neighbor, "region")
+            return neighbor
+    raise RuntimeError("No neighboring H3 cell is supported by this PoC")
 
 
 def run(args: argparse.Namespace) -> Dict[str, Any]:
@@ -275,10 +277,11 @@ def run(args: argparse.Namespace) -> Dict[str, Any]:
 
     announce("Test 5/6: capture the same photo again with a fresh salt, then swap its receipt into the first bundle.")
     second_capture_dir = args.out / "second-capture"
+    original_secrets = load_json(args.valid / "capture" / "secrets.json")
     capture(
         args.photo,
-        -34.5478,
-        -58.4462,
+        original_secrets["latitude_degrees"],
+        original_secrets["longitude_degrees"],
         args.device_private_key,
         utc_now(),
         second_capture_dir,

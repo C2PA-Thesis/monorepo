@@ -5,3 +5,6 @@ pipeline/.venv/
 pipeline/generated/
 pipeline/out/
 fixtures/generated/
+web/generated/
+web/dist/
+web/*.tsbuildinfo

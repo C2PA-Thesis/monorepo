@@ -3,7 +3,7 @@
 The thesis aims to let a reader verify that an edited photograph derives from
 a trusted capture inside a stated region, while keeping the original image
 and exact coordinates private. This repository contains the first command
-line integration of that design.
+line integration and a local visual lab for that design.
 
 The current PoC connects HyperVerITAS image-edit proofs, ZKLP location proofs,
 and a C2PA manifest. Its location circuit has a known soundness gap, and the
@@ -40,7 +40,19 @@ The device signature connects two independent proof statements. Neither proof
 verifies the other, and they do not share a field commitment. The current run
 script executes the two provers sequentially.
 
-## Run it
+## Open the visual lab
+
+```bash
+./web/run.sh
+```
+
+Open **http://127.0.0.1:8042** to upload a photograph, choose a simulated map
+location, inspect the fixed crop, and run the real pipeline. The lab includes
+live stage progress, actual pixel and fingerprint views, a decoded manifest
+inspector, reader verification, and interactive tampering tests. Node.js 22 is
+required in addition to the pipeline tools below. See [the web guide](web/README.md).
+
+## Run the CLI
 
 Requirements: Git, Go, a C compiler for the H3 dependency, Rust nightly,
 Python 3, and an authenticated GitHub CLI. Run commands from this repository's
@@ -90,6 +102,7 @@ directory, which also contains private prover inputs.
 
 | Folder | Responsibility |
 | --- | --- |
+| [web](web/README.md) | Local visual lab, isolated proof jobs, map selection, pixel explorer, evidence, and tamper controls |
 | [pipeline](pipeline/README.md) | Capture, signed receipt, proof orchestration, packaging, verification, schemas, and tests |
 | [editproof](editproof/README.md) | Pinned HyperVerITAS fork with persistent PST parameters and file-based proof commands |
 | [locproof](locproof/README.md) | Pinned ZKLP fork with a salted envelope, global H3 region identity, and file-based Groth16 commands |
@@ -97,7 +110,7 @@ directory, which also contains private prover inputs.
 | [fixtures](fixtures/README.md) | Public demo-region configuration and generated device identity |
 
 For review, start with the [composition decision](pipeline/COMPOSITION-COMPARISON.md),
-then read [the stage plan](pipeline/lib/workflow.py), [the CLI runner](pipeline/demo.py), [the receipt](pipeline/lib/receipt.py),
+then read [the shared workflow](pipeline/lib/workflow.py), [the CLI runner](pipeline/demo.py), [the receipt](pipeline/lib/receipt.py),
 and [the verifier](pipeline/verify.py). The component submodules pin the
 implementations reviewed in [HyperVerITAS PR #1](https://github.com/C2PA-Thesis/HyperVerITAS/pull/1)
 and [zk-Location PR #1](https://github.com/C2PA-Thesis/zk-Location/pull/1).
@@ -115,7 +128,7 @@ and [zk-Location PR #1](https://github.com/C2PA-Thesis/zk-Location/pull/1).
 - Device capture, GPS, and time are simulated and trusted. Both proof setups
   and the C2PA signing identity are for local testing.
 - Only the fixed left-half crop is implemented. Blur, other edits, arbitrary
-  image sizes, hardware attestation, and a reader-facing app remain future work.
+  image sizes, hardware attestation, and a standalone public reader remain future work.
 
 The [pipeline guide](pipeline/README.md) provides individual commands, fast
 tests, historical measurements, and the detailed limitations.

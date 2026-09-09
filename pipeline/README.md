@@ -22,6 +22,10 @@ the coordinates or replaced by fully constrained computation.
 
 ## One-command run
 
+The [visual lab](../web/README.md) runs the same eight stages with uploaded
+images and selected map locations. Both entry points use
+[`lib/workflow.py`](lib/workflow.py); web runs have isolated output directories.
+
 The repository needs the `editproof/` and `locproof/` submodules. Setup also
 requires Git, Go, a Rust nightly toolchain, Python 3, and an authenticated
 GitHub CLI for the pinned c2patool download.
