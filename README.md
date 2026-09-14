@@ -128,7 +128,10 @@ JSON object per line. Setup writes about 220 MB to `.provenance`, or to
 
 ## Reader checks
 
-They run in order and stop at the first rejection.
+The two proofs are verified separately, and they meet only in the receipt: the
+crop proof is checked against the signed fingerprint and the location proof
+against the signed envelope. The checks run in order and stop at the first
+rejection, and each line names the value it shares with the receipt.
 
 | Check | Rejects the file when | Exit status |
 | --- | --- | --- |
@@ -136,6 +139,26 @@ They run in order and stop at the first rejection.
 | Device receipt | the receipt is not signed by the trusted device key | 11 |
 | Crop proof | the file's pixels are not the left half of the image the receipt fingerprints | 12 |
 | Location proof | the proof does not verify for the receipt's envelope and the claimed cell | 13 |
+
+```text
+provenance verify
+  file   out/signed.png
+
+  ✓ C2PA manifest   valid, with one edu.utdt.td8.zkloc assertion
+  ✓ device receipt  device 3fb1…0ef1 signed fingerprint 61b9…42e9 and envelope 0x2865…fe26
+  ✓ crop proof      these pixels are the left half of the original with fingerprint 61b9…42e9
+  ✓ location proof  the coordinate in envelope 0x2865…fe26 is in cell 87c2e3020ffffff
+
+✓ accepted
+  these pixels are the left half of an original that device 3fb1…0ef1 signed,
+  together with a coordinate in cell 87c2e3020ffffff, at 2026-09-14T20:42:05Z (device time)
+  The cell holds for an honest location prover only; see Known limits in the README.
+```
+
+Short identifiers show the first and last four hex digits. The fingerprint's is
+the SHA-256 of its JSON and only names it on screen. Only when every check
+passes, `provenance verify --json` returns the joint statement as `claim`, with
+the device key id, capture time, fingerprint digest, envelope and cell in full.
 
 ## Attacks
 
@@ -188,6 +211,13 @@ the honest prover refuses a cell that does not contain the coordinate.
   anyone holding a candidate original can test it, and the PST proof carries
   unmasked evaluations of the original's channel polynomials (see
   `image_openings` in `crates/crop-proof/src/crop.rs`).
+- **Only the exact coordinate is hidden.** The file publishes the claimed cell,
+  the capture time and the device key id. The key id links every photo taken
+  with one device, so their cells and times can trace where the photographer
+  went. What the published half shows can also give the place away.
+- **The envelope's hiding is assumed, not analyzed.** It is MiMC over the
+  coordinate and a fresh 248-bit salt, added in the zk-Location fork. None of
+  [1], [2] or [3] analyzes it as a hiding commitment.
 - **Both setups are single-party.** Whoever runs `provenance setup` could keep
   the trapdoors and forge either proof.
 - **Capture is simulated.** The device key, coordinate and time are demo
