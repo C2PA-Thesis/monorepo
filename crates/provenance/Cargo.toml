@@ -1,0 +1,24 @@
+[package]
+name = "provenance"
+description = "Publish a photo with a device receipt, a crop proof and a location proof in its C2PA manifest, and verify it"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+base64 = "0.22"
+c2pa = { version = "0.90", default-features = false, features = ["file_io", "rust_native_crypto"] }
+clap = { version = "4", features = ["derive", "env"] }
+console = "0.15"
+crop-proof = { path = "../crop-proof" }
+hex.workspace = true
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
+indicatif = "0.17"
+p256 = { version = "0.13", features = ["ecdsa", "pem", "pkcs8"] }
+rand = "0.8"
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+time = { version = "0.3", features = ["formatting"] }

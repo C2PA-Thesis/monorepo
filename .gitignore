@@ -1,7 +1,4 @@
 node_modules/
-__pycache__/
-*.pyc
-pipeline/.venv/
-pipeline/generated/
-pipeline/out/
-fixtures/generated/
+target/
+.provenance/
+out/
