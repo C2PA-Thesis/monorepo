@@ -13,4 +13,4 @@ pub mod manifest;
 pub mod verify;
 mod workspace;
 
-pub use workspace::Workspace;
+pub use workspace::{Step, Workspace};

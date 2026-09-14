@@ -1,22 +1,32 @@
 use std::{
     cell::RefCell,
+    fmt::Display,
     path::{Path, PathBuf},
     process::ExitCode,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
-use anyhow::Result;
+use anyhow::{ensure, Result};
 use clap::{Parser, Subcommand};
 use console::style;
 use indicatif::{ProgressBar, ProgressStyle};
 use provenance::{
-    attack::{self, Outcome},
-    demo::{self, Event, DEMO_PLACE},
+    attack::{self, Outcome, ATTACKS},
+    demo::{self, Event, Stage, DEMO_PLACE},
     manifest,
     verify::{Check, Verdict},
-    Workspace,
+    Step, Workspace,
 };
 use serde::Serialize;
+
+const STAGES: [Stage; 6] = [
+    Stage::Capture,
+    Stage::Crop,
+    Stage::LocationProof,
+    Stage::CropProof,
+    Stage::Publish,
+    Stage::Verify,
+];
 
 #[derive(Parser)]
 #[command(
@@ -93,7 +103,7 @@ fn main() -> ExitCode {
     let cli = Cli::parse();
     let ui = Ui {
         json: cli.json,
-        spinner: RefCell::new(None),
+        running: RefCell::new(None),
     };
     match run(cli, &ui) {
         Ok(code) => code,
@@ -105,13 +115,17 @@ fn main() -> ExitCode {
 }
 
 fn run(cli: Cli, ui: &Ui) -> Result<ExitCode> {
-    let workspace = Workspace::new(cli.home);
+    let workspace = Workspace::new(&cli.home);
     match cli.command {
         Command::Setup => {
+            ui.header("setup", &[("home", shown(&cli.home))]);
             let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-            workspace.setup(&source, &mut |step| ui.step(step))?;
-            ui.finish_spinner();
-            ui.line(format!("{} ready", style("✓").green()));
+            workspace.setup(&source, &mut |name, step| ui.setup_step(name, step))?;
+            ui.line(format!(
+                "\n{} ready. Next: {}",
+                style("✓").green(),
+                style("provenance demo").bold()
+            ));
         }
         Command::Demo {
             photo,
@@ -121,28 +135,49 @@ fn run(cli: Cli, ui: &Ui) -> Result<ExitCode> {
         } => {
             let photo = photo.unwrap_or_else(|| workspace.sample_photo());
             let (at, cell, place) = match (at, cell) {
-                (Some(at), Some(cell)) => (at, cell, "the given coordinate"),
+                (Some((latitude, longitude)), Some(cell)) => (
+                    (latitude, longitude),
+                    cell,
+                    format!("{latitude}, {longitude}"),
+                ),
                 _ => (
                     (DEMO_PLACE.latitude, DEMO_PLACE.longitude),
                     DEMO_PLACE.cell.to_string(),
-                    DEMO_PLACE.name,
+                    format!(
+                        "{} ({}, {})",
+                        DEMO_PLACE.name, DEMO_PLACE.latitude, DEMO_PLACE.longitude
+                    ),
                 ),
             };
-            ui.line(format!(
-                "{} {} at {place}, cell {cell}",
-                style("demo").bold(),
-                photo.display()
-            ));
+            ui.header(
+                "demo",
+                &[
+                    ("photo", shown(&photo)),
+                    ("place", place),
+                    ("cell", cell.clone()),
+                    ("out", shown(&out)),
+                ],
+            );
+            let started = Instant::now();
             demo::run(&workspace, &photo, at, &cell, &out, &mut |event| {
                 ui.stage(event)
             })?;
+            let signed = shown(&out.join("signed.png"));
             ui.line(format!(
-                "\npublished {}",
-                style(out.join("signed.png").display()).bold()
+                "\n{} published {} in {:.0}s",
+                style("✓").green(),
+                style(&signed).bold(),
+                started.elapsed().as_secs_f64()
             ));
-            ui.note("the coordinate is a test input, and location proofs hold for an honest prover only (README)");
+            ui.line(format!(
+                "  next  provenance verify {signed}\n        provenance attack --run {}",
+                shown(&out)
+            ));
+            ui.note("\nThe coordinate is a test input. Location proofs hold for an honest prover only; see Known limits in the README.");
         }
         Command::Verify { file, cell } => {
+            ensure!(file.exists(), "{} does not exist", file.display());
+            ui.header("verify", &[("file", shown(&file))]);
             let verdict = workspace.verifier()?.verify(&file, cell.as_deref());
             ui.verdict(&verdict);
             if let Some(step) = &verdict.rejected {
@@ -150,28 +185,23 @@ fn run(cli: Cli, ui: &Ui) -> Result<ExitCode> {
             }
         }
         Command::Attack { run, only } => {
+            ui.header("attack", &[("run", shown(&run))]);
             let outcomes = attack::run(&workspace, &run, only.as_deref(), &mut |outcome| {
                 ui.attack(outcome)
             })?;
-            let unexpected = outcomes
+            let rejected = outcomes
                 .iter()
-                .filter(|outcome| !outcome.as_expected())
+                .filter(|outcome| outcome.as_expected())
                 .count();
-            if unexpected > 0 {
-                ui.line(
-                    style(format!(
-                        "{unexpected} of {} attacks were not rejected as expected",
-                        outcomes.len()
-                    ))
-                    .red(),
-                );
+            let summary = format!(
+                "{rejected} of {} rejected by the expected check",
+                plural(outcomes.len(), "attack")
+            );
+            if rejected < outcomes.len() {
+                ui.line(format!("\n{} {summary}", style("✗").red()));
                 return Ok(ExitCode::FAILURE);
             }
-            ui.line(format!(
-                "{} all {} attacks rejected by the expected check",
-                style("✓").green(),
-                outcomes.len()
-            ));
+            ui.line(format!("\n{} {summary}", style("✓").green()));
         }
         Command::Inspect { file } => {
             println!("{}", serde_json::to_string_pretty(&manifest::read(&file)?)?)
@@ -180,9 +210,26 @@ fn run(cli: Cli, ui: &Ui) -> Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
+/// Paths under the working directory are shown relative to it.
+fn shown(path: &Path) -> String {
+    std::env::current_dir()
+        .ok()
+        .and_then(|cwd| path.strip_prefix(cwd).ok())
+        .unwrap_or(path)
+        .display()
+        .to_string()
+}
+
+fn plural(count: usize, noun: &str) -> String {
+    match count {
+        1 => format!("{count} {noun}"),
+        _ => format!("{count} {noun}s"),
+    }
+}
+
 struct Ui {
     json: bool,
-    spinner: RefCell<Option<ProgressBar>>,
+    running: RefCell<Option<(ProgressBar, Instant)>>,
 }
 
 impl Ui {
@@ -193,7 +240,7 @@ impl Ui {
         );
     }
 
-    fn line(&self, text: impl std::fmt::Display) {
+    fn line(&self, text: impl Display) {
         if !self.json {
             println!("{text}");
         }
@@ -203,7 +250,15 @@ impl Ui {
         self.line(style(text).dim());
     }
 
-    fn start_spinner(&self, message: String) {
+    fn header(&self, command: &str, fields: &[(&str, String)]) {
+        self.line(style(format!("provenance {command}")).bold());
+        for (label, value) in fields {
+            self.line(format!("  {}  {value}", style(format!("{label:<5}")).dim()));
+        }
+        self.line("");
+    }
+
+    fn start(&self, message: String) {
         let spinner = ProgressBar::new_spinner()
             .with_style(
                 ProgressStyle::with_template("  {spinner:.cyan} {msg} {elapsed:.dim}")
@@ -211,22 +266,43 @@ impl Ui {
             )
             .with_message(message);
         spinner.enable_steady_tick(Duration::from_millis(100));
-        self.spinner.replace(Some(spinner));
+        self.running.replace(Some((spinner, Instant::now())));
     }
 
-    fn finish_spinner(&self) {
-        if let Some(spinner) = self.spinner.take() {
-            spinner.finish_and_clear();
+    /// Clears the spinner and returns how long it ran.
+    fn stop(&self) -> Duration {
+        match self.running.take() {
+            Some((spinner, started)) => {
+                spinner.finish_and_clear();
+                started.elapsed()
+            }
+            None => Duration::ZERO,
         }
     }
 
-    fn step(&self, text: &str) {
-        match self.json {
-            true => self.emit(&serde_json::json!({"event": "setup", "step": text})),
-            false => {
-                self.finish_spinner();
-                self.start_spinner(text.to_string());
+    fn done(&self, label: &str, seconds: f64, detail: &str) {
+        println!(
+            "  {} {label}  {}  {detail}",
+            style("✓").green(),
+            style(format!("{seconds:>5.1}s")).dim()
+        );
+    }
+
+    fn setup_step(&self, name: &str, step: Step) {
+        if self.json {
+            return self.emit(&serde_json::json!({"event": "setup", "step": name, "state": step}));
+        }
+        match step {
+            Step::Running => self.start(format!("{name:<34}")),
+            Step::Done => {
+                let seconds = self.stop().as_secs_f64();
+                self.done(&format!("{name:<34}"), seconds, "");
             }
+            Step::AlreadyPresent => println!(
+                "  {} {name:<34}  {}",
+                style("·").dim(),
+                style("already present").dim()
+            ),
         }
     }
 
@@ -234,20 +310,19 @@ impl Ui {
         if self.json {
             return self.emit(&event);
         }
+        let label = |stage: Stage| {
+            let number = STAGES.iter().position(|each| *each == stage).unwrap_or(0) + 1;
+            format!("{number}/{} {:<14}", STAGES.len(), stage.title())
+        };
         match event {
-            Event::Started { stage } => self.start_spinner(format!("{:<14}", stage.title())),
+            Event::Started { stage } => self.start(label(stage)),
             Event::Finished {
                 stage,
                 detail,
                 seconds,
             } => {
-                self.finish_spinner();
-                println!(
-                    "  {} {:<14} {detail} {}",
-                    style("✓").green(),
-                    stage.title(),
-                    style(format!("{seconds:.1}s")).dim()
-                );
+                self.stop();
+                self.done(&label(stage), seconds, &detail);
             }
         }
     }
@@ -268,10 +343,16 @@ impl Ui {
         }
         match &verdict.rejected {
             Some(step) => println!(
-                "\n{}",
-                style(format!("rejected by the {}", step.check.title())).red()
+                "\n{} rejected by the {} (exit {})",
+                style("✗").red(),
+                step.check.title(),
+                step.check.exit_code()
             ),
-            None => println!("\n{} accepted", style("✓").green()),
+            None => println!(
+                "\n{} accepted by all {} checks",
+                style("✓").green(),
+                Check::ALL.len()
+            ),
         }
     }
 
@@ -279,7 +360,7 @@ impl Ui {
         if self.json {
             return self.emit(outcome);
         }
-        let summary = attack::ATTACKS
+        let summary = ATTACKS
             .iter()
             .find(|attack| attack.name == outcome.attack)
             .map_or("", |attack| attack.summary);
@@ -291,18 +372,22 @@ impl Ui {
             Some(step) => (
                 style("✗").red(),
                 format!(
-                    "rejected by the {}, expected the {}",
+                    "rejected by the {}, not the {}",
                     step.check.title(),
                     outcome.expected.title()
                 ),
             ),
             None => (style("✗").red(), "accepted".to_string()),
         };
-        println!("  {mark} {:<22} {summary}: {result}", outcome.attack);
+        println!(
+            "  {mark} {:<21} {result:<31} {}",
+            outcome.attack,
+            style(summary).dim()
+        );
     }
 
     fn error(&self, error: &anyhow::Error) {
-        self.finish_spinner();
+        self.stop();
         match self.json {
             true => {
                 self.emit(&serde_json::json!({"event": "error", "message": format!("{error:#}")}))

@@ -6,6 +6,7 @@ use std::{
 
 use anyhow::{ensure, Context, Result};
 use crop_proof::VerifierParams;
+use serde::Serialize;
 
 use crate::{
     capture::{self, DeviceKey},
@@ -19,6 +20,14 @@ use crate::{
 /// than committed.
 const SAMPLES: &str =
     "https://raw.githubusercontent.com/contentauth/c2pa-rs/c2patool-v0.27.16/cli/sample";
+
+#[derive(Clone, Copy, Debug, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Step {
+    Running,
+    Done,
+    AlreadyPresent,
+}
 
 /// Local state: the built location prover, proof parameters, keys and samples.
 pub struct Workspace {
@@ -72,15 +81,16 @@ impl Workspace {
         })
     }
 
-    /// Prepares everything the demo needs from the repository at `source`,
-    /// skipping what already exists.
-    pub fn setup(&self, source: &Path, on_step: &mut dyn FnMut(&str)) -> Result<()> {
-        on_step("building location-proof");
-        run(Command::new("go")
-            .args(["build", "-o"])
-            .arg(self.home.join("bin/location-proof"))
-            .arg(".")
-            .current_dir(source.join("location-proof")))?;
+    /// Prepares everything the demo needs from the repository at `source`.
+    /// Steps whose output already exists are skipped.
+    pub fn setup(&self, source: &Path, on: &mut dyn FnMut(&str, Step)) -> Result<()> {
+        step(on, "build location-proof", false, || {
+            run(Command::new("go")
+                .args(["build", "-o"])
+                .arg(self.home.join("bin/location-proof"))
+                .arg(".")
+                .current_dir(source.join("location-proof")))
+        })?;
 
         for (file, sample) in [
             ("c2pa/es256_certs.pem", "es256_certs.pem"),
@@ -88,31 +98,55 @@ impl Workspace {
             ("sample.jpg", "image.jpg"),
         ] {
             let path = self.home.join(file);
-            if !path.exists() {
-                on_step(&format!("downloading the C2PA SDK sample {sample}"));
-                fs::create_dir_all(path.parent().expect("sample paths have a parent"))?;
-                run(Command::new("curl")
-                    .args(["-fsSL", "-o"])
-                    .arg(&path)
-                    .arg(format!("{SAMPLES}/{sample}")))?;
-            }
+            step(
+                on,
+                &format!("download sample {sample}"),
+                path.exists(),
+                || {
+                    fs::create_dir_all(path.parent().expect("sample paths have a parent"))?;
+                    run(Command::new("curl")
+                        .args(["-fsSL", "-o"])
+                        .arg(&path)
+                        .arg(format!("{SAMPLES}/{sample}")))
+                },
+            )?;
         }
 
-        if !self.home.join("device.pem").exists() {
-            on_step("generating the demo device key");
-            DeviceKey::generate().save(&self.home.join("device.pem"), &self.device_public_key())?;
-        }
+        let device = self.home.join("device.pem");
+        step(on, "generate the device key", device.exists(), || {
+            DeviceKey::generate().save(&device, &self.device_public_key())
+        })?;
         let tool = self.location_tool();
-        if !tool.is_set_up() {
-            on_step("running the Groth16 setup for location-proof");
-            tool.setup()?;
-        }
-        if !self.crop_params().join("metadata.json").exists() {
-            on_step("generating crop-proof parameters");
-            crop_proof::setup(&self.crop_params())?;
-        }
-        Ok(())
+        step(
+            on,
+            "Groth16 setup for location-proof",
+            tool.is_set_up(),
+            || tool.setup(),
+        )?;
+        let crop_params = self.crop_params();
+        step(
+            on,
+            "PST setup for crop-proof",
+            crop_params.join("metadata.json").exists(),
+            || crop_proof::setup(&crop_params),
+        )
     }
+}
+
+fn step(
+    on: &mut dyn FnMut(&str, Step),
+    name: &str,
+    already_present: bool,
+    work: impl FnOnce() -> Result<()>,
+) -> Result<()> {
+    if already_present {
+        on(name, Step::AlreadyPresent);
+        return Ok(());
+    }
+    on(name, Step::Running);
+    work().with_context(|| format!("{name} failed"))?;
+    on(name, Step::Done);
+    Ok(())
 }
 
 fn run(command: &mut Command) -> Result<()> {

@@ -111,7 +111,8 @@ impl Verifier {
                 let proof = BASE64
                     .decode(&assertion.image_proof)
                     .context("the crop proof is not base64")?;
-                crop_proof::verify(&self.crop_params, &published, &receipt.fingerprint, &proof)?;
+                crop_proof::verify(&self.crop_params, &published, &receipt.fingerprint, &proof)
+                    .context("the proof does not tie these pixels to the signed fingerprint")?;
                 Ok("the published pixels are the left half of the signed original".to_string())
             }),
             (Check::Location, &|| {
