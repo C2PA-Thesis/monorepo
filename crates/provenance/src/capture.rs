@@ -173,9 +173,10 @@ pub fn key_id(key: &VerifyingKey) -> Result<String> {
 
 /// First and last four hex digits, enough to tell keys apart on screen.
 pub fn short(id: &str) -> String {
-    match id.len() {
+    let (prefix, digits) = id.split_at(if id.starts_with("0x") { 2 } else { 0 });
+    match digits.len() {
         0..=8 => id.to_string(),
-        len => format!("{}…{}", &id[..4], &id[len - 4..]),
+        len => format!("{prefix}{}…{}", &digits[..4], &digits[len - 4..]),
     }
 }
 

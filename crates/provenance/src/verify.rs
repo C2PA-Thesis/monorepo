@@ -5,6 +5,7 @@ use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use crop_proof::VerifierParams;
 use p256::ecdsa::VerifyingKey;
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 
 use crate::{
     capture::{self, short},
@@ -51,11 +52,30 @@ pub struct Step {
     pub detail: String,
 }
 
+/// The joint statement an accepted file supports: these pixels are the left
+/// half of an original that `device` signed together with a coordinate in `cell`.
+/// The two proofs meet only in the receipt, through `fingerprint` and `envelope`.
+#[derive(Debug, Serialize)]
+pub struct Claim {
+    /// Key id of the device that signed the receipt.
+    pub device: String,
+    /// Asserted by the device, not by a trusted clock.
+    pub captured_at: String,
+    /// SHA-256 of the signed fingerprint's JSON. It only names the fingerprint on
+    /// screen; the crop proof checks the fingerprint itself.
+    pub fingerprint: String,
+    /// The signed envelope, which the location proof ties to the cell.
+    pub envelope: String,
+    pub cell: String,
+}
+
 #[derive(Debug, Default, Serialize)]
 pub struct Verdict {
     pub passed: Vec<Step>,
     /// The first check that failed; later checks do not run.
     pub rejected: Option<Step>,
+    /// Set only when every check passed.
+    pub claim: Option<Claim>,
 }
 
 impl Verdict {
@@ -96,14 +116,18 @@ impl Verifier {
             return verdict;
         };
         let receipt = &assertion.receipt;
+        let fingerprint = hex::encode(Sha256::digest(
+            serde_json::to_vec(&receipt.fingerprint).expect("a fingerprint serializes to JSON"),
+        ));
 
         let steps: [(Check, &dyn Fn() -> Result<String>); 3] = [
             (Check::Device, &|| {
                 receipt.verify(&self.device)?;
                 Ok(format!(
-                    "signed by device {} at {}",
+                    "device {} signed fingerprint {} and envelope {}",
                     short(&receipt.device),
-                    receipt.captured_at
+                    short(&fingerprint),
+                    short(&receipt.envelope)
                 ))
             }),
             (Check::Image, &|| {
@@ -113,7 +137,10 @@ impl Verifier {
                     .context("the crop proof is not base64")?;
                 crop_proof::verify(&self.crop_params, &published, &receipt.fingerprint, &proof)
                     .context("the proof does not tie these pixels to the signed fingerprint")?;
-                Ok("the published pixels are the left half of the signed original".to_string())
+                Ok(format!(
+                    "these pixels are the left half of the original with fingerprint {}",
+                    short(&fingerprint)
+                ))
             }),
             (Check::Location, &|| {
                 if let Some(cell) = cell {
@@ -128,14 +155,25 @@ impl Verifier {
                     &receipt.envelope,
                     &assertion.location_proof,
                 )?;
-                Ok(format!("the signed envelope is in cell {}", assertion.cell))
+                Ok(format!(
+                    "the coordinate in envelope {} is in cell {}",
+                    short(&receipt.envelope),
+                    assertion.cell
+                ))
             }),
         ];
         for (check, run) in steps {
             if verdict.check(check, || Ok(((), run()?))).is_none() {
-                break;
+                return verdict;
             }
         }
+        verdict.claim = Some(Claim {
+            device: receipt.device.clone(),
+            captured_at: receipt.captured_at.clone(),
+            fingerprint,
+            envelope: receipt.envelope.clone(),
+            cell: assertion.cell.clone(),
+        });
         verdict
     }
 }

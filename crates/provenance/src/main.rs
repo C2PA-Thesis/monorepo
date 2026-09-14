@@ -348,11 +348,21 @@ impl Ui {
                 step.check.title(),
                 step.check.exit_code()
             ),
-            None => println!(
-                "\n{} accepted by all {} checks",
-                style("✓").green(),
-                Check::ALL.len()
-            ),
+            None => {
+                println!("\n{} accepted", style("✓").green());
+                if let Some(claim) = &verdict.claim {
+                    println!(
+                        "  these pixels are the left half of an original that device {} signed,\n  together with a coordinate in cell {}, at {} (device time)",
+                        provenance::capture::short(&claim.device),
+                        claim.cell,
+                        claim.captured_at
+                    );
+                    println!(
+                        "{}",
+                        style("  The cell holds for an honest location prover only; see Known limits in the README.").dim()
+                    );
+                }
+            }
         }
     }
 
