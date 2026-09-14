@@ -3,7 +3,7 @@
   "claim_generator_info": [
     { "name": "td8-zkloc-pipeline", "version": "0.1.0" }
   ],
-  "title": "Captura de prueba con aserción ZKLoc (placeholder)",
+  "title": "Test capture with a placeholder ZKLoc assertion",
   "assertions": [
     {
       "label": "c2pa.actions",
@@ -15,7 +15,7 @@
       "label": "edu.utdt.td8.zkloc",
       "data": {
         "schema_version": "0.1.0-draft",
-        "status": "PLACEHOLDER: valores de relleno, sin criptografía real todavía",
+        "status": "PLACEHOLDER: filler values, no real cryptography yet",
         "commitment": {
           "alg": "TBD",
           "covers": ["pixels", "coordinate", "timestamp"],
@@ -36,7 +36,7 @@
           "proof": null
         },
         "binding": {
-          "claim": "ambas pruebas refieren al mismo commitment",
+          "claim": "both proofs refer to the same commitment",
           "checked_by_verifier": false
         }
       }
