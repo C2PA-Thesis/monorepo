@@ -1,121 +1,137 @@
 # C2PA private location attestation
 
-The thesis aims to let a reader verify that an edited photograph derives from
-a trusted capture inside a stated region, while keeping the original image
-and exact coordinates private. This repository contains the first command
-line integration of that design.
+Research prototype for thesis P27. A reader checks that a published photo is
+the left half of an original captured by a trusted device inside a stated H3
+cell. The original pixels and the exact coordinate are not published.
 
-The current PoC connects HyperVerITAS image-edit proofs, ZKLP location proofs,
-and a C2PA manifest. Its location circuit has a known soundness gap, and the
-integration tests do not establish end-to-end zero knowledge. Treat this as
-an executable research prototype.
+## How the proofs are bound
 
-## What the demo does
+At capture the device computes two public values and signs them together in a
+receipt:
 
-1. **Simulate capture.** Resize a supplied photograph to 1024 by 512 pixels,
-   compute its HyperVerITAS fingerprint, and commit to demo coordinates using
-   MiMC with a fresh salt. A local P-256 device key signs both public values,
-   the image dimensions, the capture time, and the device key ID.
-2. **Edit and generate proofs.** Keep the left half of the image as a 512 by
-   512 PNG. The Rust CLI generates the HyperVerITAS PST crop proof. The Go
-   CLI generates the ZKLP Groth16 proof for the declared H3 cell.
-3. **Package.** Put both proofs and the signed receipt inside the custom
-   `edu.utdt.td8.zkloc` assertion. A separate C2PA sample editor key signs the
-   published PNG.
-4. **Verify.** Validate the C2PA asset, check the receipt against an explicitly
-   trusted device public key, verify the actual published pixels against the
-   receipt fingerprint, and verify the location proof against the receipt
-   envelope and the requested region.
-5. **Exercise failures.** Run six real negative cases covering signature and
-   fingerprint changes, a wrong region, a swapped receipt, and changed pixels.
+- the **fingerprint**, an Ajtai hash of the original pixels over the
+  BLS12-381 scalar field;
+- the **envelope**, a MiMC commitment to the coordinate and a fresh salt over
+  BN254.
+
+The published PNG carries the receipt, a HyperVerITAS PST proof that its
+pixels are the left half of the fingerprinted original, and a ZKLP Groth16
+proof that the committed coordinate lies in the claimed cell. The proofs run
+on different fields and never reference each other. The device signature over
+both values is what binds them to one capture.
 
 ```mermaid
 flowchart LR
-    P[Published crop] -->|HyperVerITAS proof| F[Original-image fingerprint]
-    F -->|Device-signed receipt| E[Salted location envelope]
-    E -->|ZKLP proof| R[Public H3 region]
+    Pixels[published pixels] -->|crop proof| Fingerprint
+    Fingerprint --- Receipt[device-signed receipt]
+    Receipt --- Envelope
+    Envelope -->|location proof| Cell[H3 cell]
 ```
 
-The device signature connects two independent proof statements. Neither proof
-verifies the other, and they do not share a field commitment. The current run
-script executes the two provers sequentially.
+## Layout
 
-## Run it
+| Path | Contents |
+| --- | --- |
+| `crates/crop-proof` | The PST crop proof, extracted from [HyperVerITAS](https://github.com/C2PA-Thesis/HyperVerITAS) at `798554f` (MIT) |
+| `location-proof` | Go CLI for the location proof. It builds against the [zk-Location fork](https://github.com/C2PA-Thesis/zk-Location) at `cc8f1c7` as a pinned module: that repository has no license, so its code is not copied here |
+| `crates/provenance` | Capture, receipt, C2PA packaging, reader checks, attacks, and the `provenance` CLI |
+| `c2pa` | The C2P-19 custom assertion round trip with `c2patool` |
 
-Requirements: Git, Go, a C compiler for the H3 dependency, Rust nightly,
-Python 3, and an authenticated GitHub CLI. Run commands from this repository's
-root on the branch containing `pipeline/`:
+## Run
+
+Requires Rust (the toolchain pinned in `rust-toolchain.toml` installs itself),
+Go 1.23 or later, and curl. From the repository root:
 
 ```bash
-./pipeline/run.sh
+cargo install --path crates/provenance
+
+provenance setup                   # build location-proof, create parameters and keys, fetch samples
+provenance demo                    # capture, prove, publish out/signed.png, verify it
+provenance verify out/signed.png   # run the reader checks on any file
+provenance attack                  # forge tampered copies; each must be rejected
+provenance inspect out/signed.png  # print the assertion
 ```
 
-Setup initializes the pinned submodules, installs Python dependencies, builds
-both proof CLIs, and creates demo keys and proof parameters. Subsequent runs
-can reuse that setup without network access:
+`provenance demo --photo PATH --at LAT,LON --cell CELL` uses another photo and
+simulated coordinate; nothing reads GPS from the photo. `--json` prints one
+JSON object per line. Setup writes about 220 MB to `.provenance`, or to
+`PROVENANCE_HOME`.
 
-```bash
-PIPELINE_SKIP_SETUP=1 ./pipeline/run.sh
-```
+`out/original.png` and `out/secrets.json` are the private witness. Share only
+`out/signed.png`.
 
-Each run replaces `pipeline/out/`. The demo always uses the public UTDT test
-coordinates in Buenos Aires and resolution-7 H3 cell `87c2e3020ffffff`.
-`DEMO_PHOTO=/absolute/path/photo.jpg ./pipeline/run.sh` changes the input photo;
-it does not read that photo's GPS metadata or attest its real capture location.
+## Reader checks
 
-The guided display shows the selected image path and source, previews the
-photo and crop in your terminal, and explains all eight stages as they run.
-It shows elapsed time during long commands, each reader check, and the
-expected rejection for each negative test. A successful run exits zero and
-ends with `8/8 ALL DEMO STAGES PASSED`, timings, and artifact sizes.
+They run in order and stop at the first rejection.
 
-Use `./pipeline/run.sh --plain` for static text, or add `--verbose` to see
-the exact commands and raw tool output. Redirected output uses static text
-automatically. Full command logs are saved for every run.
+| Check | Rejects the file when | Exit status |
+| --- | --- | --- |
+| C2PA manifest | c2pa-rs reports it neither Valid nor Trusted, or it lacks exactly one `edu.utdt.td8.zkloc` assertion | 10 |
+| Device receipt | the receipt is not signed by the trusted device key | 11 |
+| Crop proof | the file's pixels are not the left half of the image the receipt fingerprints | 12 |
+| Location proof | the proof does not verify for the receipt's envelope and the claimed cell | 13 |
 
-| Output | What to inspect |
+## Attacks
+
+`provenance attack` writes each forgery as a freshly C2PA-signed PNG, so the
+rejection has to come from the checks above. The attacker holds the device key
+and a second genuine capture: the same photo mirrored, taken at Tokyo Station.
+
+| Attack | Tampering | Rejected by |
+| --- | --- | --- |
+| `signature` | flip one bit of the device signature | device receipt |
+| `fingerprint` | swap two fingerprint values | device receipt |
+| `resigned-fingerprint` | swap two fingerprint values and re-sign with the device key | crop proof |
+| `pixel` | change one published pixel | crop proof |
+| `region` | claim the other capture's cell for this location proof | location proof |
+| `cross-photo-location` | attach the other capture's location proof and cell | location proof |
+| `cross-photo-receipt` | attach the other capture's receipt, location proof and cell | crop proof |
+
+The wrong-cell case on the prover side is covered in `location-proof/main_test.go`:
+the honest prover refuses a cell that does not contain the coordinate.
+
+## Assertion
+
+`edu.utdt.td8.zkloc`, version 2.
+
+| Field | Contents |
 | --- | --- |
-| `pipeline/out/signed.png` | Published image with the receipt and both proofs embedded |
-| `pipeline/out/manifest.json` | Human-readable assertion before C2PA signing |
-| `pipeline/out/negative/results.json` | Expected and observed failure for each negative case |
-| `pipeline/out/timings.tsv` | Command wall times, including the complete reader verifier |
-| `pipeline/generated/tool-versions.json` | Tool versions recorded during setup |
-| `pipeline/generated/logs/<run-id>/` | Exact commands and complete output, including failed stages |
+| `receipt.fingerprint` | 128 BLS12-381 scalars per RGB channel, and the original's size |
+| `receipt.envelope` | BN254 scalar |
+| `receipt.captured_at` | RFC 3339 time asserted by the device |
+| `receipt.device` | SHA-256 of the device public key in SubjectPublicKeyInfo DER |
+| `receipt.signature` | Base64 DER ECDSA P-256 over the compact JSON of the four fields above |
+| `cell` | H3 cell the location proof claims |
+| `location_proof` | Base64 Groth16 proof |
+| `image_proof` | Base64 PST proof |
 
-The original image, coordinates, and salt remain in the local ignored output
-directories. Share the signed PNG for the demo, rather than the whole output
-directory, which also contains private prover inputs.
+## Known limits
 
-## Components and review order
+- **The location proof holds for an honest prover only.** The fork's circuit
+  says: "The trigonometric hint outputs are not constrained back to Lat/Lng;
+  callers must not treat this PoC circuit as malicious-prover sound until that
+  upstream limitation is fixed" (`loc2index32/circuit.go` at `cc8f1c7`). A
+  modified prover can claim any cell for a genuine envelope.
+- **The original image is not hidden.** The fingerprint is deterministic, so
+  anyone holding a candidate original can test it, and the PST proof carries
+  unmasked evaluations of the original's channel polynomials (see
+  `image_openings` in `crates/crop-proof/src/crop.rs`).
+- **Both setups are single-party.** Whoever runs `provenance setup` could keep
+  the trapdoors and forge either proof.
+- **Capture is simulated.** The device key, coordinate and time are demo
+  inputs. The C2PA editor signs with the SDK sample certificate, which no trust
+  list includes.
+- **One edit.** Only a 1024x512 original cropped to its 512x512 left half.
 
-| Folder | Responsibility |
-| --- | --- |
-| [pipeline](pipeline/README.md) | Capture, signed receipt, proof orchestration, packaging, verification, schemas, and tests |
-| [editproof](editproof/README.md) | Pinned HyperVerITAS fork with persistent PST parameters and file-based proof commands |
-| [locproof](locproof/README.md) | Pinned ZKLP fork with a salted envelope, global H3 region identity, and file-based Groth16 commands |
-| [c2pa](c2pa/README.md) | c2patool setup and the original custom-assertion round trip |
-| [fixtures](fixtures/README.md) | Public demo-region configuration and generated device identity |
+## Measurements
 
-For review, start with the [composition decision](pipeline/COMPOSITION-COMPARISON.md),
-then read [the stage plan](pipeline/lib/workflow.py), [the CLI runner](pipeline/demo.py), [the receipt](pipeline/lib/receipt.py),
-and [the verifier](pipeline/verify.py). The component submodules pin the
-implementations reviewed in [HyperVerITAS PR #1](https://github.com/C2PA-Thesis/HyperVerITAS/pull/1)
-and [zk-Location PR #1](https://github.com/C2PA-Thesis/zk-Location/pull/1).
+One run on 2026-09-14, macOS 26.5.2 on Apple arm64, release build.
 
-## Research boundaries
-
-- The inherited ZKLP FP32 circuit does not constrain trigonometric hint outputs
-  back to the secret coordinates. Native prover preflight rejects the wrong
-  demo region, but that is not a security boundary against a modified prover.
-- The fingerprint, H3 region, dimensions, device key ID, and asserted time are
-  public. Omitting raw coordinates and original pixels from the PNG does not
-  establish that the complete protocol leaks no additional information. The
-  pinned PST implementation also publishes unmasked polynomial evaluations of
-  the original pixels; complete image privacy remains to be established.
-- Device capture, GPS, and time are simulated and trusted. Both proof setups
-  and the C2PA signing identity are for local testing.
-- Only the fixed left-half crop is implemented. Blur, other edits, arbitrary
-  image sizes, hardware attestation, and a reader-facing app remain future work.
-
-The [pipeline guide](pipeline/README.md) provides individual commands, fast
-tests, historical measurements, and the detailed limitations.
+| Step | Time | Output |
+| --- | --- | --- |
+| Capture: fingerprint, envelope, receipt | 1.8 s | |
+| Location proof | 0.7 s | 196 bytes |
+| Crop proof | 18.2 s | 36,692 bytes |
+| Publish | under 0.1 s | 200,709-byte PNG |
+| Verify, all four checks | 1.1 s | |
+| All seven attacks | 6.3 s | |
