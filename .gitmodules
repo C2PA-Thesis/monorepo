@@ -1,6 +1,0 @@
-[submodule "editproof"]
-	path = editproof
-	url = https://github.com/C2PA-Thesis/HyperVerITAS.git
-[submodule "locproof"]
-	path = locproof
-	url = https://github.com/C2PA-Thesis/zk-Location.git

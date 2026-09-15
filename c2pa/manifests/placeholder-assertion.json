@@ -1,0 +1,45 @@
+{
+  "claim_version": 1,
+  "claim_generator_info": [
+    { "name": "td8-zkloc-pipeline", "version": "0.1.0" }
+  ],
+  "title": "Test capture with a placeholder ZKLoc assertion",
+  "assertions": [
+    {
+      "label": "c2pa.actions",
+      "data": {
+        "actions": [ { "action": "c2pa.created", "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/digitalCapture" } ]
+      }
+    },
+    {
+      "label": "edu.utdt.td8.zkloc",
+      "data": {
+        "schema_version": "0.1.0-draft",
+        "status": "PLACEHOLDER: filler values, no real cryptography yet",
+        "commitment": {
+          "alg": "TBD",
+          "covers": ["pixels", "coordinate", "timestamp"],
+          "value": "0x0000000000000000000000000000000000000000000000000000000000000000"
+        },
+        "location_proof": {
+          "scheme": "h3",
+          "resolution": 7,
+          "cell": "871f0d48affffff",
+          "proof_system": "TBD",
+          "field": "TBD",
+          "proof": null
+        },
+        "transformation_proof": {
+          "ops": ["c2pa.crop"],
+          "proof_system": "TBD",
+          "field": "TBD",
+          "proof": null
+        },
+        "binding": {
+          "claim": "both proofs refer to the same commitment",
+          "checked_by_verifier": false
+        }
+      }
+    }
+  ]
+}
