@@ -19,6 +19,7 @@ use transcript::IOPTranscript;
 
 use crate::{
     iop::{self, challenge, check, poly, Opening, OpeningPoints, Poly},
+    left_half,
     wire::{self, BatchOpening, CropProof, Sumcheck},
     Fingerprint, Pcs, ProverParams, RgbImage, VerifierParams, CROP, F, NUM_VARS,
 };
@@ -35,7 +36,7 @@ pub fn prove(
         "the fingerprint does not match the original image"
     );
     ensure!(
-        original.left_half()? == *crop,
+        left_half(original)? == *crop,
         "the published image is not the left half of the original"
     );
     wire::encode(&prove_core(&params.pcs, original)?)

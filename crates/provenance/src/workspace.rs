@@ -9,9 +9,9 @@ use crop_proof::VerifierParams;
 use serde::Serialize;
 
 use crate::{
-    capture::{self, DeviceKey},
     location::LocationTool,
     manifest::Editor,
+    receipt::{DeviceKey, TrustedKeys},
     verify::Verifier,
 };
 
@@ -58,8 +58,9 @@ impl Workspace {
         self.home.join("params/crop")
     }
 
-    pub fn device_public_key(&self) -> PathBuf {
-        self.home.join("device.pub.pem")
+    /// One PEM per device key a reader accepts.
+    pub fn trusted_keys_dir(&self) -> PathBuf {
+        self.home.join("trusted")
     }
 
     pub fn device_key(&self) -> Result<DeviceKey> {
@@ -75,7 +76,7 @@ impl Workspace {
 
     pub fn verifier(&self) -> Result<Verifier> {
         Ok(Verifier {
-            device: capture::load_public_key(&self.device_public_key())?,
+            trusted: TrustedKeys::load(&self.trusted_keys_dir())?,
             crop_params: VerifierParams::load(&self.crop_params())?,
             location: self.location_tool(),
         })
@@ -114,8 +115,16 @@ impl Workspace {
 
         let device = self.home.join("device.pem");
         step(on, "generate the device key", device.exists(), || {
-            DeviceKey::generate().save(&device, &self.device_public_key())
+            DeviceKey::generate().save(&device)
         })?;
+        let trusted = self.trusted_keys_dir();
+        let device = self.device_key()?;
+        step(
+            on,
+            "trust the device key",
+            trusted.join(format!("{}.pem", device.id()?)).exists(),
+            || TrustedKeys::add(&trusted, &device.public()).map(drop),
+        )?;
         let tool = self.location_tool();
         step(
             on,

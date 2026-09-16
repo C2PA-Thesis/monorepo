@@ -69,16 +69,17 @@ flowchart LR
 
 | Path | Contents |
 | --- | --- |
+| `crates/fingerprint` | The lattice fingerprint, built natively for the prover and for WebAssembly for the capture device |
 | `crates/crop-proof` | The PST crop proof, extracted from HyperVerITAS |
 | `location-proof` | Go CLI for the location proof, built against the zk-Location fork |
-| `crates/provenance` | Capture, receipt, C2PA packaging, reader checks, attacks, and the `provenance` CLI |
+| `crates/provenance` | Capture, publish, the capture API, reader checks, attacks, and the `provenance` CLI |
 | `c2pa` | The C2P-19 custom assertion round trip with `c2patool` |
 
 ### Code from other repositories
 
 | Repository | Revision | License | How it is used |
 | --- | --- | --- | --- |
-| [glgreiner/HyperVerITAS](https://github.com/glgreiner/HyperVerITAS), via the [C2PA-Thesis fork](https://github.com/C2PA-Thesis/HyperVerITAS) | `798554f` | MIT | Source of `crates/crop-proof`, copied and restructured |
+| [glgreiner/HyperVerITAS](https://github.com/glgreiner/HyperVerITAS), via the [C2PA-Thesis fork](https://github.com/C2PA-Thesis/HyperVerITAS) | `798554f` | MIT | Source of `crates/fingerprint` and `crates/crop-proof`, copied and restructured |
 | [EspressoSystems/hyperplonk](https://github.com/EspressoSystems/hyperplonk), via [glgreiner/hyperplonk](https://github.com/glgreiner/hyperplonk) | `bed02ac` | MIT | Cargo dependency: sumcheck, product check, PST |
 | [tumberger/zk-Location](https://github.com/tumberger/zk-Location), via the [C2PA-Thesis fork](https://github.com/C2PA-Thesis/zk-Location) | `cc8f1c7` | none | Go module dependency: the FP32 circuit, envelope and native H3 mapping. Without a license its code is not copied here |
 | [Consensys/gnark](https://github.com/Consensys/gnark), via [winderica/gnark](https://github.com/winderica/gnark) | `e30c94c` | Apache-2.0 | Groth16 and MiMC, replaced the same way the zk-Location fork does |
@@ -99,6 +100,8 @@ provenance demo                    # capture, prove, publish out/signed.png, ver
 provenance verify out/signed.png   # run the reader checks on any file
 provenance attack                  # forge tampered copies; each must be rejected
 provenance inspect out/signed.png  # print the assertion
+provenance publish --capture DIR   # prove and publish any capture directory
+provenance serve                   # the API a phone captures through
 ```
 
 ```text
@@ -126,6 +129,43 @@ JSON object per line. Setup writes about 220 MB to `.provenance`, or to
 `out/original.png` and `out/secrets.json` are the private witness. Share only
 `out/signed.png`.
 
+### Capture directories
+
+A capture is a directory: `original.png` and `secrets.json` (the private
+witness, the latter mode 0600), `receipt.json` (signed by the device), and
+`capture.json` (the cell chosen at capture, the resolution, and whether a phone
+or the demo made it). `provenance demo` writes one into `out` and publishes it
+there. `provenance publish --capture DIR [--out DIR]` does the same for any
+capture directory, including one a phone uploaded.
+
+### Capture from a phone
+
+`provenance serve` runs the API the capture page uses, on port 8791 by default,
+and prints a pairing code. The page is the next step; the API it will call is
+complete:
+
+| Call | Body | Effect |
+| --- | --- | --- |
+| `POST /api/pair` | `code`, `public_key` (P-256, PEM) | Adds the phone's key to the trusted keys, when the code matches the one printed |
+| `POST /api/cell` | `latitude`, `longitude`, `resolution` | The H3 cell the location circuit maps the coordinate to, or a refusal for cells it cannot represent |
+| `POST /api/captures` | `original_png` (base64), `secrets`, `receipt`, `cell`, `resolution`, `accuracy_meters` | Stores the capture under `captures/`, after checking it as a reader would |
+
+An upload is refused unless the fingerprint matches the pixels, the receipt is
+signed by a trusted key, the envelope matches the secrets, and the cell is the
+one the circuit gives for the coordinate at that resolution. Every refusal is a
+400 with `{"error": "..."}`. `crates/provenance/tests/serve.rs` exercises all
+of it and runs in CI after setup.
+
+The phone computes the fingerprint itself, with `crates/fingerprint` built for
+`wasm32-unknown-unknown` (`cargo build --profile wasm -p fingerprint --target
+wasm32-unknown-unknown`). On an iPhone 15 running iOS 18.7 it took 12.8 s
+across four web workers, with the same digest as the native build, measured on
+2026-09-16 with a throwaway page. The Go tool's `cell` subcommand is what the
+API calls, so the phone never maps coordinates to cells itself.
+
+Trusted device keys live in `.provenance/trusted/`, one PEM per key, named by
+key id. Setup adds the laptop's simulated device; pairing adds a phone.
+
 ## Reader checks
 
 The two proofs are verified separately, and they meet only in the receipt: the
@@ -136,7 +176,7 @@ rejection, and each line names the value it shares with the receipt.
 | Check | Rejects the file when | Exit status |
 | --- | --- | --- |
 | C2PA manifest | c2pa-rs reports it neither Valid nor Trusted, or it lacks exactly one `edu.utdt.td8.zkloc` assertion | 10 |
-| Device receipt | the receipt is not signed by the trusted device key | 11 |
+| Device receipt | the receipt is not signed by a trusted device key | 11 |
 | Crop proof | the file's pixels are not the left half of the image the receipt fingerprints | 12 |
 | Location proof | the proof does not verify for the receipt's envelope and the claimed cell | 13 |
 
@@ -220,10 +260,14 @@ the honest prover refuses a cell that does not contain the coordinate.
   [1], [2] or [3] analyzes it as a hiding commitment.
 - **Both setups are single-party.** Whoever runs `provenance setup` could keep
   the trapdoors and forge either proof.
-- **Capture is simulated.** The device key, coordinate and time are demo
-  inputs, while [2] assumes "the attacker cannot extract the signing key from
-  the camera" (§3). The C2PA editor signs with the SDK sample certificate,
-  which no trust list includes.
+- **The device key is a stand-in.** `demo` signs with a key file on the
+  laptop, at a coordinate and time given as inputs. A phone signs with a
+  browser key that never leaves the browser, at its own GPS fix and clock, but
+  nothing attests that the key is in hardware: the pairing code is all that
+  ties a key to this laptop. [2] assumes "the attacker cannot extract the
+  signing key from the camera" (§3), and this project assumes the same of
+  whichever key is paired. The C2PA editor signs with the SDK sample
+  certificate, which no trust list includes.
 - **One edit.** Only a 1024x512 original cropped to its 512x512 left half.
 
 ## Measurements

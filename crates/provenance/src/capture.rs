@@ -1,25 +1,38 @@
+//! A capture: the private witness and the signed receipt, as one directory.
+//!
+//! ```text
+//! original.png   the 1024x512 original, private
+//! secrets.json   coordinate and salt, private, mode 0600
+//! receipt.json   the device-signed receipt, public
+//! capture.json   the cell chosen at capture and how the capture was made
+//! ```
+
 use std::{
-    fs::{self, File, OpenOptions},
-    io::{BufReader, Write},
+    fs::{self, OpenOptions},
+    io::Write,
     os::unix::fs::OpenOptionsExt,
     path::Path,
 };
 
-use anyhow::{anyhow, ensure, Context, Result};
-use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
-use crop_proof::{Fingerprint, RgbImage, Size, ORIGINAL};
-use image::{imageops::FilterType, ImageFormat};
-use p256::{
-    ecdsa::{
-        signature::{Signer, Verifier},
-        Signature, SigningKey, VerifyingKey,
-    },
-    pkcs8::{DecodePrivateKey, DecodePublicKey, EncodePrivateKey, EncodePublicKey, LineEnding},
-};
+use anyhow::{Context, Result};
+use crop_proof::{Fingerprint, RgbImage};
 use rand::{rngs::OsRng, RngCore};
-use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
+
+use crate::{
+    image,
+    location::LocationTool,
+    receipt::{DeviceKey, Receipt},
+};
+
+/// The coordinate as the location prover takes it.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Coordinate {
+    pub latitude: f64,
+    pub longitude: f64,
+}
 
 /// What only the photographer holds: the coordinate and the salt hiding it.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -33,201 +46,115 @@ pub struct Secrets {
 impl Secrets {
     /// Draws a fresh salt. Without one, the envelope could be brute-forced
     /// over plausible coordinates.
-    pub fn new(latitude: f64, longitude: f64) -> Self {
+    pub fn new(coordinate: Coordinate) -> Self {
         let mut salt = [0u8; 32];
         // A zero first byte keeps the salt below the BN254 modulus.
         OsRng.fill_bytes(&mut salt[1..]);
         Self {
-            latitude,
-            longitude,
+            latitude: coordinate.latitude,
+            longitude: coordinate.longitude,
             salt: format!("0x{}", hex::encode(salt)),
         }
     }
+
+    pub fn coordinate(&self) -> Coordinate {
+        Coordinate {
+            latitude: self.latitude,
+            longitude: self.longitude,
+        }
+    }
 }
 
-/// The device's signature over both public values. It is the only thing
-/// binding the crop proof and the location proof to the same capture.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Source {
+    /// The laptop's own device key signed a photo at a chosen coordinate.
+    Simulated,
+    /// A paired phone signed its camera frame at its GPS fix.
+    Phone,
+}
+
+/// The public choices made at capture, kept next to the receipt.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Receipt {
-    pub fingerprint: Fingerprint,
-    /// MiMC commitment to the coordinate and salt, as a BN254 scalar.
-    pub envelope: String,
-    /// Asserted by the device, not by a trusted clock.
-    pub captured_at: String,
-    /// SHA-256 of the device public key in SubjectPublicKeyInfo DER.
-    pub device: String,
-    /// Base64 DER ECDSA P-256 signature over the compact JSON of the fields above.
-    pub signature: String,
+pub struct Summary {
+    pub source: Source,
+    /// H3 cell the location proof will claim.
+    pub cell: String,
+    pub resolution: u8,
+    /// Horizontal accuracy the device reported for its fix. Recorded, not signed.
+    pub accuracy_meters: Option<f64>,
 }
 
-#[derive(Serialize)]
-struct SignedFields<'a> {
-    fingerprint: &'a Fingerprint,
-    envelope: &'a str,
-    captured_at: &'a str,
-    device: &'a str,
+pub struct Capture {
+    pub original: RgbImage,
+    pub secrets: Secrets,
+    pub receipt: Receipt,
+    pub summary: Summary,
 }
 
-impl Receipt {
-    pub fn sign(fingerprint: Fingerprint, envelope: String, device: &DeviceKey) -> Result<Self> {
-        let captured_at = OffsetDateTime::now_utc()
-            .replace_nanosecond(0)?
-            .format(&Rfc3339)?;
-        let mut receipt = Self {
-            fingerprint,
-            envelope,
-            captured_at,
-            device: device.id()?,
-            signature: String::new(),
-        };
-        receipt.resign(device)?;
-        Ok(receipt)
+const ORIGINAL: &str = "original.png";
+const SECRETS: &str = "secrets.json";
+const RECEIPT: &str = "receipt.json";
+const SUMMARY: &str = "capture.json";
+
+impl Capture {
+    /// A capture signed by the laptop's own device key, for the demo and the attacks.
+    pub fn simulate(
+        tool: &LocationTool,
+        device: &DeviceKey,
+        original: RgbImage,
+        coordinate: Coordinate,
+        cell: &str,
+    ) -> Result<Self> {
+        let region = tool.region(cell)?;
+        let secrets = Secrets::new(coordinate);
+        let receipt = Receipt::sign(
+            Fingerprint::of(&original)?,
+            tool.commit(&secrets)?,
+            now()?,
+            device,
+        )?;
+        Ok(Self {
+            original,
+            secrets,
+            receipt,
+            summary: Summary {
+                source: Source::Simulated,
+                cell: region.cell,
+                resolution: region.resolution,
+                accuracy_meters: None,
+            },
+        })
     }
 
-    /// Signs the current fields, which may have been edited since.
-    pub fn resign(&mut self, device: &DeviceKey) -> Result<()> {
-        let signature: Signature = device.0.sign(&self.signed_bytes()?);
-        self.signature = BASE64.encode(signature.to_der());
+    pub fn write(&self, dir: &Path) -> Result<()> {
+        fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
+        image::write_png(&self.original, &dir.join(ORIGINAL))?;
+        write_private(
+            &dir.join(SECRETS),
+            &serde_json::to_vec_pretty(&self.secrets)?,
+        )?;
+        fs::write(dir.join(RECEIPT), serde_json::to_vec_pretty(&self.receipt)?)?;
+        fs::write(dir.join(SUMMARY), serde_json::to_vec_pretty(&self.summary)?)?;
         Ok(())
     }
 
-    pub fn verify(&self, trusted: &VerifyingKey) -> Result<()> {
-        let trusted_id = key_id(trusted)?;
-        ensure!(
-            self.device == trusted_id,
-            "signed by device {}, not the trusted device {}",
-            short(&self.device),
-            short(&trusted_id)
-        );
-        let der = BASE64
-            .decode(&self.signature)
-            .context("the signature is not base64")?;
-        let signature =
-            Signature::from_der(&der).map_err(|_| anyhow!("the signature is not DER ECDSA"))?;
-        trusted
-            .verify(&self.signed_bytes()?, &signature)
-            .map_err(|_| anyhow!("the device signature does not match the receipt"))
-    }
-
-    fn signed_bytes(&self) -> Result<Vec<u8>> {
-        Ok(serde_json::to_vec(&SignedFields {
-            fingerprint: &self.fingerprint,
-            envelope: &self.envelope,
-            captured_at: &self.captured_at,
-            device: &self.device,
-        })?)
+    pub fn read(dir: &Path) -> Result<Self> {
+        Ok(Self {
+            original: image::read_png(&dir.join(ORIGINAL))?,
+            secrets: read_json(&dir.join(SECRETS))?,
+            receipt: read_json(&dir.join(RECEIPT))?,
+            summary: read_json(&dir.join(SUMMARY))?,
+        })
     }
 }
 
-/// Stand-in for the camera's hardware key.
-pub struct DeviceKey(SigningKey);
-
-impl DeviceKey {
-    pub fn generate() -> Self {
-        Self(SigningKey::random(&mut OsRng))
-    }
-
-    pub fn load(path: &Path) -> Result<Self> {
-        let pem =
-            fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
-        let key = SigningKey::from_pkcs8_pem(&pem)
-            .map_err(|_| anyhow!("{} is not a P-256 private key", path.display()))?;
-        Ok(Self(key))
-    }
-
-    pub fn save(&self, private: &Path, public: &Path) -> Result<()> {
-        let private_pem = self
-            .0
-            .to_pkcs8_pem(LineEnding::LF)
-            .map_err(|error| anyhow!("{error}"))?;
-        write_private(private, private_pem.as_bytes())?;
-        let public_pem = self
-            .public()
-            .to_public_key_pem(LineEnding::LF)
-            .map_err(|error| anyhow!("{error}"))?;
-        Ok(fs::write(public, public_pem)?)
-    }
-
-    pub fn public(&self) -> VerifyingKey {
-        *self.0.verifying_key()
-    }
-
-    pub fn id(&self) -> Result<String> {
-        key_id(&self.public())
-    }
-}
-
-pub fn load_public_key(path: &Path) -> Result<VerifyingKey> {
-    let pem = fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
-    VerifyingKey::from_public_key_pem(&pem)
-        .map_err(|_| anyhow!("{} is not a P-256 public key", path.display()))
-}
-
-pub fn key_id(key: &VerifyingKey) -> Result<String> {
-    let der = key
-        .to_public_key_der()
-        .map_err(|error| anyhow!("{error}"))?;
-    Ok(hex::encode(Sha256::digest(der.as_bytes())))
-}
-
-/// First and last four hex digits, enough to tell keys apart on screen.
-pub fn short(id: &str) -> String {
-    let (prefix, digits) = id.split_at(if id.starts_with("0x") { 2 } else { 0 });
-    match digits.len() {
-        0..=8 => id.to_string(),
-        len => format!("{prefix}{}…{}", &digits[..4], &digits[len - 4..]),
-    }
-}
-
-/// The photo as the crop proof takes it: RGB, resized to exactly 1024x512.
-pub fn load_photo(path: &Path) -> Result<RgbImage> {
-    let photo = image::open(path)
-        .with_context(|| format!("reading {}", path.display()))?
-        .to_rgb8();
-    let resized = image::imageops::resize(
-        &photo,
-        ORIGINAL.width as u32,
-        ORIGINAL.height as u32,
-        FilterType::Lanczos3,
-    );
-    to_rgb(&resized)
-}
-
-pub fn read_png(path: &Path) -> Result<RgbImage> {
-    let file = File::open(path).with_context(|| format!("opening {}", path.display()))?;
-    let decoded = image::load(BufReader::new(file), ImageFormat::Png)
-        .with_context(|| format!("{} is not a PNG", path.display()))?;
-    to_rgb(&decoded.to_rgb8())
-}
-
-pub fn write_png(image: &RgbImage, path: &Path) -> Result<()> {
-    let [r, g, b] = image.channels();
-    let interleaved = r
-        .iter()
-        .zip(g)
-        .zip(b)
-        .flat_map(|((r, g), b)| [*r, *g, *b])
-        .collect();
-    let size = image.size();
-    image::RgbImage::from_raw(size.width as u32, size.height as u32, interleaved)
-        .context("pixel buffer does not match the image size")?
-        .save_with_format(path, ImageFormat::Png)
-        .with_context(|| format!("writing {}", path.display()))
-}
-
-fn to_rgb(image: &image::RgbImage) -> Result<RgbImage> {
-    let size = Size {
-        width: image.width() as usize,
-        height: image.height() as usize,
-    };
-    let mut channels: [Vec<u8>; 3] = Default::default();
-    for pixel in image.pixels() {
-        for (channel, value) in channels.iter_mut().zip(pixel.0) {
-            channel.push(value);
-        }
-    }
-    RgbImage::new(size, channels)
+/// The current time as a receipt carries it: RFC 3339, UTC, whole seconds.
+pub fn now() -> Result<String> {
+    Ok(OffsetDateTime::now_utc()
+        .replace_nanosecond(0)?
+        .format(&Rfc3339)?)
 }
 
 pub fn write_private(path: &Path, contents: &[u8]) -> Result<()> {
@@ -239,4 +166,9 @@ pub fn write_private(path: &Path, contents: &[u8]) -> Result<()> {
         .open(path)
         .with_context(|| format!("writing {}", path.display()))?;
     Ok(file.write_all(contents)?)
+}
+
+fn read_json<T: DeserializeOwned>(path: &Path) -> Result<T> {
+    let bytes = fs::read(path).with_context(|| format!("reading {}", path.display()))?;
+    serde_json::from_slice(&bytes).with_context(|| format!("parsing {}", path.display()))
 }

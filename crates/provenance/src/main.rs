@@ -3,6 +3,7 @@ use std::{
     fmt::Display,
     path::{Path, PathBuf},
     process::ExitCode,
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -12,21 +13,16 @@ use console::style;
 use indicatif::{ProgressBar, ProgressStyle};
 use provenance::{
     attack::{self, Outcome, ATTACKS},
-    demo::{self, Event, Stage, DEMO_PLACE},
-    manifest,
+    capture::{Capture, Coordinate},
+    demo::{self, DEMO_PLACE},
+    manifest, publish,
+    publish::{Event, Stage},
+    receipt::short,
+    serve::{self, Server},
     verify::{Check, Verdict},
     Step, Workspace,
 };
 use serde::Serialize;
-
-const STAGES: [Stage; 6] = [
-    Stage::Capture,
-    Stage::Crop,
-    Stage::LocationProof,
-    Stage::CropProof,
-    Stage::Publish,
-    Stage::Verify,
-];
 
 #[derive(Parser)]
 #[command(
@@ -53,20 +49,40 @@ struct Cli {
 enum Command {
     /// Build location-proof, create proof parameters and a device key, download samples.
     Setup,
-    /// Capture a photo, publish its left half with both proofs, and verify it.
+    /// Capture a photo with the laptop's device key, publish its left half with both proofs, and verify it.
     Demo {
         /// Photo to capture. Defaults to the C2PA SDK sample.
         #[arg(long)]
         photo: Option<PathBuf>,
         /// Simulated capture coordinate, as LAT,LON. Defaults to UTDT, Buenos Aires.
         #[arg(long, value_parser = parse_coordinate, allow_hyphen_values = true, requires = "cell")]
-        at: Option<(f64, f64)>,
+        at: Option<Coordinate>,
         /// H3 cell to prove the coordinate is in.
         #[arg(long, requires = "at")]
         cell: Option<String>,
         /// Directory for the run. `original.png` and `secrets.json` in it are private.
         #[arg(long, default_value = "out")]
         out: PathBuf,
+    },
+    /// Prove and C2PA-sign a capture directory, from the demo or from a phone.
+    Publish {
+        /// The capture directory.
+        #[arg(long)]
+        capture: PathBuf,
+        /// Where `crop.png` and `signed.png` go. Defaults to the capture directory.
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
+    /// Serve the capture API, and the capture page when given, for a phone to use.
+    Serve {
+        #[arg(long, default_value_t = 8791)]
+        port: u16,
+        /// Where uploaded captures land, one directory each.
+        #[arg(long, default_value = "captures")]
+        captures: PathBuf,
+        /// Built capture page to serve at `/`.
+        #[arg(long)]
+        web: Option<PathBuf>,
     },
     /// Verify a published PNG as a reader.
     Verify {
@@ -88,7 +104,7 @@ enum Command {
     Inspect { file: PathBuf },
 }
 
-fn parse_coordinate(text: &str) -> Result<(f64, f64), String> {
+fn parse_coordinate(text: &str) -> Result<Coordinate, String> {
     let (latitude, longitude) = text.split_once(',').ok_or("expected LAT,LON")?;
     let parse = |value: &str| {
         value
@@ -96,7 +112,10 @@ fn parse_coordinate(text: &str) -> Result<(f64, f64), String> {
             .parse::<f64>()
             .map_err(|error| error.to_string())
     };
-    Ok((parse(latitude)?, parse(longitude)?))
+    Ok(Coordinate {
+        latitude: parse(latitude)?,
+        longitude: parse(longitude)?,
+    })
 }
 
 fn main() -> ExitCode {
@@ -134,18 +153,20 @@ fn run(cli: Cli, ui: &Ui) -> Result<ExitCode> {
             out,
         } => {
             let photo = photo.unwrap_or_else(|| workspace.sample_photo());
-            let (at, cell, place) = match (at, cell) {
-                (Some((latitude, longitude)), Some(cell)) => (
-                    (latitude, longitude),
+            let (coordinate, cell, place) = match (at, cell) {
+                (Some(coordinate), Some(cell)) => (
+                    coordinate,
                     cell,
-                    format!("{latitude}, {longitude}"),
+                    format!("{}, {}", coordinate.latitude, coordinate.longitude),
                 ),
                 _ => (
-                    (DEMO_PLACE.latitude, DEMO_PLACE.longitude),
+                    DEMO_PLACE.coordinate,
                     DEMO_PLACE.cell.to_string(),
                     format!(
                         "{} ({}, {})",
-                        DEMO_PLACE.name, DEMO_PLACE.latitude, DEMO_PLACE.longitude
+                        DEMO_PLACE.name,
+                        DEMO_PLACE.coordinate.latitude,
+                        DEMO_PLACE.coordinate.longitude
                     ),
                 ),
             };
@@ -159,21 +180,48 @@ fn run(cli: Cli, ui: &Ui) -> Result<ExitCode> {
                 ],
             );
             let started = Instant::now();
-            demo::run(&workspace, &photo, at, &cell, &out, &mut |event| {
-                ui.stage(event)
+            demo::run(&workspace, &photo, coordinate, &cell, &out, &mut |event| {
+                ui.stage(event, &demo::STAGES)
             })?;
-            let signed = shown(&out.join("signed.png"));
-            ui.line(format!(
-                "\n{} published {} in {:.0}s",
-                style("✓").green(),
-                style(&signed).bold(),
-                started.elapsed().as_secs_f64()
-            ));
-            ui.line(format!(
-                "  next  provenance verify {signed}\n        provenance attack --run {}",
-                shown(&out)
-            ));
+            ui.published(&out, started);
             ui.note("\nThe coordinate is a test input. Location proofs hold for an honest prover only; see Known limits in the README.");
+        }
+        Command::Publish { capture, out } => {
+            let out = out.unwrap_or_else(|| capture.clone());
+            ui.header(
+                "publish",
+                &[("capture", shown(&capture)), ("out", shown(&out))],
+            );
+            let started = Instant::now();
+            let capture = Capture::read(&capture)?;
+            publish::run(&workspace, &capture, &out, &mut |event| {
+                ui.stage(event, &publish::STAGES)
+            })?;
+            ui.published(&out, started);
+        }
+        Command::Serve {
+            port,
+            captures,
+            web,
+        } => {
+            let server = Arc::new(Server::new(workspace, captures.clone()));
+            let url = format!("http://127.0.0.1:{port}");
+            if ui.json {
+                ui.emit(&serde_json::json!({
+                    "event": "serving", "url": url, "captures": captures, "pairing_code": server.pairing_code()
+                }));
+            } else {
+                ui.header(
+                    "serve",
+                    &[
+                        ("url", url),
+                        ("captures", shown(&captures)),
+                        ("pair", server.pairing_code().to_string()),
+                    ],
+                );
+                ui.note("Type the pairing code on the phone once. Uploaded captures land in the directory above; publish one with `provenance publish --capture DIR`. Ctrl-C stops.");
+            }
+            serve::run(server.router(web), port)?;
         }
         Command::Verify { file, cell } => {
             ensure!(file.exists(), "{} does not exist", file.display());
@@ -253,7 +301,7 @@ impl Ui {
     fn header(&self, command: &str, fields: &[(&str, String)]) {
         self.line(style(format!("provenance {command}")).bold());
         for (label, value) in fields {
-            self.line(format!("  {}  {value}", style(format!("{label:<5}")).dim()));
+            self.line(format!("  {}  {value}", style(format!("{label:<8}")).dim()));
         }
         self.line("");
     }
@@ -306,13 +354,14 @@ impl Ui {
         }
     }
 
-    fn stage(&self, event: Event) {
+    /// `stages` numbers the stage among those the command runs.
+    fn stage(&self, event: Event, stages: &[Stage]) {
         if self.json {
             return self.emit(&event);
         }
         let label = |stage: Stage| {
-            let number = STAGES.iter().position(|each| *each == stage).unwrap_or(0) + 1;
-            format!("{number}/{} {:<14}", STAGES.len(), stage.title())
+            let number = stages.iter().position(|each| *each == stage).unwrap_or(0) + 1;
+            format!("{number}/{} {:<14}", stages.len(), stage.title())
         };
         match event {
             Event::Started { stage } => self.start(label(stage)),
@@ -325,6 +374,20 @@ impl Ui {
                 self.done(&label(stage), seconds, &detail);
             }
         }
+    }
+
+    fn published(&self, out: &Path, started: Instant) {
+        let signed = shown(&out.join("signed.png"));
+        self.line(format!(
+            "\n{} published {} in {:.0}s",
+            style("✓").green(),
+            style(&signed).bold(),
+            started.elapsed().as_secs_f64()
+        ));
+        self.line(format!(
+            "  next  provenance verify {signed}\n        provenance attack --run {}",
+            shown(out)
+        ));
     }
 
     fn verdict(&self, verdict: &Verdict) {
@@ -353,7 +416,7 @@ impl Ui {
                 if let Some(claim) = &verdict.claim {
                     println!(
                         "  these pixels are the left half of an original that device {} signed,\n  together with a coordinate in cell {}, at {} (device time)",
-                        provenance::capture::short(&claim.device),
+                        short(&claim.device),
                         claim.cell,
                         claim.captured_at
                     );

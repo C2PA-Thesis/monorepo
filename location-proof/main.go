@@ -36,6 +36,7 @@ import (
 const usage = `usage:
   location-proof setup  --params DIR
   location-proof region --cell CELL
+  location-proof cell   --resolution N           < coordinate.json
   location-proof commit                          < secrets.json
   location-proof prove  --params DIR --cell CELL < secrets.json
   location-proof verify --params DIR --cell CELL --envelope HEX --proof BASE64`
@@ -46,10 +47,14 @@ const (
 	verifyingKeyFile = "verifying.key"
 )
 
-type secrets struct {
+type coordinate struct {
 	Latitude  float64 `json:"latitude"`
 	Longitude float64 `json:"longitude"`
-	Salt      string  `json:"salt"`
+}
+
+type secrets struct {
+	coordinate
+	Salt string `json:"salt"`
 }
 
 // region is the public tuple the circuit checks the coordinate against.
@@ -79,6 +84,7 @@ func run(args []string, stdin io.Reader, stdout io.Writer) error {
 	flags.SetOutput(io.Discard)
 	params := flags.String("params", "", "")
 	cell := flags.String("cell", "", "")
+	resolution := flags.Int("resolution", -1, "")
 	envelope := flags.String("envelope", "", "")
 	proof := flags.String("proof", "", "")
 	if err := flags.Parse(args[1:]); err != nil {
@@ -96,6 +102,19 @@ func run(args []string, stdin io.Reader, stdout io.Writer) error {
 			return err
 		}
 		r, err := regionOf(*cell)
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(stdout).Encode(r)
+	case "cell":
+		if *resolution < 0 {
+			return fmt.Errorf("--resolution is required\n%s", usage)
+		}
+		var c coordinate
+		if err := readJSON(stdin, &c); err != nil {
+			return err
+		}
+		r, err := cellOf(c, *resolution)
 		if err != nil {
 			return err
 		}
@@ -179,14 +198,8 @@ func prove(dir, cellText string, s secrets, stdout io.Writer) error {
 		return err
 	}
 	// Refuse here with a readable message instead of an unsatisfied constraint.
-	latRadians, lngRadians := math.Float32frombits(lat), math.Float32frombits(lng)
-	tuple, err := loc2index32.NativeFaceIJK(latRadians, lngRadians, r.Resolution)
-	if err != nil {
+	if err := checkInside(math.Float32frombits(lat), math.Float32frombits(lng), r); err != nil {
 		return err
-	}
-	if cellAt(latRadians, lngRadians, r.Resolution).String() != r.Cell ||
-		tuple.Face != r.Face || tuple.I != r.I || tuple.J != r.J || tuple.K != r.K {
-		return fmt.Errorf("the coordinate is not in cell %s", r.Cell)
 	}
 	envelope, err := loc2index32.NativeEnvelope(lat, lng, salt)
 	if err != nil {
@@ -290,6 +303,37 @@ func regionOf(text string) (region, error) {
 	return region{Cell: text, Resolution: cell.Resolution(), Face: tuple.Face, I: tuple.I, J: tuple.J, K: tuple.K}, nil
 }
 
+// cellOf maps a coordinate to the cell at `resolution` that the circuit will
+// accept, as the capture step needs before any proof exists.
+func cellOf(c coordinate, resolution int) (region, error) {
+	lat, lng, err := c.radians()
+	if err != nil {
+		return region{}, err
+	}
+	if resolution < 0 || resolution > h3.MaxResolution {
+		return region{}, fmt.Errorf("resolution %d is not between 0 and %d", resolution, h3.MaxResolution)
+	}
+	r, err := regionOf(cellAt(lat, lng, resolution).String())
+	if err != nil {
+		return region{}, err
+	}
+	return r, checkInside(lat, lng, r)
+}
+
+// checkInside runs the circuit's own mapping natively and compares it with
+// the region, so a coordinate the circuit would place elsewhere is refused.
+func checkInside(lat, lng float32, r region) error {
+	tuple, err := loc2index32.NativeFaceIJK(lat, lng, r.Resolution)
+	if err != nil {
+		return err
+	}
+	if cellAt(lat, lng, r.Resolution).String() != r.Cell ||
+		tuple.Face != r.Face || tuple.I != r.I || tuple.J != r.J || tuple.K != r.K {
+		return fmt.Errorf("the coordinate is not in cell %s", r.Cell)
+	}
+	return nil
+}
+
 // radians is the coordinate encoding the circuit uses: float32 radians.
 func radians(degrees float64) float32 {
 	return float32(degrees * math.Pi / 180)
@@ -301,24 +345,37 @@ func cellAt(lat, lng float32, resolution int) h3.Cell {
 
 func readSecrets(stdin io.Reader) (secrets, error) {
 	var s secrets
+	return s, readJSON(stdin, &s)
+}
+
+func readJSON(stdin io.Reader, value any) error {
 	decoder := json.NewDecoder(stdin)
 	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&s); err != nil {
-		return s, fmt.Errorf("reading secrets from stdin: %w", err)
+	if err := decoder.Decode(value); err != nil {
+		return fmt.Errorf("reading stdin: %w", err)
 	}
-	return s, nil
+	return nil
+}
+
+// radians returns the coordinate as the circuit takes it, float32 radians.
+func (c coordinate) radians() (lat, lng float32, err error) {
+	if !(c.Latitude >= -90 && c.Latitude <= 90 && c.Longitude >= -180 && c.Longitude <= 180) {
+		return 0, 0, fmt.Errorf("coordinate (%v, %v) is out of range", c.Latitude, c.Longitude)
+	}
+	return radians(c.Latitude), radians(c.Longitude), nil
 }
 
 // parse returns the coordinate as IEEE-754 bits of float32 radians, and the salt.
 func (s secrets) parse() (lat, lng uint32, salt *big.Int, err error) {
-	if !(s.Latitude >= -90 && s.Latitude <= 90 && s.Longitude >= -180 && s.Longitude <= 180) {
-		return 0, 0, nil, fmt.Errorf("coordinate (%v, %v) is out of range", s.Latitude, s.Longitude)
+	latRadians, lngRadians, err := s.radians()
+	if err != nil {
+		return 0, 0, nil, err
 	}
 	salt, err = parseScalar(s.Salt)
 	if err != nil {
 		return 0, 0, nil, fmt.Errorf("salt: %w", err)
 	}
-	return math.Float32bits(radians(s.Latitude)), math.Float32bits(radians(s.Longitude)), salt, nil
+	return math.Float32bits(latRadians), math.Float32bits(lngRadians), salt, nil
 }
 
 func formatScalar(value *big.Int) string {

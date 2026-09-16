@@ -5,7 +5,7 @@ use c2pa::{create_signer, Builder, Reader, SigningAlg, ValidationState};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use crate::capture::Receipt;
+use crate::receipt::Receipt;
 
 /// Label of the custom assertion carrying the receipt and both proofs.
 pub const LABEL: &str = "edu.utdt.td8.zkloc";
