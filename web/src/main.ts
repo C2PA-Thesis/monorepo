@@ -1,8 +1,10 @@
-// The capture flow: pair once, take a photo, frame it, pick a resolution,
-// then compute both hashes, sign the receipt on the device, and upload.
+// The capture flow: pair once, take a photo, frame it, choose the crop and
+// the resolution, then compute both hashes, sign the receipt on the device,
+// and upload.
 
 import * as api from "./api";
 import { base64, framing, type Framing } from "./camera";
+import { cropSelector, type CropSelector } from "./crop";
 import { envelope, freshSalt } from "./envelope";
 import { fingerprint } from "./fingerprint";
 import { loadOrCreateKey, type DeviceKey } from "./key";
@@ -20,6 +22,7 @@ const result = $("result");
 const log = $("log");
 
 let key: DeviceKey;
+let crop: CropSelector;
 let fix: GeolocationPosition | undefined;
 let current: { framing: Framing; capturedAt: string; fix: GeolocationPosition } | undefined;
 
@@ -37,6 +40,10 @@ async function main() {
       deviceStatus.textContent = String(error);
     }
   };
+
+  crop = cropSelector($("stage"), $("crop-box"), (rect) => {
+    $("crop").textContent = `Crop: ${rect.width}x${rect.height} at (${rect.x}, ${rect.y}). Drag on the photo to change it.`;
+  });
 
   // Watching from page load means the fix is fresh when the photo arrives.
   navigator.geolocation.watchPosition(
@@ -108,6 +115,7 @@ async function submit() {
       receipt,
       cell,
       resolution: Number(resolutionInput.value),
+      crop: crop.get(),
       accuracy_meters: coords.accuracy,
     });
     say(`Accepted as ${accepted.id}.\nOn the laptop: provenance publish --capture ${accepted.dir}`);

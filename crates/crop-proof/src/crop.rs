@@ -18,17 +18,18 @@ use subroutines::{
 use transcript::IOPTranscript;
 
 use crate::{
+    crop,
     iop::{self, challenge, check, poly, Opening, OpeningPoints, Poly},
-    left_half,
     wire::{self, BatchOpening, CropProof, Sumcheck},
-    Fingerprint, Pcs, ProverParams, RgbImage, VerifierParams, CROP, F, NUM_VARS,
+    Fingerprint, Pcs, ProverParams, Rect, RgbImage, VerifierParams, F, NUM_VARS,
 };
 
-/// Proves that `crop` is the left half of `original`, whose fingerprint is public.
+/// Proves that `published` is the `rect` of `original`, whose fingerprint is public.
 pub fn prove(
     params: &ProverParams,
     original: &RgbImage,
-    crop: &RgbImage,
+    published: &RgbImage,
+    rect: Rect,
     fingerprint: &Fingerprint,
 ) -> Result<Vec<u8>> {
     ensure!(
@@ -36,29 +37,32 @@ pub fn prove(
         "the fingerprint does not match the original image"
     );
     ensure!(
-        left_half(original)? == *crop,
-        "the published image is not the left half of the original"
+        crop(original, rect)? == *published,
+        "the published image is not the {rect} of the original"
     );
-    wire::encode(&prove_core(&params.pcs, original)?)
+    wire::encode(&prove_core(&params.pcs, original, rect)?)
 }
 
-/// Checks a crop proof against the published pixels and the public fingerprint.
+/// Checks a crop proof against the published pixels, the claimed rectangle
+/// and the public fingerprint.
 pub fn verify(
     params: &VerifierParams,
-    crop: &RgbImage,
+    published: &RgbImage,
+    rect: Rect,
     fingerprint: &Fingerprint,
     proof: &[u8],
 ) -> Result<()> {
+    rect.check()?;
     ensure!(
-        crop.size() == CROP,
-        "the published image is {}, expected {CROP}",
-        crop.size()
+        published.size() == rect.size(),
+        "the published image is {}, but the claimed crop is {rect}",
+        published.size()
     );
     let hashes = fingerprint.elements()?;
     let proof = wire::decode(proof)?;
     // A malformed proof can reach assertions inside the arkworks and hyperplonk verifiers.
     catch_unwind(AssertUnwindSafe(|| {
-        verify_core(&params.pcs, crop, &hashes, &proof)
+        verify_core(&params.pcs, published, rect, &hashes, &proof)
     }))
     .map_err(|_| anyhow!("the image proof is malformed"))?
 }
@@ -78,7 +82,11 @@ fn append(
     )
 }
 
-fn prove_core(pcs: &MultilinearProverParam<Bls12_381>, original: &RgbImage) -> Result<CropProof> {
+fn prove_core(
+    pcs: &MultilinearProverParam<Bls12_381>,
+    original: &RgbImage,
+    rect: Rect,
+) -> Result<CropProof> {
     let channels: [Poly; 3] = original
         .channels()
         .each_ref()
@@ -98,12 +106,9 @@ fn prove_core(pcs: &MultilinearProverParam<Bls12_381>, original: &RgbImage) -> R
     for (channel, pixels) in channels.iter().zip(original.channels()) {
         ranges.push(iop::prove_range(channel, pixels, pcs, &mut transcript)?);
     }
-    let crop_challenges = check(
-        transcript.get_and_append_challenge_vectors(b"frievald", CROP.pixels()),
-        "deriving crop challenges",
-    )?;
+    let crop_challenges = crop_challenges(&mut transcript, rect)?;
     let crop = iop::prove_products(
-        &poly(iop::crop_weights(&crop_challenges)),
+        &poly(iop::crop_weights(rect, &crop_challenges)),
         &channels,
         &mut transcript,
     )?;
@@ -192,6 +197,19 @@ fn evaluate(polynomial: &Poly, point: &[F]) -> Result<F> {
         .ok_or_else(|| anyhow!("evaluation point has {} coordinates", point.len()))
 }
 
+/// One challenge per published pixel, after binding the rectangle so a proof
+/// cannot be presented for another one.
+fn crop_challenges(transcript: &mut IOPTranscript<F>, rect: Rect) -> Result<Vec<F>> {
+    check(
+        transcript.append_message(b"crop", &rect.bytes()),
+        "appending the crop to the transcript",
+    )?;
+    check(
+        transcript.get_and_append_challenge_vectors(b"frievald", rect.size().pixels()),
+        "deriving crop challenges",
+    )
+}
+
 fn aux_info(num_variables: usize) -> VPAuxInfo<F> {
     VPAuxInfo {
         max_degree: 2,
@@ -209,7 +227,8 @@ struct RangeClaim {
 
 fn verify_core(
     pcs: &MultilinearVerifierParam<Bls12_381>,
-    crop: &RgbImage,
+    published: &RgbImage,
+    rect: Rect,
     hashes: &[Vec<F>; 3],
     proof: &CropProof,
 ) -> Result<()> {
@@ -253,12 +272,9 @@ fn verify_core(
         });
     }
 
-    let crop_challenges = check(
-        transcript.get_and_append_challenge_vectors(b"frievald", CROP.pixels()),
-        "deriving crop challenges",
-    )?;
+    let crop_challenges = crop_challenges(&mut transcript, rect)?;
     let mut crop_claims = Vec::with_capacity(3);
-    for (sumcheck, pixels) in proof.crop.iter().zip(crop.channels()) {
+    for (sumcheck, pixels) in proof.crop.iter().zip(published.channels()) {
         let claimed = crop_challenges
             .iter()
             .zip(pixels)
@@ -344,7 +360,7 @@ fn verify_core(
             "fingerprint check for channel {channel} rejected"
         );
     }
-    let crop_weights = poly(iop::crop_weights(&crop_challenges));
+    let crop_weights = poly(iop::crop_weights(rect, &crop_challenges));
     for (channel, claim) in crop_claims.iter().enumerate() {
         ensure!(
             claim.expected == evaluate(&crop_weights, &claim.point)? * image[2 + 3 * channel],

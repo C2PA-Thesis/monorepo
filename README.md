@@ -1,8 +1,8 @@
 # C2PA private location attestation
 
 Research prototype for thesis P27. A reader checks that a published photo is
-the left half of an original captured by a trusted device inside a stated H3
-cell. The original pixels and the exact coordinate are not published.
+a stated rectangle of an original captured by a trusted device inside a stated
+H3 cell. The original pixels and the exact coordinate are not published.
 
 ## Background
 
@@ -52,8 +52,8 @@ receipt:
   over BN254, from the zk-Location fork.
 
 The published PNG carries the receipt, a HyperVerITAS PST proof that its
-pixels are the left half of the fingerprinted original, and a ZKLP Groth16 [6]
-proof that the committed coordinate lies in the claimed cell. The two proofs
+pixels are the claimed rectangle of the fingerprinted original, and a ZKLP
+Groth16 [6] proof that the committed coordinate lies in the claimed cell. The two proofs
 run on different fields and never reference each other. The device signature
 over both values is what binds them to one capture.
 
@@ -112,7 +112,7 @@ provenance demo
   out    out
 
   ✓ 1/6 capture           1.7s  fingerprint and envelope signed by device 3fb1…0ef1
-  ✓ 2/6 crop              0.0s  kept the 512x512 left half
+  ✓ 2/6 crop              0.0s  kept 512x512 at (0, 0)
   ✓ 3/6 location proof    0.6s  Groth16 proof for cell 87c2e3020ffffff, 196 bytes
   ✓ 4/6 crop proof       18.2s  HyperVerITAS PST proof, 36 KB
   ✓ 5/6 publish           0.0s  200 KB, C2PA-signed
@@ -122,7 +122,8 @@ provenance demo
 ```
 
 `provenance demo --photo PATH --at LAT,LON --cell CELL` uses another photo and
-simulated coordinate; nothing reads GPS from the photo. `--json` prints one
+simulated coordinate; nothing reads GPS from the photo. The demo publishes the
+left half; a phone capture publishes the rectangle drawn on the phone. `--json` prints one
 JSON object per line. Setup writes about 220 MB to `.provenance`, or to
 `PROVENANCE_HOME`.
 
@@ -133,16 +134,16 @@ JSON object per line. Setup writes about 220 MB to `.provenance`, or to
 
 A capture is a directory: `original.png` and `secrets.json` (the private
 witness, the latter mode 0600), `receipt.json` (signed by the device), and
-`capture.json` (the cell chosen at capture, the resolution, and whether a phone
-or the demo made it). `provenance demo` writes one into `out` and publishes it
+`capture.json` (the cell and the crop rectangle chosen at capture, the
+resolution, and whether a phone or the demo made it). `provenance demo` writes one into `out` and publishes it
 there. `provenance publish --capture DIR [--out DIR]` does the same for any
 capture directory, including one a phone uploaded.
 
 ### Capture from a phone
 
 `web/` is the page a phone opens. It takes the photo with the native camera,
-frames it to 2:1, reads the GPS fix, computes the fingerprint and the envelope
-on the phone, signs the receipt with a key that never leaves the browser, and
+frames it to 2:1, lets the photographer draw the rectangle to publish, reads
+the GPS fix, computes the fingerprint and the envelope on the phone, signs the receipt with a key that never leaves the browser, and
 uploads the capture. `provenance serve --web web/dist` serves the page and the
 API together, on port 8791 by default, and prints a pairing code the phone
 types once. Browsers only allow the camera and geolocation over HTTPS, so for
@@ -155,7 +156,7 @@ The API the page calls:
 | --- | --- | --- |
 | `POST /api/pair` | `code`, `public_key` (P-256, PEM) | Adds the phone's key to the trusted keys, when the code matches the one printed |
 | `POST /api/cell` | `latitude`, `longitude`, `resolution` | The H3 cell the location circuit maps the coordinate to, or a refusal for cells it cannot represent |
-| `POST /api/captures` | `original_png` (base64), `secrets`, `receipt`, `cell`, `resolution`, `accuracy_meters` | Stores the capture under `captures/`, after checking it as a reader would |
+| `POST /api/captures` | `original_png` (base64), `secrets`, `receipt`, `cell`, `resolution`, `crop`, `accuracy_meters` | Stores the capture under `captures/`, after checking it as a reader would |
 
 An upload is refused unless the fingerprint matches the pixels, the receipt is
 signed by a trusted key, the envelope matches the secrets, and the cell is the
@@ -184,7 +185,7 @@ rejection, and each line names the value it shares with the receipt.
 | --- | --- | --- |
 | C2PA manifest | c2pa-rs reports it neither Valid nor Trusted, or it lacks exactly one `edu.utdt.td8.zkloc` assertion | 10 |
 | Device receipt | the receipt is not signed by a trusted device key | 11 |
-| Crop proof | the file's pixels are not the left half of the image the receipt fingerprints | 12 |
+| Crop proof | the file's pixels are not the claimed rectangle of the image the receipt fingerprints | 12 |
 | Location proof | the proof does not verify for the receipt's envelope and the claimed cell | 13 |
 
 ```text
@@ -193,11 +194,11 @@ provenance verify
 
   ✓ C2PA manifest   valid, with one edu.utdt.td8.zkloc assertion
   ✓ device receipt  device 3fb1…0ef1 signed fingerprint 61b9…42e9 and envelope 0x2865…fe26
-  ✓ crop proof      these pixels are the left half of the original with fingerprint 61b9…42e9
+  ✓ crop proof      these pixels are the 512x512 at (0, 0) of the original with fingerprint 61b9…42e9
   ✓ location proof  the coordinate in envelope 0x2865…fe26 is in cell 87c2e3020ffffff
 
 ✓ accepted
-  these pixels are the left half of an original that device 3fb1…0ef1 signed,
+  these pixels are the 512x512 at (0, 0) of an original that device 3fb1…0ef1 signed,
   together with a coordinate in cell 87c2e3020ffffff, at 2026-09-14T20:42:05Z (device time)
   The cell holds for an honest location prover only; see Known limits in the README.
 ```
@@ -219,6 +220,7 @@ and a second genuine capture: the same photo mirrored, taken at Tokyo Station.
 | `fingerprint` | swap two fingerprint values | device receipt |
 | `resigned-fingerprint` | swap two fingerprint values and re-sign with the device key | crop proof |
 | `pixel` | change one published pixel | crop proof |
+| `rectangle` | claim the same pixels are one column to the right | crop proof |
 | `region` | claim the other capture's cell for this location proof | location proof |
 | `cross-photo-location` | attach the other capture's location proof and cell | location proof |
 | `cross-photo-receipt` | attach the other capture's receipt, location proof and cell | crop proof |
@@ -228,7 +230,7 @@ the honest prover refuses a cell that does not contain the coordinate.
 
 ## Assertion
 
-`edu.utdt.td8.zkloc`, version 2.
+`edu.utdt.td8.zkloc`, version 3.
 
 | Field | Contents |
 | --- | --- |
@@ -238,6 +240,7 @@ the honest prover refuses a cell that does not contain the coordinate.
 | `receipt.device` | SHA-256 of the device public key in SubjectPublicKeyInfo DER |
 | `receipt.signature` | Base64 DER ECDSA P-256 over the compact JSON of the four fields above |
 | `cell` | H3 cell the location proof claims |
+| `crop` | The rectangle of the original the crop proof claims, as `x`, `y`, `width`, `height` in pixels from the top-left. It is bound into the proof transcript |
 | `location_proof` | Base64 Groth16 proof |
 | `image_proof` | Base64 PST proof |
 
@@ -275,7 +278,7 @@ the honest prover refuses a cell that does not contain the coordinate.
   signing key from the camera" (§3), and this project assumes the same of
   whichever key is paired. The C2PA editor signs with the SDK sample
   certificate, which no trust list includes.
-- **One edit.** Only a 1024x512 original cropped to its 512x512 left half.
+- **One edit.** Only a rectangular crop of a 1024x512 original.
 
 ## Measurements
 

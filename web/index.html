@@ -27,7 +27,11 @@
         </label>
         <p id="gps">Waiting for a GPS fix…</p>
         <div id="framing" hidden>
-          <canvas id="preview" width="1024" height="512"></canvas>
+          <div id="stage">
+            <canvas id="preview" width="1024" height="512"></canvas>
+            <div id="crop-box"></div>
+          </div>
+          <p id="crop">Crop: 512x512 at (0, 0). Drag on the photo to change it.</p>
           <label>Frame <input id="frame" type="range" min="0" max="1" step="0.001" value="0.5" /></label>
           <label>Resolution <span id="resolution-value">7</span>
             <input id="resolution" type="range" min="0" max="15" step="1" value="7" />

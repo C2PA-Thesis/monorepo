@@ -2,7 +2,7 @@ use std::path::Path;
 
 use anyhow::{ensure, Context, Result};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
-use crop_proof::VerifierParams;
+use crop_proof::{Rect, VerifierParams};
 use serde::Serialize;
 
 use crate::{
@@ -51,8 +51,8 @@ pub struct Step {
     pub detail: String,
 }
 
-/// The joint statement an accepted file supports: these pixels are the left
-/// half of an original that `device` signed together with a coordinate in `cell`.
+/// The joint statement an accepted file supports: these pixels are the `crop`
+/// of an original that `device` signed together with a coordinate in `cell`.
 /// The two proofs meet only in the receipt, through `fingerprint` and `envelope`.
 #[derive(Debug, Serialize)]
 pub struct Claim {
@@ -66,6 +66,7 @@ pub struct Claim {
     /// The signed envelope, which the location proof ties to the cell.
     pub envelope: String,
     pub cell: String,
+    pub crop: Rect,
 }
 
 #[derive(Debug, Default, Serialize)]
@@ -132,10 +133,17 @@ impl Verifier {
                 let proof = BASE64
                     .decode(&assertion.image_proof)
                     .context("the crop proof is not base64")?;
-                crop_proof::verify(&self.crop_params, &published, &receipt.fingerprint, &proof)
-                    .context("the proof does not tie these pixels to the signed fingerprint")?;
+                crop_proof::verify(
+                    &self.crop_params,
+                    &published,
+                    assertion.crop,
+                    &receipt.fingerprint,
+                    &proof,
+                )
+                .context("the proof does not tie these pixels to the signed fingerprint")?;
                 Ok(format!(
-                    "these pixels are the left half of the original with fingerprint {}",
+                    "these pixels are the {} of the original with fingerprint {}",
+                    assertion.crop,
                     short(&fingerprint)
                 ))
             }),
@@ -170,6 +178,7 @@ impl Verifier {
             fingerprint,
             envelope: receipt.envelope.clone(),
             cell: assertion.cell.clone(),
+            crop: assertion.crop,
         });
         verdict
     }
