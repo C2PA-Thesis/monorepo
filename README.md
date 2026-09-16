@@ -140,9 +140,16 @@ capture directory, including one a phone uploaded.
 
 ### Capture from a phone
 
-`provenance serve` runs the API the capture page uses, on port 8791 by default,
-and prints a pairing code. The page is the next step; the API it will call is
-complete:
+`web/` is the page a phone opens. It takes the photo with the native camera,
+frames it to 2:1, reads the GPS fix, computes the fingerprint and the envelope
+on the phone, signs the receipt with a key that never leaves the browser, and
+uploads the capture. `provenance serve --web web/dist` serves the page and the
+API together, on port 8791 by default, and prints a pairing code the phone
+types once. Browsers only allow the camera and geolocation over HTTPS, so for
+now the phone reaches the laptop through `ngrok http 8791`. See
+[web/README.md](web/README.md).
+
+The API the page calls:
 
 | Call | Body | Effect |
 | --- | --- | --- |
@@ -158,10 +165,10 @@ of it and runs in CI after setup.
 
 The phone computes the fingerprint itself, with `crates/fingerprint` built for
 `wasm32-unknown-unknown` (`cargo build --profile wasm -p fingerprint --target
-wasm32-unknown-unknown`). On an iPhone 15 running iOS 18.7 it took 12.8 s
-across four web workers, with the same digest as the native build, measured on
-2026-09-16 with a throwaway page. The Go tool's `cell` subcommand is what the
-API calls, so the phone never maps coordinates to cells itself.
+wasm32-unknown-unknown`). On an iPhone running iOS 18.7 it took 12.8 s across
+four web workers, with the same digest as the native build, measured on
+2026-09-16. The Go tool's `cell` subcommand is what the API calls, so the phone
+never maps coordinates to cells itself.
 
 Trusted device keys live in `.provenance/trusted/`, one PEM per key, named by
 key id. Setup adds the laptop's simulated device; pairing adds a phone.
