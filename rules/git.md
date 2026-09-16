@@ -30,8 +30,8 @@ docs(readme): document the PEM certificate gotcha
 chore(ci): pin the c2patool version
 ```
 
-Allowed scopes are the top level folders plus `docs`, `ci` and `repo`. Adding a
-folder means adding its scope to `commitlint.config.mjs`.
+Allowed scopes are the top level folders and Rust crates plus `docs`, `ci` and
+`repo`. Adding a folder or crate means adding its scope to `commitlint.config.mjs`.
 
 ## Signing
 

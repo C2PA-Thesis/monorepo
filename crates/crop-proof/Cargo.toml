@@ -1,0 +1,29 @@
+[package]
+name = "crop-proof"
+description = "HyperVerITAS PST proof that a published image is the left half of a fingerprinted original"
+version = "0.1.0"
+license = "MIT"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+arithmetic = { git = "https://github.com/glgreiner/hyperplonk", rev = "bed02ac877968512f6b920a1a449f4226944ce09" }
+ark-bls12-381 = "0.4"
+ark-ec = "0.4"
+ark-ff = "0.4"
+ark-poly = "0.4"
+ark-serialize = "0.4"
+ark-std = "0.4"
+hex.workspace = true
+rand = "0.8"
+rand_chacha = "0.3"
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+subroutines = { git = "https://github.com/glgreiner/hyperplonk", rev = "bed02ac877968512f6b920a1a449f4226944ce09" }
+transcript = { git = "https://github.com/glgreiner/hyperplonk", rev = "bed02ac877968512f6b920a1a449f4226944ce09" }
+
+[dev-dependencies]
+tempfile = "3"

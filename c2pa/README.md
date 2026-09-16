@@ -31,7 +31,7 @@ certificates and test image. Idempotent.
 Optionally with your own input and manifest:
 
 ```bash
-./scripts/run.sh path/to/image.jpg manifests/zkloc-placeholder.json
+./scripts/run.sh path/to/image.jpg manifests/placeholder-assertion.json
 ```
 
 Outputs land in `out/`:
@@ -133,7 +133,7 @@ discovering it during M3.
 
 ## The placeholder assertion
 
-`manifests/zkloc-placeholder.json` carries `edu.utdt.td8.zkloc` with the shape
+`manifests/placeholder-assertion.json` carries `edu.utdt.td8.zkloc` with the shape
 of the eventual real assertion and dummy values throughout:
 
 - `commitment`: algorithm, what it covers, and the value

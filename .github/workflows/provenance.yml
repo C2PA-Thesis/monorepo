@@ -1,0 +1,62 @@
+name: provenance
+
+on:
+  push:
+    paths: &paths
+      - 'crates/**'
+      - 'location-proof/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - '.github/workflows/provenance.yml'
+  pull_request:
+    paths: *paths
+  workflow_dispatch:
+
+jobs:
+  demo-and-attacks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: location-proof/go.mod
+          cache-dependency-path: location-proof/go.sum
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Lint
+        run: |
+          cargo fmt --check
+          cargo clippy --workspace --all-targets -- -D warnings
+          cd location-proof && test -z "$(gofmt -l .)" && go vet ./...
+
+      - name: Unit tests
+        run: |
+          cargo test --workspace
+          cd location-proof && go test ./...
+
+      - name: Build
+        run: cargo build --release -p provenance
+
+      - name: Set up proof parameters, keys and samples
+        run: ./target/release/provenance setup
+
+      - name: Publish and verify the sample photo
+        run: ./target/release/provenance demo
+
+      - name: Reject every attack at the expected check
+        run: ./target/release/provenance attack
+
+      - name: Upload the published photo and the forged copies
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: provenance-demo
+          path: |
+            out/signed.png
+            out/receipt.json
+            out/attacks/*/signed.png
+          if-no-files-found: warn
