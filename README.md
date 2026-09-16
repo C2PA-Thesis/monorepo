@@ -178,8 +178,9 @@ key id. Setup adds the laptop's simulated device; pairing adds a phone.
 
 The two proofs are verified separately, and they meet only in the receipt: the
 crop proof is checked against the signed fingerprint and the location proof
-against the signed envelope. The checks run in order and stop at the first
-rejection, and each line names the value it shares with the receipt.
+against the signed envelope. Each check first says what it is about to
+establish, then its outcome. The checks run in order and stop at the first
+rejection.
 
 | Check | Rejects the file when | Exit status |
 | --- | --- | --- |
@@ -190,18 +191,22 @@ rejection, and each line names the value it shares with the receipt.
 
 ```text
 provenance verify
-  file   out/signed.png
+  file      out/signed.png
 
-  ✓ C2PA manifest   valid, with one edu.utdt.td8.zkloc assertion
-  ✓ device receipt  device 3fb1…0ef1 signed fingerprint 61b9…42e9 and envelope 0x2865…fe26
-  ✓ crop proof      these pixels are the 512x512 at (0, 0) of the original with fingerprint 61b9…42e9
-  ✓ location proof  the coordinate in envelope 0x2865…fe26 is in cell 87c2e3020ffffff
+  ✓ C2PA manifest      0.0s  reading the C2PA manifest and validating its claim signature → valid, with one edu.utdt.td8.zkloc assertion
+  ✓ device receipt     0.0s  checking the device signature over fingerprint 61b9…42e9 and envelope 0x2865…fe26 → signed by trusted device 3fb1…0ef1 at 2026-09-14T20:42:05Z
+  ✓ crop proof         0.7s  verifying that the published pixels are the 512x512 at (0, 0) of the original with fingerprint 61b9…42e9 → proof accepted
+  ✓ location proof     0.0s  verifying that the coordinate in envelope 0x2865…fe26 lies in cell 87c2e3020ffffff → proof accepted
 
 ✓ accepted
   these pixels are the 512x512 at (0, 0) of an original that device 3fb1…0ef1 signed,
   together with a coordinate in cell 87c2e3020ffffff, at 2026-09-14T20:42:05Z (device time)
   The cell holds for an honest location prover only; see Known limits in the README.
 ```
+
+A rejected file stops at the failing check, which prints its reason, and the
+checks after it show as not run. `--json` prints one object per check event,
+then the verdict.
 
 Short identifiers show the first and last four hex digits. The fingerprint's is
 the SHA-256 of its JSON and only names it on screen. Only when every check
