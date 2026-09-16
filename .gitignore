@@ -3,3 +3,5 @@ target/
 .provenance/
 out/
 captures/
+web/dist/
+web/public/fingerprint.wasm
