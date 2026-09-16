@@ -27,6 +27,20 @@ func TestRegionOfTheDemoCell(t *testing.T) {
 	}
 }
 
+func TestCellOfTheDemoCoordinate(t *testing.T) {
+	coordinate := `{"latitude": -34.5478, "longitude": -58.4462}`
+	output, err := call(t, coordinate, "cell", "--resolution", "7")
+	if err != nil || !strings.Contains(output, demoCell) {
+		t.Fatalf("cell gave %q, %v; want %s", output, err, demoCell)
+	}
+	if _, err := call(t, coordinate, "cell", "--resolution", "16"); err == nil {
+		t.Fatal("accepted resolution 16")
+	}
+	if _, err := call(t, `{"latitude": 91, "longitude": 0}`, "cell", "--resolution", "7"); err == nil {
+		t.Fatal("accepted a latitude out of range")
+	}
+}
+
 func TestProveAndVerify(t *testing.T) {
 	params := t.TempDir()
 	if _, err := call(t, "", "setup", "--params", params); err != nil {

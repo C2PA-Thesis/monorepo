@@ -3,14 +3,13 @@ use std::path::Path;
 use anyhow::{ensure, Context, Result};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use crop_proof::VerifierParams;
-use p256::ecdsa::VerifyingKey;
 use serde::Serialize;
-use sha2::{Digest, Sha256};
 
 use crate::{
-    capture::{self, short},
+    image,
     location::LocationTool,
     manifest::{self, LABEL},
+    receipt::{short, TrustedKeys},
 };
 
 /// Reader checks, in the order they run.
@@ -96,9 +95,9 @@ impl Verdict {
     }
 }
 
-/// What a reader needs: the trusted device key and both proof verifiers.
+/// What a reader needs: the trusted device keys and both proof verifiers.
 pub struct Verifier {
-    pub device: VerifyingKey,
+    pub trusted: TrustedKeys,
     pub crop_params: VerifierParams,
     pub location: LocationTool,
 }
@@ -116,13 +115,11 @@ impl Verifier {
             return verdict;
         };
         let receipt = &assertion.receipt;
-        let fingerprint = hex::encode(Sha256::digest(
-            serde_json::to_vec(&receipt.fingerprint).expect("a fingerprint serializes to JSON"),
-        ));
+        let fingerprint = receipt.fingerprint_digest();
 
         let steps: [(Check, &dyn Fn() -> Result<String>); 3] = [
             (Check::Device, &|| {
-                receipt.verify(&self.device)?;
+                receipt.verify(&self.trusted)?;
                 Ok(format!(
                     "device {} signed fingerprint {} and envelope {}",
                     short(&receipt.device),
@@ -131,7 +128,7 @@ impl Verifier {
                 ))
             }),
             (Check::Image, &|| {
-                let published = capture::read_png(signed)?;
+                let published = image::read_png(signed)?;
                 let proof = BASE64
                     .decode(&assertion.image_proof)
                     .context("the crop proof is not base64")?;

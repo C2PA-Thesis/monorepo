@@ -16,7 +16,7 @@ use subroutines::{
 };
 use transcript::IOPTranscript;
 
-use crate::{fingerprint, Pcs, CROP, F, NUM_VARS, ORIGINAL};
+use crate::{Pcs, CROP, F, NUM_VARS, ORIGINAL};
 
 pub(crate) type Poly = Arc<DenseMultilinearExtension<F>>;
 pub(crate) type SumCheckProof = <PolyIOP<F> as SumCheck<F>>::SumCheckProof;

@@ -27,6 +27,9 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      - name: Add the WebAssembly target for the fingerprint
+        run: rustup target add wasm32-unknown-unknown
+
       - name: Lint
         run: |
           cargo fmt --check
@@ -39,10 +42,15 @@ jobs:
           cd location-proof && go test ./...
 
       - name: Build
-        run: cargo build --release -p provenance
+        run: |
+          cargo build --release -p provenance
+          cargo build --profile wasm -p fingerprint --target wasm32-unknown-unknown
 
       - name: Set up proof parameters, keys and samples
         run: ./target/release/provenance setup
+
+      - name: Accept a signed capture through the API and reject tampered ones
+        run: cargo test --release -p provenance --test serve -- --ignored
 
       - name: Publish and verify the sample photo
         run: ./target/release/provenance demo

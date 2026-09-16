@@ -16,9 +16,9 @@ ark-ff = "0.4"
 ark-poly = "0.4"
 ark-serialize = "0.4"
 ark-std = "0.4"
+fingerprint = { path = "../fingerprint" }
 hex.workspace = true
 rand = "0.8"
-rand_chacha = "0.3"
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true

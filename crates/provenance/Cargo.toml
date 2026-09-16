@@ -8,6 +8,7 @@ publish.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+axum = "0.8"
 base64 = "0.22"
 c2pa = { version = "0.90", default-features = false, features = ["file_io", "rust_native_crypto"] }
 clap = { version = "4", features = ["derive", "env"] }
@@ -22,3 +23,11 @@ serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 time = { version = "0.3", features = ["formatting"] }
+tokio = { version = "1", features = ["rt-multi-thread", "net"] }
+tower-http = { version = "0.7", features = ["fs"] }
+
+[dev-dependencies]
+http-body-util = "0.1"
+tempfile = "3"
+tokio = { version = "1", features = ["macros"] }
+tower = { version = "0.5", features = ["util"] }
