@@ -80,7 +80,9 @@ pub fn run(
     let signed = publish::run(workspace, &capture, out, on)?;
 
     stage(on, Stage::Verify, || {
-        let verdict = workspace.verifier()?.verify(&signed, Some(cell));
+        let verdict = workspace
+            .verifier()?
+            .verify(&signed, Some(cell), &mut |_| {});
         match verdict.rejected {
             Some(step) => bail!(
                 "{} rejected the published file: {}",
