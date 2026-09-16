@@ -203,7 +203,7 @@ pub fn run(
         let outcome = Outcome {
             attack: attack.name,
             expected: attack.expected,
-            verdict: verifier.verify(&forged, None),
+            verdict: verifier.verify(&forged, None, &mut |_| {}),
         };
         on(&outcome);
         outcomes.push(outcome);

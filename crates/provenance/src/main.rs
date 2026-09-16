@@ -19,7 +19,7 @@ use provenance::{
     publish::{Event, Stage},
     receipt::short,
     serve::{self, Server},
-    verify::{Check, Verdict},
+    verify::{self, Check, Verdict},
     Step, Workspace,
 };
 use serde::Serialize;
@@ -226,7 +226,9 @@ fn run(cli: Cli, ui: &Ui) -> Result<ExitCode> {
         Command::Verify { file, cell } => {
             ensure!(file.exists(), "{} does not exist", file.display());
             ui.header("verify", &[("file", shown(&file))]);
-            let verdict = workspace.verifier()?.verify(&file, cell.as_deref());
+            let verdict = workspace
+                .verifier()?
+                .verify(&file, cell.as_deref(), &mut |event| ui.check(event));
             ui.verdict(&verdict);
             if let Some(step) = &verdict.rejected {
                 return Ok(ExitCode::from(step.check.exit_code()));
@@ -390,19 +392,65 @@ impl Ui {
         ));
     }
 
+    /// One line per check: what it set out to establish, then how it ended.
+    fn check(&self, event: verify::Event) {
+        if self.json {
+            return self.emit(&event);
+        }
+        let label = |check: Check| format!("{:<15}", check.title());
+        match event {
+            verify::Event::Checking { check, intent } => {
+                self.start(format!("{} {intent}", label(check)))
+            }
+            verify::Event::Passed {
+                check,
+                intent,
+                outcome,
+                seconds,
+            } => {
+                self.stop();
+                self.done(
+                    &label(check),
+                    seconds,
+                    &format!("{intent} → {}", style(outcome).green()),
+                );
+            }
+            verify::Event::Rejected {
+                check,
+                intent,
+                reason,
+                seconds,
+            } => {
+                self.stop();
+                println!(
+                    "  {} {}  {}  {intent} → {}",
+                    style("✗").red(),
+                    label(check),
+                    style(format!("{seconds:>5.1}s")).dim(),
+                    style(reason).red()
+                );
+            }
+        }
+    }
+
     fn verdict(&self, verdict: &Verdict) {
         if self.json {
             return self.emit(verdict);
         }
-        for check in Check::ALL {
-            let passed = verdict.passed.iter().find(|step| step.check == check);
-            let rejected = verdict.rejected.as_ref().filter(|step| step.check == check);
-            let (mark, detail) = match (passed, rejected) {
-                (Some(step), _) => (style("✓").green(), step.detail.as_str()),
-                (_, Some(step)) => (style("✗").red(), step.detail.as_str()),
-                _ => (style("·").dim(), "not run"),
-            };
-            println!("  {mark} {:<15} {detail}", check.title());
+        let ran = |check: Check| {
+            verdict.passed.iter().any(|step| step.check == check)
+                || verdict
+                    .rejected
+                    .as_ref()
+                    .is_some_and(|step| step.check == check)
+        };
+        for check in Check::ALL.into_iter().filter(|check| !ran(*check)) {
+            println!(
+                "  {} {:<15}  {}",
+                style("·").dim(),
+                check.title(),
+                style("not run").dim()
+            );
         }
         match &verdict.rejected {
             Some(step) => println!(
