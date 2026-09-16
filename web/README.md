@@ -25,10 +25,10 @@ provenance serve --web web/dist    # prints a pairing code
 ngrok http 8791                    # in another terminal; open its https URL on the phone
 ```
 
-On the phone: type the pairing code once, take a photo, slide the frame,
-pick a resolution, and tap Sign and upload. The page prints the capture
-directory; on the laptop, `provenance publish --capture DIR` proves and
-publishes it, and `provenance verify` checks the result.
+On the phone: type the pairing code once, take a photo, slide the frame, drag
+the crop, pick a resolution, and tap Sign and upload. The page prints the
+capture directory; on the laptop, `provenance publish --capture DIR` proves
+and publishes it, and `provenance verify` checks the result.
 
 For page development, `npm run dev` serves the sources with hot reload and
 proxies `/api` to a local `provenance serve`.
@@ -39,6 +39,7 @@ proxies `/api` to a local `provenance serve`.
 | --- | --- | --- |
 | Device key | `src/key.ts` | Non-extractable P-256 key in IndexedDB, created once. Its id is the SHA-256 of the SPKI DER, as the receipt names it. Pairing sends the public key in PEM with the code the laptop printed |
 | Photo | `src/camera.ts` | The native camera through a file input. A 2:1 window the photographer slides, default centered, resized to 1024x512 in a canvas. The pixels and the PNG come from the same canvas |
+| Crop | `src/crop.ts` | The rectangle of that original to publish, drawn by dragging on the preview, default the left half. Recorded with the capture; `provenance publish` applies and proves it |
 | GPS | `src/main.ts` | Watched from page load; the fix and the phone clock are sampled when the photo reaches the page, a few seconds after the shutter |
 | Cell | `src/api.ts` | Asked from `POST /api/cell` for the chosen resolution. The page never maps coordinates itself |
 | Fingerprint | `src/fingerprint.ts` | `crates/fingerprint` built for wasm, 128 rows split across web workers. 12.8 s on an iPhone with four workers |

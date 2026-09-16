@@ -2,7 +2,7 @@ use std::{fs, path::Path};
 
 use anyhow::{ensure, Context, Result};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
-use crop_proof::RgbImage;
+use crop_proof::{Rect, RgbImage};
 use serde::Serialize;
 
 use crate::{
@@ -87,6 +87,16 @@ pub const ATTACKS: &[Attack] = &[
             let mut channels = evidence.pixels.channels().clone();
             channels[0][0] ^= 1;
             evidence.pixels = RgbImage::new(evidence.pixels.size(), channels)?;
+            Ok(())
+        },
+    },
+    Attack {
+        name: "rectangle",
+        summary: "claim the same pixels are one column to the right",
+        expected: Check::Image,
+        needs_other_capture: false,
+        tamper: |evidence, _| {
+            evidence.assertion.crop.x += 1;
             Ok(())
         },
     },
@@ -222,11 +232,13 @@ fn other_capture(workspace: &Workspace, run: &Path, device: &DeviceKey) -> Resul
         mirrored,
         OTHER_PLACE.coordinate,
         OTHER_PLACE.cell,
+        Rect::LEFT_HALF,
     )?;
     let proof = tool.prove(&capture.secrets, OTHER_PLACE.cell)?;
     Ok(Assertion::new(
         capture.receipt,
         OTHER_PLACE.cell.to_string(),
+        Rect::LEFT_HALF,
         proof.proof,
         String::new(),
     ))

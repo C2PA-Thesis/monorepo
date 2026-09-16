@@ -59,10 +59,27 @@ button:disabled {
   background: #999;
 }
 
+#stage {
+  position: relative;
+  overflow: hidden;
+  border-radius: 0.4rem;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
 canvas {
+  display: block;
   width: 100%;
   height: auto;
-  border-radius: 0.4rem;
+}
+
+#crop-box {
+  position: absolute;
+  box-sizing: border-box;
+  border: 2px solid #1a5cff;
+  box-shadow: 0 0 0 9999px rgb(0 0 0 / 45%);
+  pointer-events: none;
 }
 
 pre {
