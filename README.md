@@ -74,6 +74,7 @@ flowchart LR
 | `location-proof` | Go CLI for the location proof, built against the zk-Location fork |
 | `crates/provenance` | Capture, publish, the capture API, reader checks, attacks, and the `provenance` CLI |
 | `c2pa` | The C2P-19 custom assertion round trip with `c2patool` |
+| `scripts` | `setup.sh`, `serve.sh`, `publish.sh` and `demo.sh`: the whole flow in four commands |
 
 ### Code from other repositories
 
@@ -89,8 +90,19 @@ flowchart LR
 
 ## Run
 
-Requires Rust (the toolchain pinned in `rust-toolchain.toml` installs itself),
-Go 1.23 or later, and curl. From the repository root:
+Requires Rust (the toolchain pinned in `rust-toolchain.toml`), Go 1.23 or
+later, Node 22, ngrok with an auth token, and curl. The short way, from the
+repository root:
+
+```bash
+scripts/setup.sh      # build the CLI and the page, run setup, check ngrok
+scripts/serve.sh      # serve the page and the API, open the tunnel, print the URL and pairing code
+scripts/publish.sh    # prove, sign and verify the newest phone capture (or pass an id)
+scripts/demo.sh       # the laptop-only demo and every attack
+```
+
+The scripts find cargo through `rust-toolchain.toml` when it is not on PATH.
+Ctrl-C on `serve.sh` stops the server and the tunnel. What they run, by hand:
 
 ```bash
 cargo install --path crates/provenance

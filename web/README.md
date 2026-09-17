@@ -18,7 +18,8 @@ npm run build    # type-checks and writes dist/
 
 Then, from the repository root, serve the page and the API together and
 expose them to the phone over HTTPS. Browsers only allow the camera and
-geolocation on a secure origin, so plain HTTP over the LAN will not do:
+geolocation on a secure origin, so plain HTTP over the LAN will not do.
+`scripts/serve.sh` does both and prints the URL; by hand:
 
 ```bash
 provenance serve --web web/dist    # prints a pairing code
