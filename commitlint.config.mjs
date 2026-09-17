@@ -11,6 +11,7 @@ export default {
         'fingerprint',
         'location-proof',
         'provenance',
+        'scripts',
         'web',
         'zklp',
         'hyperveritas',
