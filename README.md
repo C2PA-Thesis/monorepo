@@ -72,9 +72,10 @@ flowchart LR
 | `crates/fingerprint` | The lattice fingerprint, built natively for the prover and for WebAssembly for the capture device |
 | `crates/crop-proof` | The PST crop proof, extracted from HyperVerITAS |
 | `location-proof` | Go CLI for the location proof, built against the zk-Location fork |
-| `crates/provenance` | Capture, publish, the capture API, reader checks, attacks, and the `provenance` CLI |
+| `crates/provenance` | Capture, publish, the HTTP API, reader checks, attacks, and the `provenance` CLI |
+| `web` | The capture page a phone opens, and the presenter page the laptop shows |
 | `c2pa` | The C2P-19 custom assertion round trip with `c2patool` |
-| `scripts` | `setup.sh`, `serve.sh`, `publish.sh` and `demo.sh`: the whole flow in four commands |
+| `scripts` | `setup.sh` once, then `demo.sh phone` or `demo.sh` |
 
 ### Code from other repositories
 
@@ -91,18 +92,53 @@ flowchart LR
 ## Run
 
 Requires Rust (the toolchain pinned in `rust-toolchain.toml`), Go 1.23 or
-later, Node 22, ngrok with an auth token, and curl. The short way, from the
-repository root:
+later, Node 22, curl, and for the phone demo ngrok with an auth token
+(`ngrok config add-authtoken <TOKEN>`). From the repository root:
 
 ```bash
-scripts/setup.sh      # build the CLI and the page, run setup, check ngrok
-scripts/serve.sh      # serve the page and the API, open the tunnel, print the URL and pairing code
-scripts/publish.sh    # prove, sign and verify the newest phone capture (or pass an id)
-scripts/demo.sh       # the laptop-only demo and every attack
+scripts/setup.sh
 ```
 
+Builds the CLI, the location prover and both pages, creates the proof
+parameters and keys (about 220 MB in `.provenance`), and checks ngrok. Run it
+again at any time; it skips what exists.
+
+### Phone demo
+
+```bash
+scripts/demo.sh phone
+```
+
+1. The laptop opens the presenter page at `http://127.0.0.1:8791/screen`. It
+   shows a QR code, the pairing code, and every capture as it arrives.
+2. Scan the QR code with the phone. The capture page opens over HTTPS through
+   the ngrok tunnel and pairs the phone, so the laptop trusts its key. The
+   free ngrok plan shows a notice first; tap Visit Site.
+3. On the phone: allow location, take a photo, choose the rectangle to publish
+   and the size of the cell, then tap Sign and send.
+4. The laptop proves the crop and the location, signs the C2PA manifest and
+   verifies the result, in about 20 s. Both screens follow each step. The phone
+   ends on the verified file, which it can download.
+
+The presenter page also has a Verify a file tab: drop any PNG, such as a
+forged copy from `out/attacks`, to run the reader checks on it. Ctrl-C stops
+the server and the tunnel. `scripts/serve.sh` is the same command;
+`scripts/publish.sh [ID]` publishes a stored capture from the terminal.
+
+### Laptop-only demo
+
+```bash
+scripts/demo.sh
+```
+
+A simulated capture with the laptop's device key, published and verified, then
+every attack from [Attacks](#attacks), each rejected by the expected check.
+`scripts/demo.sh --out DIR` writes the run somewhere else.
+
+### The CLI
+
 The scripts find cargo through `rust-toolchain.toml` when it is not on PATH.
-Ctrl-C on `serve.sh` stops the server and the tunnel. What they run, by hand:
+What they run, by hand:
 
 ```bash
 cargo install --path crates/provenance
@@ -113,7 +149,7 @@ provenance verify out/signed.png   # run the reader checks on any file
 provenance attack                  # forge tampered copies; each must be rejected
 provenance inspect out/signed.png  # print the assertion
 provenance publish --capture DIR   # prove and publish any capture directory
-provenance serve                   # the API a phone captures through
+provenance serve --web web/dist    # the pages and the API; publishes each upload as it arrives
 ```
 
 ```text
@@ -153,28 +189,50 @@ capture directory, including one a phone uploaded.
 
 ### Capture from a phone
 
-`web/` is the page a phone opens. It takes the photo with the native camera,
-frames it to 2:1, lets the photographer draw the rectangle to publish, reads
-the GPS fix, computes the fingerprint and the envelope on the phone, signs the receipt with a key that never leaves the browser, and
-uploads the capture. `provenance serve --web web/dist` serves the page and the
-API together, on port 8791 by default, and prints a pairing code the phone
-types once. Browsers only allow the camera and geolocation over HTTPS, so for
-now the phone reaches the laptop through `ngrok http 8791`. See
+`web/` holds two pages. The capture page, at `/`, is what a phone opens. It
+takes the photo with the native camera, frames it to 2:1, lets the
+photographer choose the rectangle to publish and the size of the cell on a
+map, reads the GPS fix, computes the fingerprint and the envelope on the
+phone, signs the receipt with a key that never leaves the browser, and
+uploads the capture. The presenter page, at `/screen`, is for the laptop. See
 [web/README.md](web/README.md).
 
-The API the page calls:
+`provenance serve --web web/dist` serves both pages and the API, on port 8791
+by default, and prints a pairing code. Browsers only allow the camera and
+geolocation over HTTPS, so the phone reaches the laptop through `ngrok http
+8791`; `--public-url` gives the tunnel's address to the presenter page for its
+QR code. The QR code holds the pairing code in the URL fragment, which the
+browser does not send to any server. Unless `--no-publish` is given, the
+server publishes each accepted upload in the background, one proof at a time,
+and verifies the result as a reader would.
 
-| Call | Body | Effect |
+The server sits behind a tunnel, so any route is reachable from the internet
+unless it is marked local below. A local request names `localhost` or
+`127.0.0.1` as its host and carries no `X-Forwarded-For` header, which ngrok
+adds. Nothing private, the original or the secrets, is served to anything but
+a local request.
+
+| Call | Local | Effect |
 | --- | --- | --- |
-| `POST /api/pair` | `code`, `public_key` (P-256, PEM) | Adds the phone's key to the trusted keys, when the code matches the one printed |
-| `POST /api/cell` | `latitude`, `longitude`, `resolution` | The H3 cell the location circuit maps the coordinate to, or a refusal for cells it cannot represent |
-| `POST /api/captures` | `original_png` (base64), `secrets`, `receipt`, `cell`, `resolution`, `crop`, `accuracy_meters` | Stores the capture under `captures/`, after checking it as a reader would |
+| `POST /api/pair` | | Adds the phone's key (`public_key`, P-256 PEM) to the trusted keys, when `code` matches the one printed |
+| `GET /api/devices/{id}` | | Whether a device key id is trusted |
+| `POST /api/cell` | | The H3 cell the location circuit maps `latitude`, `longitude` to at `resolution`, or a refusal for cells it cannot represent |
+| `GET /api/cells/{cell}` | | The cell's corners and area, for a map |
+| `POST /api/captures` | | Stores a capture (`original_png` in base64, `secrets`, `receipt`, `cell`, `resolution`, `crop`, `accuracy_meters`) under `captures/`, after checking it as a reader would, and starts publishing it |
+| `GET /api/captures/{id}` | | The capture's phase, its publish and check events, and the claim once verified |
+| `GET /api/captures/{id}/signed.png` | | The published file |
+| `POST /api/verify` | | Runs the reader checks on the PNG in the body |
+| `GET /api/session` | yes | The pairing code and the QR code's address |
+| `GET /api/captures` | yes | The newest captures |
+| `GET /api/captures/{id}/original.png` | yes | The private original |
+| `POST /api/captures/{id}/publish` | yes | Publishes the capture again |
 
 An upload is refused unless the fingerprint matches the pixels, the receipt is
 signed by a trusted key, the envelope matches the secrets, and the cell is the
 one the circuit gives for the coordinate at that resolution. Every refusal is a
-400 with `{"error": "..."}`. `crates/provenance/tests/serve.rs` exercises all
-of it and runs in CI after setup.
+400 with `{"error": "..."}`. `crates/provenance/tests/serve.rs` exercises the
+checks, publishes an upload end to end, and checks that nothing private
+answers a request through the tunnel. It runs in CI after setup.
 
 The phone computes the fingerprint itself, with `crates/fingerprint` built for
 `wasm32-unknown-unknown` (`cargo build --profile wasm -p fingerprint --target

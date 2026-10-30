@@ -27,6 +27,17 @@ pub struct Region {
     pub k: i64,
 }
 
+/// A cell's corners and area, for drawing it on a map.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Outline {
+    pub cell: String,
+    pub resolution: u8,
+    pub area_km2: f64,
+    /// Latitude, longitude pairs in degrees.
+    pub boundary: Vec<[f64; 2]>,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct LocationProof {
     pub envelope: String,
@@ -65,6 +76,12 @@ impl LocationTool {
         let mut command = self.command("cell");
         command.args(["--resolution", &resolution.to_string()]);
         self.json(command, Some(serde_json::to_vec(&coordinate)?))
+    }
+
+    pub fn outline(&self, cell: &str) -> Result<Outline> {
+        let mut command = self.command("outline");
+        command.args(["--cell", cell]);
+        self.json(command, None)
     }
 
     pub fn commit(&self, secrets: &Secrets) -> Result<String> {

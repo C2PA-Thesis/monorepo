@@ -37,6 +37,7 @@ const usage = `usage:
   location-proof setup  --params DIR
   location-proof region --cell CELL
   location-proof cell   --resolution N           < coordinate.json
+  location-proof outline --cell CELL
   location-proof commit                          < secrets.json
   location-proof prove  --params DIR --cell CELL < secrets.json
   location-proof verify --params DIR --cell CELL --envelope HEX --proof BASE64`
@@ -55,6 +56,14 @@ type coordinate struct {
 type secrets struct {
 	coordinate
 	Salt string `json:"salt"`
+}
+
+// outline is what a map needs to draw a cell: its corners and its area.
+type outline struct {
+	Cell       string       `json:"cell"`
+	Resolution int          `json:"resolution"`
+	AreaKm2    float64      `json:"area_km2"`
+	Boundary   [][2]float64 `json:"boundary"`
 }
 
 // region is the public tuple the circuit checks the coordinate against.
@@ -106,6 +115,15 @@ func run(args []string, stdin io.Reader, stdout io.Writer) error {
 			return err
 		}
 		return json.NewEncoder(stdout).Encode(r)
+	case "outline":
+		if err := required("cell", *cell); err != nil {
+			return err
+		}
+		o, err := outlineOf(*cell)
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(stdout).Encode(o)
 	case "cell":
 		if *resolution < 0 {
 			return fmt.Errorf("--resolution is required\n%s", usage)
@@ -301,6 +319,22 @@ func regionOf(text string) (region, error) {
 		return region{}, fmt.Errorf("the circuit puts cell %s on face %d, not its H3 face", text, tuple.Face)
 	}
 	return region{Cell: text, Resolution: cell.Resolution(), Face: tuple.Face, I: tuple.I, J: tuple.J, K: tuple.K}, nil
+}
+
+// outlineOf returns the corners of any valid cell as latitude, longitude
+// pairs in degrees, for drawing. It does not check that the circuit supports
+// the cell; regionOf does.
+func outlineOf(text string) (outline, error) {
+	cell := h3.Cell(h3.IndexFromString(text))
+	if !cell.IsValid() || cell.String() != text {
+		return outline{}, fmt.Errorf("%q is not an H3 cell in canonical lowercase form", text)
+	}
+	corners := cell.Boundary()
+	boundary := make([][2]float64, len(corners))
+	for i, corner := range corners {
+		boundary[i] = [2]float64{corner.Lat, corner.Lng}
+	}
+	return outline{Cell: text, Resolution: cell.Resolution(), AreaKm2: h3.CellAreaKm2(cell), Boundary: boundary}, nil
 }
 
 // cellOf maps a coordinate to the cell at `resolution` that the circuit will

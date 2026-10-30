@@ -208,3 +208,128 @@ async fn accepts_a_signed_capture_and_rejects_tampered_ones() {
     let (status, body) = post(&router, "/api/captures", &from_phone).await;
     assert_eq!(status, StatusCode::OK, "{body}");
 }
+
+async fn get(router: &Router, path: &str, local: bool) -> (StatusCode, Vec<u8>) {
+    let mut request = Request::get(path);
+    if local {
+        request = request.header(header::HOST, "127.0.0.1:8791");
+    }
+    let response = router
+        .clone()
+        .oneshot(request.body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    let status = response.status();
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    (status, bytes.to_vec())
+}
+
+async fn get_json(router: &Router, path: &str, local: bool) -> (StatusCode, Value) {
+    let (status, bytes) = get(router, path, local).await;
+    (status, serde_json::from_slice(&bytes).unwrap())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs `provenance setup`; run with --ignored"]
+async fn publishes_an_upload_and_serves_only_public_files_through_the_tunnel() {
+    let home = scratch_home(&real_home());
+    let workspace = Workspace::new(home.path());
+    let captures = tempfile::tempdir().unwrap();
+    let server = Arc::new(
+        Server::new(Workspace::new(home.path()), captures.path().to_path_buf())
+            .public_url(Some("https://example.ngrok.app/".to_string()))
+            .publishing(),
+    );
+    let router = Arc::clone(&server).router(None);
+
+    let capture = Capture::simulate(
+        &workspace.location_tool(),
+        &workspace.device_key().unwrap(),
+        image::load_photo(&workspace.sample_photo()).unwrap(),
+        DEMO_PLACE.coordinate,
+        DEMO_PLACE.cell,
+        crop_proof::Rect {
+            x: 100,
+            y: 50,
+            width: 300,
+            height: 200,
+        },
+    )
+    .unwrap();
+    let (status, body) = post(
+        &router,
+        "/api/captures",
+        &serde_json::to_value(upload_of(&capture)).unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let id = body["id"].as_str().unwrap().to_string();
+
+    let path = format!("/api/captures/{id}");
+    let mut body = Value::Null;
+    for _ in 0..240 {
+        (_, body) = get_json(&router, &path, false).await;
+        if !["queued", "publishing", "verifying"].contains(&body["phase"].as_str().unwrap()) {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    }
+    assert_eq!(body["phase"], "accepted", "{body}");
+    assert_eq!(body["claim"]["cell"], DEMO_PLACE.cell);
+    let events: Vec<&str> = body["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|event| event["event"].as_str().unwrap())
+        .collect();
+    assert_eq!(events.iter().filter(|e| **e == "finished").count(), 4);
+    assert_eq!(events.iter().filter(|e| **e == "passed").count(), 4);
+    assert!(body.get("secrets").is_none() && !body.to_string().contains(&capture.secrets.salt));
+
+    let (status, signed) = get(&router, &format!("{path}/signed.png"), false).await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _) = get(&router, &format!("{path}/original.png"), false).await;
+    assert_eq!(
+        status,
+        StatusCode::FORBIDDEN,
+        "the original went through the tunnel"
+    );
+    let (status, _) = get(&router, &format!("{path}/original.png"), true).await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _) = get(&router, "/api/session", false).await;
+    assert_eq!(
+        status,
+        StatusCode::FORBIDDEN,
+        "the pairing code went through the tunnel"
+    );
+    let (status, session) = get_json(&router, "/api/session", true).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        session["pair_url"],
+        format!("https://example.ngrok.app/#pair={}", server.pairing_code())
+    );
+    let (status, listed) = get_json(&router, "/api/captures", true).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(listed[0]["id"], id.as_str());
+    let (status, _) = get(&router, "/api/captures/..%2F..%2Fetc", false).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    let report = verify(&router, signed).await;
+    assert!(report["verdict"]["rejected"].is_null(), "{report}");
+    assert_eq!(report["verdict"]["claim"]["crop"]["width"], 300);
+    let report = verify(&router, b"not a png".to_vec()).await;
+    assert_eq!(
+        report["verdict"]["rejected"]["check"], "manifest",
+        "{report}"
+    );
+}
+
+async fn verify(router: &Router, png: Vec<u8>) -> Value {
+    let request = Request::post("/api/verify")
+        .header(header::CONTENT_TYPE, "image/png")
+        .body(Body::from(png))
+        .unwrap();
+    let response = router.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    serde_json::from_slice(&response.into_body().collect().await.unwrap().to_bytes()).unwrap()
+}

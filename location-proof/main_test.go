@@ -41,6 +41,28 @@ func TestCellOfTheDemoCoordinate(t *testing.T) {
 	}
 }
 
+func TestOutlineOfTheDemoCell(t *testing.T) {
+	output, err := call(t, "", "outline", "--cell", demoCell)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got outline
+	if err := json.Unmarshal([]byte(output), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Cell != demoCell || got.Resolution != 7 || len(got.Boundary) != 6 {
+		t.Fatalf("outline gave %+v; want the six corners of %s", got, demoCell)
+	}
+	if got.AreaKm2 < 1 || got.AreaKm2 > 10 {
+		t.Fatalf("area %.2f km² is not the size of a resolution 7 cell", got.AreaKm2)
+	}
+	for _, corner := range got.Boundary {
+		if corner[0] > -34.5 || corner[0] < -34.6 || corner[1] > -58.4 || corner[1] < -58.5 {
+			t.Fatalf("corner %v is not near the demo coordinate", corner)
+		}
+	}
+}
+
 func TestProveAndVerify(t *testing.T) {
 	params := t.TempDir()
 	if _, err := call(t, "", "setup", "--params", params); err != nil {

@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Private location attestation</title>
+  </head>
+  <body class="screen">
+    <header class="bar">
+      <div class="brand">
+        <svg class="logo" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5l8.2 4.75v9.5L12 21.5l-8.2-4.75v-9.5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><circle cx="12" cy="12" r="2.6" fill="currentColor"/></svg>
+        <div>
+          <h1>C2PA private location attestation</h1>
+          <p class="muted small">A crop proof and a location proof in one C2PA manifest, bound by a device-signed receipt</p>
+        </div>
+      </div>
+      <nav class="tabs" role="tablist">
+        <button type="button" role="tab" id="tab-captures" aria-selected="true">Captures</button>
+        <button type="button" role="tab" id="tab-verify" aria-selected="false">Verify a file</button>
+      </nav>
+    </header>
+    <div id="app" class="layout"></div>
+    <script type="module" src="/src/screen.ts"></script>
+  </body>
+</html>
