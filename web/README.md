@@ -2,16 +2,23 @@
 
 Two pages, served by `provenance serve --web web/dist`.
 
-- **Capture page** (`index.html`, at `/`). What a phone opens. It takes the
-  photo, reads the GPS fix, computes the fingerprint and the envelope itself,
-  signs the receipt with a key that never leaves the browser, and uploads the
-  capture. Nothing leaves the phone unsigned. It then follows the laptop as
-  it proves, signs and verifies, and ends on the verified file.
+- **Capture page** (`index.html`, at `/`). What a phone's browser opens. It
+  takes the photo, reads the GPS fix, computes the fingerprint, the
+  trigonometric hints and the envelope itself, signs the receipt with a key
+  that never leaves the browser, and uploads the capture with the coordinate,
+  the salt and the hints. The laptop then makes both proofs. The page follows
+  it as it proves, signs and verifies, and ends on the verified file.
 - **Presenter page** (`screen.html`, at `/screen`). What the laptop shows. A
-  QR code that opens the capture page and pairs the phone, every capture with
-  its private original next to its published crop, the proofs and reader
-  checks as they run, the cell on a map, and a tab that verifies any dropped
-  PNG. Its calls only answer on the laptop itself.
+  large QR code that pairs the iOS app and a smaller one that opens the
+  capture page and pairs the browser, every capture with its private original
+  next to its published crop, the proofs and reader checks as they run, the
+  cell on a map, and a tab that verifies any dropped PNG. Its calls only
+  answer on the laptop itself.
+
+The native app in [`ios/`](../ios/README.md) is the recommended way to
+capture: it keeps the coordinate and the salt on the phone and sends the
+laptop a location proof instead. The capture page remains for phones without
+the app.
 
 ## Run
 
@@ -34,8 +41,8 @@ ngrok http 8791                                          # note its https URL
 provenance serve --web web/dist --public-url https://…   # in another terminal
 ```
 
-Open `http://127.0.0.1:8791/screen` on the laptop and scan its QR code with
-the phone.
+Open `http://127.0.0.1:8791/screen` on the laptop and scan the smaller QR
+code, under "Or with the browser", with the phone's camera.
 
 For page development, `npm run dev` serves the sources with hot reload and
 proxies `/api` to a local `provenance serve`.
@@ -50,7 +57,8 @@ proxies `/api` to a local `provenance serve`.
 | GPS | `src/main.ts` | Watched from page load; the fix and the phone clock are sampled when the photo reaches the page, a few seconds after the shutter |
 | Cell | `src/api.ts`, `src/map.ts` | Asked from `POST /api/cell` for the chosen resolution, and drawn on an OpenStreetMap base map from `GET /api/cells/{cell}`. The page never maps coordinates itself |
 | Fingerprint | `src/fingerprint.ts` | `crates/fingerprint` built for wasm, 128 rows split across web workers. 12.8 s on an iPhone with four workers |
-| Envelope | `src/envelope.ts` | MiMC over BN254 as gnark-crypto computes it, checked against vectors from `location-proof commit` |
+| Hints | `src/envelope.ts` | The eight float32 bit patterns the location circuit takes: for the latitude, then the longitude, tan, 2 sin cos, sin and cos of half the float32 radians, each computed in float64 (`Math.tan`, `Math.sin`, `Math.cos`) and rounded once with `Math.fround`, as Go's `NativeHints` does |
+| Envelope | `src/envelope.ts` | MiMC over BN254 of the coordinate bits, the salt and the hints, in that order, as gnark-crypto computes it. Sealing the hints means the laptop cannot pick other hints to prove the envelope into a cell that does not contain the point they give |
 | Receipt | `src/receipt.ts` | The compact JSON `crates/provenance` signs, in its field order, signed with WebCrypto and DER-encoded |
 | Progress | `src/timeline.ts` | The publish stages and reader checks the laptop reports, polled from `GET /api/captures/{id}`. Shared with the presenter page |
 
@@ -60,13 +68,29 @@ proxies `/api` to a local `provenance serve`.
 npm test
 ```
 
-The envelope against four vectors from the Go tool, the receipt bytes against
-the Rust field order, DER encoding, and the wasm fingerprint of the built-in
-test image against the digest pinned in `crates/fingerprint`. `npm run wasm`
+The hints and the envelope against nine vectors from `location-proof hints`
+and `location-proof commit` (including the poles and the antimeridian), a
+changed hint giving another envelope, the receipt bytes against the Rust field
+order, DER encoding, and the wasm fingerprint of the built-in test image
+against the digest pinned in `crates/fingerprint`. `npm run wasm`
 must have run first. The `web` workflow runs all of it.
 
 ## Limits
 
+- The coordinate, the salt and the hints leave the phone. The page sends them
+  to the laptop in `secrets` with the upload, through the ngrok tunnel (TLS to
+  ngrok, then ngrok to the laptop), because the laptop makes the location
+  proof. The laptop stores them in `secrets.json`. The app does not send
+  them.
+- The cell is only as trustworthy as this page's code: the circuit checks the
+  hints against the signed envelope, not against the coordinate (see Known
+  limits in the main README). On this path the laptop's `location-proof` also
+  refuses hints that do not match the coordinate, but the page chooses the
+  coordinate it signs.
+- The receipt signs neither the cell nor the resolution. The laptop holds
+  `secrets.json`, so it can publish the same envelope with any cell that
+  contains the point, from resolution 4 to 9, finer than the one chosen on the
+  phone (see Known limits in the main README).
 - The key is a stand-in for a hardware key. Safari can evict site storage
   after a week without use; if the key is gone, pair again and the new key is
   trusted alongside the old one.
