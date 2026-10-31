@@ -18,7 +18,7 @@ const STAGES: Row[] = [
   {
     key: "location-proof",
     title: "Location proof",
-    what: "Groth16: the coordinate sealed in the envelope lies in the cell.",
+    what: "Groth16: the hints sealed in the envelope map to the cell.",
   },
   {
     key: "crop-proof",
@@ -33,7 +33,7 @@ const CHECKS: Row[] = [
   { key: "manifest", title: "C2PA manifest", what: "The file carries a valid C2PA claim with one zkloc assertion." },
   { key: "device", title: "Device receipt", what: "A trusted device signed the fingerprint and the envelope together." },
   { key: "image", title: "Crop proof", what: "These pixels are the claimed rectangle of the fingerprinted original." },
-  { key: "location", title: "Location proof", what: "The coordinate in the signed envelope lies in the claimed cell." },
+  { key: "location", title: "Location proof", what: "The hints sealed in the signed envelope map to the claimed cell." },
 ];
 
 type State =

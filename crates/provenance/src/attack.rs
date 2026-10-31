@@ -234,7 +234,10 @@ fn other_capture(workspace: &Workspace, run: &Path, device: &DeviceKey) -> Resul
         OTHER_PLACE.cell,
         Rect::LEFT_HALF,
     )?;
-    let proof = tool.prove(&capture.secrets, OTHER_PLACE.cell)?;
+    let secrets = capture
+        .secrets()
+        .context("a simulated capture holds its secrets")?;
+    let proof = tool.prove(secrets, OTHER_PLACE.cell)?;
     Ok(Assertion::new(
         capture.receipt,
         OTHER_PLACE.cell.to_string(),

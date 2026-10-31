@@ -1,10 +1,12 @@
-//! A capture: the private witness and the signed receipt, as one directory.
+//! A capture: the private original, the location witness and the signed
+//! receipt, as one directory.
 //!
 //! ```text
-//! original.png   the 1024x512 original, private
-//! secrets.json   coordinate and salt, private, mode 0600
-//! receipt.json   the device-signed receipt, public
-//! capture.json   the cell and crop chosen at capture, and how the capture was made
+//! original.png         the 1024x512 original, private
+//! secrets.json         coordinate and salt, private, mode 0600, when the laptop proves the location
+//! location_proof.json  the proof the phone made instead, public; then the laptop never sees the coordinate
+//! receipt.json         the device-signed receipt, public
+//! capture.json         the cell and crop chosen at capture, and how the capture was made
 //! ```
 
 use std::{
@@ -22,7 +24,7 @@ use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
 use crate::{
     image,
-    location::LocationTool,
+    location::{check_resolution, LocationProof, LocationTool},
     receipt::{DeviceKey, Receipt},
 };
 
@@ -41,6 +43,10 @@ pub struct Secrets {
     pub latitude: f64,
     pub longitude: f64,
     pub salt: String,
+    /// Float32 bit patterns of the trigonometric hints the envelope also
+    /// commits to. location-proof computes them from the coordinate when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hints: Option<[u32; 8]>,
 }
 
 impl Secrets {
@@ -54,6 +60,7 @@ impl Secrets {
             latitude: coordinate.latitude,
             longitude: coordinate.longitude,
             salt: format!("0x{}", hex::encode(salt)),
+            hints: None,
         }
     }
 
@@ -86,17 +93,40 @@ pub struct Summary {
     pub crop: Rect,
     /// Horizontal accuracy the device reported for its fix. Recorded, not signed.
     pub accuracy_meters: Option<f64>,
+    /// Where the app's location fix came from. Recorded, not signed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub location: Option<LocationSource>,
+}
+
+/// What the phone's location service said about its fix.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LocationSource {
+    /// The fix came from a simulator or a GPX file, not from radios.
+    pub simulated: bool,
+    /// The fix came from an external accessory, such as a GPS receiver.
+    pub accessory: bool,
+}
+
+/// How the location proof gets made.
+#[derive(Clone, Debug)]
+pub enum Witness {
+    /// The laptop holds the coordinate and proves when publishing.
+    Secrets(Secrets),
+    /// The phone proved and sent only the proof.
+    Proof(LocationProof),
 }
 
 pub struct Capture {
     pub original: RgbImage,
-    pub secrets: Secrets,
+    pub witness: Witness,
     pub receipt: Receipt,
     pub summary: Summary,
 }
 
 const ORIGINAL: &str = "original.png";
 const SECRETS: &str = "secrets.json";
+const LOCATION_PROOF: &str = "location_proof.json";
 const RECEIPT: &str = "receipt.json";
 const SUMMARY: &str = "capture.json";
 
@@ -111,6 +141,7 @@ impl Capture {
         crop: Rect,
     ) -> Result<Self> {
         let region = tool.region(cell)?;
+        check_resolution(region.resolution)?;
         crop.check()?;
         let secrets = Secrets::new(coordinate);
         let receipt = Receipt::sign(
@@ -121,7 +152,7 @@ impl Capture {
         )?;
         Ok(Self {
             original,
-            secrets,
+            witness: Witness::Secrets(secrets),
             receipt,
             summary: Summary {
                 source: Source::Simulated,
@@ -129,17 +160,30 @@ impl Capture {
                 resolution: region.resolution,
                 crop,
                 accuracy_meters: None,
+                location: None,
             },
         })
+    }
+
+    /// The coordinate and salt, when the laptop holds them.
+    pub fn secrets(&self) -> Option<&Secrets> {
+        match &self.witness {
+            Witness::Secrets(secrets) => Some(secrets),
+            Witness::Proof(_) => None,
+        }
     }
 
     pub fn write(&self, dir: &Path) -> Result<()> {
         fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
         image::write_png(&self.original, &dir.join(ORIGINAL))?;
-        write_private(
-            &dir.join(SECRETS),
-            &serde_json::to_vec_pretty(&self.secrets)?,
-        )?;
+        match &self.witness {
+            Witness::Secrets(secrets) => {
+                write_private(&dir.join(SECRETS), &serde_json::to_vec_pretty(secrets)?)?
+            }
+            Witness::Proof(proof) => {
+                fs::write(dir.join(LOCATION_PROOF), serde_json::to_vec_pretty(proof)?)?
+            }
+        }
         fs::write(dir.join(RECEIPT), serde_json::to_vec_pretty(&self.receipt)?)?;
         fs::write(dir.join(SUMMARY), serde_json::to_vec_pretty(&self.summary)?)?;
         Ok(())
@@ -154,9 +198,13 @@ impl Capture {
     }
 
     pub fn read(dir: &Path) -> Result<Self> {
+        let witness = match dir.join(SECRETS).exists() {
+            true => Witness::Secrets(read_json(&dir.join(SECRETS))?),
+            false => Witness::Proof(read_json(&dir.join(LOCATION_PROOF))?),
+        };
         Ok(Self {
             original: image::read_png(&dir.join(ORIGINAL))?,
-            secrets: read_json(&dir.join(SECRETS))?,
+            witness,
             receipt: read_json(&dir.join(RECEIPT))?,
             summary: read_json(&dir.join(SUMMARY))?,
         })

@@ -10,7 +10,9 @@ use crate::receipt::Receipt;
 
 /// Label of the custom assertion carrying the receipt and both proofs.
 pub const LABEL: &str = "edu.utdt.td8.zkloc";
-const VERSION: u32 = 3;
+/// 4 since the envelope also commits to the trigonometric hints, so an
+/// envelope from version 3 does not verify against the current circuit.
+pub const VERSION: u32 = 4;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -112,5 +114,11 @@ pub fn read(signed: &Path) -> Result<Assertion> {
         .filter(|assertion| assertion.label() == LABEL)
         .count();
     ensure!(count == 1, "expected one {LABEL} assertion, found {count}");
-    Ok(manifest.find_assertion(LABEL)?)
+    let assertion: Assertion = manifest.find_assertion(LABEL)?;
+    ensure!(
+        assertion.version == VERSION,
+        "the {LABEL} assertion is version {}, and this reader only reads version {VERSION} (envelopes that also commit to the trigonometric hints)",
+        assertion.version
+    );
+    Ok(assertion)
 }

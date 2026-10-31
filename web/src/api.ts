@@ -7,6 +7,8 @@ export interface Secrets {
   latitude: number;
   longitude: number;
   salt: string;
+  /// The eight float32 bit patterns sealed in the envelope next to the coordinate.
+  hints: number[];
 }
 
 export interface Region {
@@ -71,6 +73,7 @@ export interface Status {
   id: string;
   phase: Phase;
   device: string;
+  device_kind: DeviceKind | null;
   captured_at: string;
   capture: {
     source: "phone" | "simulated";
@@ -78,6 +81,8 @@ export interface Status {
     resolution: number;
     crop: Rect;
     accuracy_meters: number | null;
+    /// What the app's location service said about its fix. Absent for the capture page.
+    location?: { simulated: boolean; accessory: boolean };
   };
   events: Event[];
   error: string | null;
@@ -100,6 +105,30 @@ export interface Session {
   pair_url: string | null;
   publishes: boolean;
   captures: string;
+}
+
+export type DeviceKind = "secure-enclave" | "software" | "browser" | "laptop";
+
+/// What the app's QR code holds, encoded as JSON as is.
+export interface AppQr {
+  v: 1;
+  /// The TLS listener, one https URL per network address of the laptop.
+  urls: string[];
+  /// SHA-256 of the TLS key's SubjectPublicKeyInfo, hex.
+  pin: string;
+  /// Single use, short lived.
+  token: string;
+  /// SHA-256 of each prover file at /api/params/location/<name>.
+  params: { "proving.key": string; "circuit.r1cs": string };
+}
+
+/// `GET /api/v2/pairing`: the payload as the server wrote it, which the QR
+/// code holds byte for byte, and how long its token has left.
+export interface AppPairing {
+  text: string;
+  qr: AppQr;
+  /// Seconds until the token expires and is replaced.
+  expiresIn: number;
 }
 
 export const isRunning = (phase: Phase) => phase === "queued" || phase === "publishing" || phase === "verifying";
@@ -138,6 +167,23 @@ export function republish(id: string): Promise<Status> {
 
 export function session(): Promise<Session> {
   return get("/api/session");
+}
+
+/// Only answers on the laptop. An expired token is replaced on the way.
+export async function appPairing(): Promise<AppPairing> {
+  const path = "/api/v2/pairing";
+  const response = await fetch(path, { headers: HEADERS, cache: "no-store" });
+  const text = await response.text();
+  if (!response.ok) {
+    let error: string | undefined;
+    try {
+      error = (JSON.parse(text) as { error?: string }).error;
+    } catch {
+      // Not JSON: fall through to the status.
+    }
+    throw new Error(error ?? `${path} failed with ${response.status}`);
+  }
+  return { text, qr: JSON.parse(text) as AppQr, expiresIn: Number(response.headers.get("x-expires-in") ?? 0) };
 }
 
 export const signedUrl = (id: string) => `/api/captures/${id}/signed.png`;

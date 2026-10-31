@@ -11,7 +11,12 @@ use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use crop_proof::{crop, ProverParams};
 use serde::Serialize;
 
-use crate::{capture::Capture, image, manifest::Assertion, Workspace};
+use crate::{
+    capture::{Capture, Witness},
+    image,
+    manifest::Assertion,
+    Workspace,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -78,17 +83,33 @@ pub fn run(
         Ok((published, format!("kept {rect}")))
     })?;
 
-    let location_proof = stage(on, Stage::LocationProof, || {
-        let proof = tool.prove(&capture.secrets, cell)?;
-        ensure!(
-            proof.envelope == capture.receipt.envelope,
-            "location-proof committed to another envelope"
-        );
-        let size = BASE64.decode(&proof.proof)?.len();
-        Ok((
-            proof.proof,
-            format!("Groth16 proof for cell {cell}, {size} bytes"),
-        ))
+    let location_proof = stage(on, Stage::LocationProof, || match &capture.witness {
+        Witness::Secrets(secrets) => {
+            let proof = tool.prove(secrets, cell)?;
+            ensure!(
+                proof.envelope == capture.receipt.envelope,
+                "location-proof committed to another envelope"
+            );
+            let size = BASE64.decode(&proof.proof)?.len();
+            Ok((
+                proof.proof,
+                format!("Groth16 proof for cell {cell}, {size} bytes"),
+            ))
+        }
+        // The upload was checked already; checking again costs milliseconds
+        // and catches a capture directory edited since.
+        Witness::Proof(proof) => {
+            ensure!(
+                proof.envelope == capture.receipt.envelope,
+                "the phone's location proof is for another envelope"
+            );
+            tool.verify(cell, &proof.envelope, &proof.proof)?;
+            let size = BASE64.decode(&proof.proof)?.len();
+            Ok((
+                proof.proof.clone(),
+                format!("Groth16 proof for cell {cell} made on the phone, {size} bytes"),
+            ))
+        }
     })?;
 
     let image_proof = stage(on, Stage::CropProof, || {

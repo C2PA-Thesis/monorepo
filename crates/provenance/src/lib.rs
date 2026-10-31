@@ -12,12 +12,14 @@
 pub mod attack;
 pub mod capture;
 pub mod demo;
+pub mod devices;
 pub mod image;
 pub mod location;
 pub mod manifest;
 pub mod publish;
 pub mod receipt;
 pub mod serve;
+pub mod tls;
 pub mod verify;
 mod workspace;
 

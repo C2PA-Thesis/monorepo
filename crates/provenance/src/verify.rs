@@ -10,7 +10,7 @@ use serde::Serialize;
 
 use crate::{
     image,
-    location::LocationTool,
+    location::{check_cell, LocationTool},
     manifest::{self, LABEL},
     receipt::{short, TrustedKeys},
 };
@@ -79,8 +79,11 @@ pub struct Step {
 }
 
 /// The joint statement an accepted file supports: these pixels are the `crop`
-/// of an original that `device` signed together with a coordinate in `cell`.
-/// The two proofs meet only in the receipt, through `fingerprint` and `envelope`.
+/// of an original that `device` signed together with an envelope whose sealed
+/// hints map to `cell`. The coordinate sealed next to those hints lies in
+/// `cell` only if the device computed the hints from it; the circuit does not
+/// check that. The two proofs meet only in the receipt, through `fingerprint`
+/// and `envelope`.
 #[derive(Debug, Serialize)]
 pub struct Claim {
     /// Key id of the device that signed the receipt.
@@ -90,7 +93,7 @@ pub struct Claim {
     /// SHA-256 of the signed fingerprint's JSON. It only names the fingerprint on
     /// screen; the crop proof checks the fingerprint itself.
     pub fingerprint: String,
-    /// The signed envelope, which the location proof ties to the cell.
+    /// The signed envelope, whose sealed hints the location proof maps to the cell.
     pub envelope: String,
     pub cell: String,
     pub crop: Rect,
@@ -228,7 +231,7 @@ impl Verifier {
             (
                 Check::Location,
                 format!(
-                    "verifying that the coordinate in envelope {} lies in cell {}",
+                    "verifying that the hints sealed in envelope {} map to cell {}",
                     short(&receipt.envelope),
                     assertion.cell
                 ),
@@ -240,6 +243,7 @@ impl Verifier {
                             assertion.cell
                         );
                     }
+                    check_cell(&assertion.cell)?;
                     self.location.verify(
                         &assertion.cell,
                         &receipt.envelope,

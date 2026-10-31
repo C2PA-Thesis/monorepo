@@ -1,6 +1,7 @@
-// The presenter page, opened on the laptop: a QR code that pairs a phone,
-// every capture as the laptop proves and verifies it, and a drop zone that
-// verifies any file as a reader would.
+// The presenter page, opened on the laptop: the QR codes that pair a phone
+// (the app's, and the capture page's for a browser), every capture as the
+// laptop proves and verifies it, and a drop zone that verifies any file as a
+// reader would.
 
 import QRCode from "qrcode";
 import "./style.css";
@@ -30,7 +31,7 @@ async function main() {
         "div",
         { class: "card blocked" },
         h("h2", {}, "Open this page on the laptop"),
-        h("p", { class: "muted" }, `It shows the pairing code and the private originals, so it only answers on the laptop running provenance serve. ${message(error)}`),
+        h("p", { class: "muted" }, `It shows the pairing secrets and the private originals, so it only answers on the laptop running provenance serve. ${message(error)}`),
       ),
     );
     return;
@@ -46,26 +47,45 @@ async function main() {
 }
 
 async function connect(session: api.Session): Promise<HTMLElement> {
-  const card = h("div", { class: "card connect" }, h("h2", {}, "Connect a phone"));
+  const app = new AppPairing();
+  await app.refresh();
+  window.setInterval(() => void app.refresh(), 2000);
+
+  const browser = h("div", { class: "browser-pair" }, h("h3", { class: "section-title" }, "Or with the browser"));
   if (session.pair_url) {
-    const qr = h("div", { class: "qr" });
+    const qr = h("div", { class: "qr qr-browser" });
     qr.innerHTML = await QRCode.toString(session.pair_url, { type: "svg", margin: 1, errorCorrectionLevel: "M" });
-    card.append(
-      qr,
-      h("p", { class: "small muted" }, "Scan with the phone's camera. It opens the capture page and pairs on its own."),
-      h("p", { class: "small url mono" }, session.public_url ?? ""),
+    browser.append(
+      h(
+        "div",
+        { class: "browser-row" },
+        qr,
+        h(
+          "div",
+          { class: "browser-text" },
+          h("p", { class: "small muted" }, "Scan with the phone's camera. It opens the capture page through the tunnel and pairs on its own."),
+          h("p", { class: "small url mono" }, session.public_url ?? ""),
+        ),
+      ),
     );
   } else {
-    card.append(
+    browser.append(
       h(
         "p",
         { class: "small warning" },
-        "No tunnel address was given, so there is no QR code. Start with scripts/serve.sh, which opens an ngrok tunnel.",
+        "No tunnel address was given, so there is no QR code for the browser. Start with scripts/serve.sh, which opens an ngrok tunnel.",
       ),
     );
   }
-  card.append(
+  browser.append(
     h("div", { class: "code" }, h("span", { class: "small muted" }, "Pairing code"), h("strong", { class: "mono" }, session.pairing_code)),
+  );
+  return h(
+    "div",
+    { class: "card connect" },
+    h("h2", {}, "Connect a phone"),
+    app.element,
+    browser,
     h(
       "p",
       { class: "small muted" },
@@ -74,7 +94,87 @@ async function connect(session: api.Session): Promise<HTMLElement> {
         : "Captures are only stored; publish them with scripts/publish.sh.",
     ),
   );
-  return card;
+}
+
+/// The app's QR code. Its token is single use and expires, so the code is
+/// drawn again whenever the server hands out another one.
+class AppPairing {
+  readonly element = h("div", { class: "app-pair" });
+  private readonly qr = h("div", { class: "qr qr-app" });
+  private readonly urls = h("p", { class: "small url mono" });
+  private readonly expiry = h("p", { class: "small muted expiry" });
+  private readonly problem = h("p", { class: "small warning", hidden: true });
+  private shown: string | undefined;
+  private expiresAt = 0;
+
+  constructor() {
+    this.element.append(
+      h("h3", { class: "section-title" }, "With the app"),
+      this.qr,
+      this.problem,
+      h("p", { class: "small muted" }, "Scan in Provenance Capture. The phone joins over this network, checks this laptop's key, and proves the location itself."),
+      this.urls,
+      this.expiry,
+    );
+    window.setInterval(() => this.tick(), 1000);
+  }
+
+  async refresh() {
+    let pairing: api.AppPairing;
+    try {
+      pairing = await api.appPairing();
+    } catch (error) {
+      this.shown = undefined;
+      this.qr.hidden = true;
+      this.expiry.hidden = true;
+      this.show(`The app cannot pair: ${message(error)}`);
+      return;
+    }
+    this.expiresAt = Date.now() + pairing.expiresIn * 1000;
+    // Redrawn only when the token changed: used, expired or rotated.
+    if (pairing.qr.token !== this.shown) {
+      this.shown = pairing.qr.token;
+      this.qr.innerHTML = await QRCode.toString(pairing.text.trim(), { type: "svg", margin: 1, errorCorrectionLevel: "L" });
+      this.qr.hidden = false;
+      this.expiry.hidden = false;
+      this.urls.textContent = pairing.qr.urls.join("  ");
+      this.show(
+        pairing.qr.urls.length
+          ? undefined
+          : "This laptop has no network address yet. Join the phone's Wi-Fi, then restart scripts/serve.sh.",
+      );
+    }
+    this.tick();
+  }
+
+  private show(problem: string | undefined) {
+    this.problem.hidden = !problem;
+    this.problem.textContent = problem ?? "";
+  }
+
+  private tick() {
+    const left = Math.max(0, Math.round((this.expiresAt - Date.now()) / 1000));
+    this.expiry.textContent = `Single use. A new code in ${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}.`;
+  }
+}
+
+/// Who signed a capture, in the words of the presenter page.
+/// The app declares a Secure Enclave key, and nothing here checks it.
+function deviceKind(status: api.Status): string {
+  const kind = status.device_kind ?? (status.capture.source === "simulated" ? "laptop" : "browser");
+  return {
+    "secure-enclave": "App · declared: Secure Enclave",
+    software: "App · software key",
+    browser: "Browser",
+    laptop: "Laptop",
+  }[kind];
+}
+
+function locationNote(status: api.Status): string {
+  const location = status.capture.location;
+  if (location?.simulated) return " · simulated location";
+  if (location?.accessory) return " · external GPS";
+  return "";
 }
 
 function tabs() {
@@ -126,7 +226,12 @@ function renderList() {
           },
           h("span", { class: "capture-time" }, time(status.captured_at)),
           phaseBadge(status.phase),
-          h("span", { class: "capture-meta mono" }, `${status.capture.cell} · ${rect(status.capture.crop)}`),
+          h(
+            "span",
+            { class: "capture-meta" },
+            h("span", { class: "kind" }, deviceKind(status)),
+            h("span", { class: "mono" }, `${status.capture.cell} · ${rect(status.capture.crop)}`),
+          ),
         ),
       ),
     ),
@@ -144,10 +249,10 @@ function renderEmpty() {
       h(
         "ol",
         { class: "how" },
-        h("li", {}, "Scan the QR code with the phone. The capture page opens and pairs the phone."),
+        h("li", {}, "Scan the large QR code in the app, or the small one with the phone's camera to use the capture page. Either pairs the phone."),
         h("li", {}, "Allow location, take a photo, choose the rectangle to publish and the size of the cell."),
-        h("li", {}, "Tap Sign and send. The phone fingerprints the frame, seals the coordinate and signs both."),
-        h("li", {}, "This laptop proves the crop and the location, signs the C2PA manifest and verifies the result, here and on the phone."),
+        h("li", {}, "Sign and send. The phone fingerprints the frame, seals the coordinate and signs both. The app also proves the cell on the phone, so the coordinate never leaves it."),
+        h("li", {}, "This laptop proves the crop (and the location, for the capture page), signs the C2PA manifest and verifies the result, here and on the phone."),
       ),
     ),
   );
@@ -211,8 +316,10 @@ function buildDetail(status: api.Status) {
         h(
           "p",
           { class: "muted small" },
-          `${status.capture.source === "phone" ? "Phone" : "Laptop"} device ${short(status.device)} · ${time(status.captured_at)}`,
+          h("span", { class: "kind" }, deviceKind(status)),
+          ` device ${short(status.device)} · ${time(status.captured_at)}`,
           status.capture.accuracy_meters ? ` · GPS ±${Math.round(status.capture.accuracy_meters)} m` : "",
+          locationNote(status),
         ),
       ),
       h("div", { class: "head-right" }, parts.badge, parts.actions),

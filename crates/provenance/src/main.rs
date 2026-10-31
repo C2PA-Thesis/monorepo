@@ -15,10 +15,11 @@ use provenance::{
     attack::{self, Outcome, ATTACKS},
     capture::{Capture, Coordinate},
     demo::{self, DEMO_PLACE},
+    devices::Device,
     manifest, publish,
     publish::{Event, Stage},
     receipt::short,
-    serve::{self, Phase, Server, Status},
+    serve::{self, Lan, Phase, Server, Status, TLS_PORT},
     verify::{self, Check, Verdict},
     Step, Workspace,
 };
@@ -47,7 +48,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Build location-proof, create proof parameters and a device key, download samples.
+    /// Build location-proof, create proof parameters, a device key and the app's TLS key, download samples.
     Setup,
     /// Capture a photo with the laptop's device key, publish its left half with both proofs, and verify it.
     Demo {
@@ -75,8 +76,15 @@ enum Command {
     },
     /// Serve the capture API, and the capture page when given, for a phone to use.
     Serve {
+        /// Port on 127.0.0.1, for this laptop and the tunnel.
         #[arg(long, default_value_t = 8791)]
         port: u16,
+        /// Port on every address, with TLS, for the app on the local network.
+        #[arg(long, default_value_t = TLS_PORT)]
+        tls_port: u16,
+        /// Serve only on 127.0.0.1, without the app's TLS listener.
+        #[arg(long)]
+        no_tls: bool,
         /// Where uploaded captures land, one directory each.
         #[arg(long, default_value = "captures")]
         captures: PathBuf,
@@ -108,6 +116,20 @@ enum Command {
     },
     /// Print the provenance assertion of a signed PNG.
     Inspect { file: PathBuf },
+    /// List the trusted device keys, or revoke one.
+    Devices {
+        #[command(subcommand)]
+        action: Option<DevicesAction>,
+    },
+}
+
+#[derive(Subcommand)]
+enum DevicesAction {
+    /// Stop trusting a device key. Files it signed no longer verify here.
+    Revoke {
+        /// The device id, or enough of its first hex digits to name one key.
+        id: String,
+    },
 }
 
 fn parse_coordinate(text: &str) -> Result<Coordinate, String> {
@@ -190,7 +212,7 @@ fn run(cli: Cli, ui: &Ui) -> Result<ExitCode> {
                 ui.stage(event, &demo::STAGES)
             })?;
             ui.published(&out, started);
-            ui.note("\nThe coordinate is a test input. Location proofs hold for an honest prover only; see Known limits in the README.");
+            ui.note("\nThe coordinate is a test input. The cell holds if the signing device computed the trigonometric hints honestly; see Known limits in the README.");
         }
         Command::Publish { capture, out } => {
             let out = out.unwrap_or_else(|| capture.clone());
@@ -207,14 +229,31 @@ fn run(cli: Cli, ui: &Ui) -> Result<ExitCode> {
         }
         Command::Serve {
             port,
+            tls_port,
+            no_tls,
             captures,
             web,
             public_url,
             no_publish,
         } => {
+            let tls = match no_tls {
+                true => None,
+                false => Some(workspace.tls().load()?),
+            };
             let mut server = Server::new(workspace, captures.clone())
                 .public_url(public_url)
                 .on_change(serve_listener(ui.json));
+            let app_urls: Vec<String> = tls
+                .iter()
+                .flat_map(|tls| &tls.addresses)
+                .map(|address| format!("https://{address}:{tls_port}"))
+                .collect();
+            if let Some(tls) = &tls {
+                server = server.lan(Lan {
+                    urls: app_urls.clone(),
+                    pin: tls.pin.clone(),
+                });
+            }
             if !no_publish {
                 server = server.publishing();
             }
@@ -223,6 +262,7 @@ fn run(cli: Cli, ui: &Ui) -> Result<ExitCode> {
                 ui.emit(&serde_json::json!({
                     "event": "serving", "url": url, "captures": captures,
                     "pairing_code": server.pairing_code(), "pair_url": server.pair_url(),
+                    "app_urls": app_urls, "pin": tls.as_ref().map(|tls| &tls.pin),
                 }));
             } else {
                 let mut fields = vec![
@@ -230,6 +270,14 @@ fn run(cli: Cli, ui: &Ui) -> Result<ExitCode> {
                     ("captures", shown(&captures)),
                     ("pair", server.pairing_code().to_string()),
                 ];
+                if let Some(tls) = &tls {
+                    let app = match app_urls.is_empty() {
+                        true => format!("port {tls_port}, but no network address yet"),
+                        false => app_urls.join("  "),
+                    };
+                    fields.insert(1, ("app", app));
+                    fields.insert(2, ("pin", short(&tls.pin)));
+                }
                 if web.is_some() {
                     fields.insert(1, ("screen", format!("{url}/screen")));
                 }
@@ -242,7 +290,8 @@ fn run(cli: Cli, ui: &Ui) -> Result<ExitCode> {
                     true => "Uploads are stored only; publish one with `provenance publish --capture DIR`. Ctrl-C stops.\n",
                 });
             }
-            serve::run(Arc::new(server).router(web), port)?;
+            let tls = tls.map(|tls| (tls.config, tls_port));
+            serve::run(Arc::new(server).router(web), port, tls)?;
         }
         Command::Verify { file, cell } => {
             ensure!(file.exists(), "{} does not exist", file.display());
@@ -277,6 +326,38 @@ fn run(cli: Cli, ui: &Ui) -> Result<ExitCode> {
         Command::Inspect { file } => {
             println!("{}", serde_json::to_string_pretty(&manifest::read(&file)?)?)
         }
+        Command::Devices { action: None } => {
+            let devices = workspace.devices().list()?;
+            if ui.json {
+                devices.iter().for_each(|device| ui.emit(device));
+            } else {
+                ui.header(
+                    "devices",
+                    &[("trusted", shown(&workspace.trusted_keys_dir()))],
+                );
+                let laptop = workspace.device_key().and_then(|key| key.id()).ok();
+                for device in &devices {
+                    ui.device(device, laptop.as_deref() == Some(device.id.as_str()));
+                }
+                ui.line(format!("\n{}", plural(devices.len(), "trusted key")));
+            }
+        }
+        Command::Devices {
+            action: Some(DevicesAction::Revoke { id }),
+        } => {
+            let device = workspace.devices().revoke(&id)?;
+            match ui.json {
+                true => ui.emit(&serde_json::json!({"event": "revoked", "device": device})),
+                false => {
+                    ui.device(&device, false);
+                    ui.line(format!(
+                        "\n{} revoked {}",
+                        style("✓").green(),
+                        short(&device.id)
+                    ));
+                }
+            }
+        }
     }
     Ok(ExitCode::SUCCESS)
 }
@@ -291,8 +372,9 @@ fn serve_listener(json: bool) -> impl Fn(&Status) + Send + Sync + 'static {
         let id = style(&status.id).bold();
         match status.phase {
             Phase::Queued => println!(
-                "  {} {id}  from device {}, cell {}, crop {}",
+                "  {} {id}  from {} device {}, cell {}, crop {}",
                 style("↓").cyan(),
+                status.device_kind.map_or("a", |kind| kind.title()),
                 short(&status.device),
                 status.capture.cell,
                 status.capture.crop
@@ -512,7 +594,7 @@ impl Ui {
                 println!("\n{} accepted", style("✓").green());
                 if let Some(claim) = &verdict.claim {
                     println!(
-                        "  these pixels are the {} of an original that device {} signed,\n  together with a coordinate in cell {}, at {} (device time)",
+                        "  these pixels are the {} of an original that device {} signed,\n  together with an envelope whose sealed hints map to cell {}, at {} (device time)",
                         claim.crop,
                         short(&claim.device),
                         claim.cell,
@@ -520,11 +602,29 @@ impl Ui {
                     );
                     println!(
                         "{}",
-                        style("  The cell holds for an honest location prover only; see Known limits in the README.").dim()
+                        style("  The sealed coordinate lies in that cell if the signing device computed the hints from it; see Known limits in the README.").dim()
                     );
                 }
             }
         }
+    }
+
+    /// `laptop` names this laptop's own key when no sidecar says so.
+    fn device(&self, device: &Device, laptop: bool) {
+        let (kind, name, paired_at) = match &device.info {
+            Some(info) => (
+                info.kind.shown(),
+                info.name.as_str(),
+                info.paired_at.as_str(),
+            ),
+            None if laptop => ("laptop", "this laptop", ""),
+            None => ("unknown", "", "paired before kinds were recorded"),
+        };
+        println!(
+            "  {}  {kind:<24}  {name:<20}  {}",
+            style(&device.id).bold(),
+            style(paired_at).dim()
+        );
     }
 
     fn attack(&self, outcome: &Outcome) {

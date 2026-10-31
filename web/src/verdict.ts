@@ -48,7 +48,7 @@ export function accepted(claim: Claim): HTMLElement {
       h(
         "p",
         {},
-        `These pixels are the ${rect(claim.crop)} of an original that a trusted device signed together with a coordinate inside cell `,
+        `These pixels are the ${rect(claim.crop)} of an original that a trusted device signed together with an envelope whose sealed hints map to cell `,
         h("span", { class: "mono" }, claim.cell),
         ".",
       ),
@@ -75,4 +75,4 @@ export function facts(claim: Claim): HTMLElement {
 }
 
 export const CAVEAT =
-  "The location proof holds for an honest prover only: whoever holds the coordinate and the salt could prove another cell. See Known limits in the README.";
+  "The proof ties the cell to the hints the device sealed in the envelope, not to the coordinate itself. The coordinate lies in the cell if the device computed those hints from it. See Known limits in the README.";

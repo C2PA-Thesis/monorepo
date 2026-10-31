@@ -9,9 +9,12 @@ use crop_proof::VerifierParams;
 use serde::Serialize;
 
 use crate::{
-    location::LocationTool,
+    capture,
+    devices::{DeviceInfo, DeviceKind, Devices},
+    location::{LocationTool, CIRCUIT_VERSION},
     manifest::Editor,
     receipt::{DeviceKey, TrustedKeys},
+    tls::{self, TlsFiles},
     verify::Verifier,
 };
 
@@ -61,6 +64,15 @@ impl Workspace {
     /// One PEM per device key a reader accepts.
     pub fn trusted_keys_dir(&self) -> PathBuf {
         self.home.join("trusted")
+    }
+
+    pub fn devices(&self) -> Devices {
+        Devices::new(self.trusted_keys_dir())
+    }
+
+    /// The key and certificate of the TLS listener the app connects to.
+    pub fn tls(&self) -> TlsFiles {
+        TlsFiles::new(tls::dir(&self.home))
     }
 
     pub fn device_key(&self) -> Result<DeviceKey> {
@@ -117,21 +129,41 @@ impl Workspace {
         step(on, "generate the device key", device.exists(), || {
             DeviceKey::generate().save(&device)
         })?;
-        let trusted = self.trusted_keys_dir();
+        let devices = self.devices();
         let device = self.device_key()?;
+        let id = device.id()?;
+        // A home set up before sidecars existed gets one, so the presenter
+        // shows the key as the laptop's.
         step(
             on,
             "trust the device key",
-            trusted.join(format!("{}.pem", device.id()?)).exists(),
-            || TrustedKeys::add(&trusted, &device.public()).map(drop),
+            devices.is_trusted(&id) && devices.info(&id).is_some(),
+            || {
+                let info = DeviceInfo {
+                    kind: DeviceKind::Laptop,
+                    name: "this laptop".to_string(),
+                    paired_at: capture::now()?,
+                };
+                devices.add(&device.public(), &info).map(drop)
+            },
         )?;
+        // Also redone when the parameters are for an older circuit.
         let tool = self.location_tool();
         step(
             on,
             "Groth16 setup for location-proof",
             tool.is_set_up(),
-            || tool.setup(),
+            || {
+                tool.setup()?;
+                ensure!(
+                    tool.is_set_up(),
+                    "location-proof setup did not write params/location/version {CIRCUIT_VERSION}; it is older than this CLI"
+                );
+                Ok(())
+            },
         )?;
+        let tls = self.tls();
+        step(on, "TLS key for the app", tls.exists(), || tls.create())?;
         let crop_params = self.crop_params();
         step(
             on,

@@ -102,6 +102,51 @@ body.screen {
   height: auto;
 }
 
+.app-pair,
+.browser-pair {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.qr-app {
+  padding: 0.75rem;
+}
+
+.browser-pair {
+  padding-top: 0.85rem;
+  border-top: 1px solid var(--line);
+}
+
+.browser-row {
+  display: grid;
+  grid-template-columns: 6.5rem minmax(0, 1fr);
+  gap: 0.75rem;
+  align-items: center;
+}
+
+.qr-browser {
+  padding: 0.3rem;
+  border-radius: 8px;
+}
+
+.browser-text {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.browser-text p {
+  margin: 0;
+}
+
+.expiry {
+  font-variant-numeric: tabular-nums;
+}
+
+.kind {
+  font-weight: 600;
+  color: var(--ink);
+}
+
 .url {
   overflow-wrap: anywhere;
   color: var(--muted);
@@ -117,7 +162,7 @@ body.screen {
 }
 
 .code strong {
-  font-size: 1.6rem;
+  font-size: 1.15rem;
   letter-spacing: 0.18em;
 }
 
@@ -165,6 +210,9 @@ body.screen {
 
 .capture-meta {
   grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.1rem 0.45rem;
   font-size: 0.72rem;
   color: var(--muted);
 }
