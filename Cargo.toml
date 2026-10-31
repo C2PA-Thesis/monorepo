@@ -1,6 +1,11 @@
 [workspace]
 resolver = "2"
-members = ["crates/crop-proof", "crates/fingerprint", "crates/provenance"]
+members = [
+    "crates/crop-proof",
+    "crates/fingerprint",
+    "crates/fingerprint-ffi",
+    "crates/provenance",
+]
 
 [workspace.package]
 edition = "2021"
