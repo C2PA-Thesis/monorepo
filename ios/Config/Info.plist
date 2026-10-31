@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDisplayName</key>
+	<string>Capture</string>
+	<key>NSCameraUsageDescription</key>
+	<string>The camera takes the photo this app signs, and reads the pairing QR code on the laptop.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>The position at the moment of the photo is sealed in the capture. Only the area you choose is published.</string>
+	<key>NSLocationTemporaryUsageDescriptionDictionary</key>
+	<dict>
+		<key>capture</key>
+		<string>The location proof needs the precise position to place the photo in the right cell.</string>
+	</dict>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>The share sheet can save a copy of the signed file to Photos.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>The app sends captures to provenance serve on the laptop on this network.</string>
+	<key>NSFaceIDUsageDescription</key>
+	<string>Face ID unlocks the Secure Enclave key that signs each capture.</string>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+	<key>UILaunchScreen</key>
+	<dict/>
+	<key>UIRequiredDeviceCapabilities</key>
+	<array>
+		<string>arm64</string>
+	</array>
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+	</array>
+</dict>
+</plist>

@@ -6,3 +6,6 @@ captures/
 web/dist/
 web/public/fingerprint.wasm
 .DS_Store
+ios/Frameworks/*.xcframework
+ios/build/
+ios/**/xcuserdata/

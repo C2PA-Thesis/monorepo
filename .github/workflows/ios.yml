@@ -1,0 +1,92 @@
+name: ios
+
+on:
+  push:
+    paths: &paths
+      - 'ios/**'
+      # The app links static libraries built from these.
+      - 'crates/fingerprint/**'
+      - 'crates/fingerprint-ffi/**'
+      - 'location-proof/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - 'scripts/lib.sh'
+      - '.github/workflows/ios.yml'
+  pull_request:
+    paths: *paths
+  workflow_dispatch:
+
+jobs:
+  build-and-test:
+    runs-on: macos-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: ios
+    steps:
+      - uses: actions/checkout@v4
+
+      # The project was made with Xcode 27.2, and its format (objectVersion 77,
+      # synchronized folders) needs Xcode 16 or later. The image's default Xcode
+      # can be older than its newest one, so take the newest release installed.
+      - name: Select the newest installed Xcode
+        run: |
+          tab=$(printf '\t')
+          found=$(for app in /Applications/Xcode*.app; do
+            if [[ "$app" == *[Bb]eta* ]]; then continue; fi
+            version=$(plutil -extract CFBundleShortVersionString raw "$app/Contents/Info.plist" 2>/dev/null) || continue
+            printf '%s\t%s\n' "$version" "$app"
+          done | sort -t "$tab" -k1,1V | tail -n 1)
+          if [ -z "$found" ]; then
+            echo "No Xcode is installed in /Applications" >&2
+            exit 1
+          fi
+          version=${found%%"$tab"*}
+          app=${found#*"$tab"}
+          echo "Selecting $app ($version)"
+          sudo xcode-select -s "$app/Contents/Developer"
+          xcodebuild -version
+          if [ "${version%%.*}" -lt 16 ]; then
+            echo "This project needs Xcode 16 or later; the newest installed is $version" >&2
+            exit 1
+          fi
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: location-proof/go.mod
+          cache-dependency-path: location-proof/go.sum
+
+      - uses: Swatinem/rust-cache@v2
+
+      # The project links both XCFrameworks, so they must exist before any build.
+      - name: Build ZKLoc.xcframework from location-proof/mobile
+        run: scripts/build-go.sh
+
+      - name: Build Fingerprint.xcframework from crates/fingerprint-ffi
+        run: scripts/build-rust.sh
+
+      - name: Check that the project opens
+        run: xcodebuild -list -project ProvenanceCapture.xcodeproj
+
+      - name: Build the app for the Simulator
+        run: >
+          xcodebuild build -project ProvenanceCapture.xcodeproj -scheme ProvenanceCapture
+          -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO
+
+      - name: Build the app for a device, unsigned
+        run: >
+          xcodebuild build -project ProvenanceCapture.xcodeproj -scheme ProvenanceCapture
+          -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO
+
+      # Simulator builds sign ad hoc, which needs no team, so the tests can run.
+      # NativeTests fail unless both libraries are linked.
+      - name: Run the unit tests on an iPhone Simulator
+        run: |
+          udid=$(xcrun simctl list devices available --json | jq -r \
+            'first(.devices | to_entries[] | select(.key | contains(".iOS-")) | .value[] | select(.name | startswith("iPhone")) | .udid) // empty')
+          if [ -z "$udid" ]; then
+            echo "No iPhone Simulator is installed on this runner" >&2
+            exit 1
+          fi
+          xcodebuild test -project ProvenanceCapture.xcodeproj -scheme ProvenanceCapture -destination "id=$udid"
