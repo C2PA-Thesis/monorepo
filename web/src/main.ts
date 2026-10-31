@@ -8,7 +8,7 @@ import * as api from "./api";
 import { base64, framing, type Framing } from "./camera";
 import { cropSelector, PRESETS, type CropSelector, type Rect } from "./crop";
 import { $, area, h, icon, rect, short, svg, time } from "./dom";
-import { envelope, freshSalt } from "./envelope";
+import { envelope, freshSalt, hints } from "./envelope";
 import { fingerprint } from "./fingerprint";
 import { loadOrCreateKey, type DeviceKey } from "./key";
 import { CellMap } from "./map";
@@ -235,14 +235,19 @@ async function submit() {
   const local = new LocalSteps($("local-steps"));
   try {
     const { coords } = shot.fix;
-    const secrets = { latitude: coords.latitude, longitude: coords.longitude, salt: freshSalt() };
+    const secrets = {
+      latitude: coords.latitude,
+      longitude: coords.longitude,
+      salt: freshSalt(),
+      hints: hints(coords.latitude, coords.longitude),
+    };
     const { channels, png } = await shot.framing.original();
 
     local.start("Fingerprint the whole frame, in this browser");
     const print = await fingerprint(channels, (done, total) => local.progress(done / total));
     local.done();
     local.start("Seal the coordinate in an envelope (MiMC)");
-    const sealed = envelope(secrets.latitude, secrets.longitude, secrets.salt);
+    const sealed = envelope(secrets.latitude, secrets.longitude, secrets.salt, secrets.hints);
     local.done(short(sealed));
     local.start("Sign fingerprint and envelope with this phone's key");
     const receipt = await signReceipt(key, print, sealed, shot.capturedAt);

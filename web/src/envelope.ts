@@ -1,8 +1,8 @@
-// The envelope: MiMC over BN254 of the coordinate and the salt, exactly as
-// `location-proof commit` computes it with gnark-crypto's MiMC (110 rounds
-// of x^5, constants from a Keccak-256 chain seeded with "seed", in a
-// Miyaguchi-Preneel loop). The coordinate is encoded as the circuit takes
-// it: the IEEE-754 bits of float32 radians.
+// The envelope: MiMC over BN254 of the coordinate, the salt and the eight
+// trigonometric hints, exactly as `location-proof commit` computes it with
+// gnark-crypto's MiMC (110 rounds of x^5, constants from a Keccak-256 chain
+// seeded with "seed", in a Miyaguchi-Preneel loop). The coordinate and the
+// hints are encoded as the circuit takes them: IEEE-754 bits of float32.
 
 import { keccak_256 } from "@noble/hashes/sha3.js";
 import { bytesToHex, hexToBytes } from "@noble/hashes/utils.js";
@@ -21,9 +21,29 @@ const CONSTANTS: bigint[] = (() => {
   return constants;
 })();
 
-export function envelope(latitude: number, longitude: number, salt: string): string {
-  const blocks = [BigInt(radiansBits(latitude)), BigInt(radiansBits(longitude)), parseScalar(salt)];
+export function envelope(
+  latitude: number,
+  longitude: number,
+  salt: string,
+  sealed: readonly number[] = hints(latitude, longitude),
+): string {
+  if (sealed.length !== 8 || !sealed.every((hint) => Number.isInteger(hint) && hint >= 0 && hint <= 0xffffffff)) {
+    throw new Error("hints must be 8 unsigned 32-bit integers");
+  }
+  const blocks = [BigInt(radiansBits(latitude)), BigInt(radiansBits(longitude)), parseScalar(salt), ...sealed.map(BigInt)];
   return toHex(mimc(blocks));
+}
+
+/// The circuit's hints, as Go's NativeHints computes them: for the latitude,
+/// then the longitude, the float32 bits of tan, 2 sin cos, sin and cos of half
+/// the float32 radians, each computed in float64 and rounded once.
+export function hints(latitude: number, longitude: number): number[] {
+  return [radiansBits(latitude), radiansBits(longitude)].flatMap((bits) => {
+    const half = fromBits(bits) * 0.5;
+    const gamma = Math.sin(half);
+    const delta = Math.cos(half);
+    return [Math.tan(half), 2 * gamma * delta, gamma, delta].map(toBits);
+  });
 }
 
 /// A fresh salt below the modulus: 31 random bytes behind a zero byte.
@@ -35,9 +55,20 @@ export function freshSalt(): string {
 
 /// float32(degrees * PI / 180) as Go computes it, then its bit pattern.
 export function radiansBits(degrees: number): number {
+  return toBits((degrees * Math.PI) / 180);
+}
+
+/// The bit pattern of a number rounded to float32.
+function toBits(value: number): number {
   const view = new DataView(new ArrayBuffer(4));
-  view.setFloat32(0, Math.fround((degrees * Math.PI) / 180));
+  view.setFloat32(0, Math.fround(value));
   return view.getUint32(0);
+}
+
+function fromBits(bits: number): number {
+  const view = new DataView(new ArrayBuffer(4));
+  view.setUint32(0, bits);
+  return view.getFloat32(0);
 }
 
 function mimc(blocks: bigint[]): bigint {
