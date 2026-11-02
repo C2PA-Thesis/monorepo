@@ -14,6 +14,12 @@
 \usepackage{tikz}
 \usetikzlibrary{arrows.meta,positioning}
 \usepackage[hidelinks]{hyperref}
+\usepackage{pdftexcmds}
+% CI compares this digest with the committed source to catch a stale PDF.
+\makeatletter
+\edef\sourcedigest{\pdf@filemdfivesum{\jobname.tex}}
+\makeatother
+\hypersetup{pdfkeywords={source-md5:\sourcedigest}}
 
 \usepackage{xurl}
 % Code and paths break at any character instead of overflowing the margin.
