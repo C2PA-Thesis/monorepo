@@ -267,7 +267,8 @@ async fn publishes_an_upload_and_serves_only_public_files_through_the_tunnel() {
 
     let path = format!("/api/captures/{id}");
     let mut body = Value::Null;
-    for _ in 0..240 {
+    // Up to 10 minutes: CI runners take over 2 minutes to prove the crop.
+    for _ in 0..1200 {
         (_, body) = get_json(&router, &path, false).await;
         if !["queued", "publishing", "verifying"].contains(&body["phase"].as_str().unwrap()) {
             break;
