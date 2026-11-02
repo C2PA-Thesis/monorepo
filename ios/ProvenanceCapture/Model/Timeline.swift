@@ -29,6 +29,17 @@ enum Timeline {
         let title: String
         let items: [Item]
         var id: String { title }
+
+        /// The laptop's time on the group's finished and failed steps.
+        var seconds: Double {
+            items.reduce(0) { sum, item in
+                switch item.state {
+                case .done(let seconds, _, _): sum + seconds
+                case .failed(let seconds?, _, _): sum + seconds
+                default: sum
+                }
+            }
+        }
     }
 
     static let stages: [Row] = [
@@ -89,8 +100,8 @@ enum Timeline {
             return Group(title: title, items: items)
         }
         return [
-            group("On the laptop: prove and sign", stages),
-            group("As a reader: verify the file", checks),
+            group("Publish", stages),
+            group("Verify", checks),
         ]
     }
 }

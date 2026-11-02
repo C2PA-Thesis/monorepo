@@ -1,26 +1,63 @@
 import SwiftUI
 import UIKit
 
-/// The palette of web/src/style.css, light and dark.
+/// The tokens of the design system, shared with web/src/style.css. Ink on paper;
+/// color only for success, failure and warning.
 enum Theme {
-    static let bg = Color(light: 0xf3f4f7, dark: 0x0e1116)
-    static let surface = Color(light: 0xffffff, dark: 0x171b22)
-    static let surface2 = Color(light: 0xf6f7f9, dark: 0x1d222b)
-    static let ink = Color(light: 0x161b24, dark: 0xe8ebf0)
-    static let muted = Color(light: 0x5d6676, dark: 0xa1a9b6)
-    static let faint = Color(light: 0x8a93a3, dark: 0x6f7886)
-    static let line = Color(light: 0xe1e4ea, dark: 0x2a303b)
-    static let accent = Color(light: 0x2f6fde, dark: 0x5b8ff0)
-    static let accentSoft = Color(light: 0xe7effc, dark: 0x1b2a45)
-    static let ok = Color(light: 0x1f8a5b, dark: 0x3cc488)
-    static let okSoft = Color(light: 0xe3f4ec, dark: 0x14301f)
-    static let bad = Color(light: 0xc62f3c, dark: 0xf0606b)
-    static let badSoft = Color(light: 0xfbe7e9, dark: 0x3a1a1e)
-    static let privateInk = Color(light: 0xa15c07, dark: 0xe6a545)
-    static let privateSoft = Color(light: 0xfbf0dc, dark: 0x33260f)
-    static let publicInk = Color(light: 0x2f6fde, dark: 0x6b9cf3)
-    static let publicSoft = Color(light: 0xe7effc, dark: 0x1b2a45)
-    static let you = Color(rgb: 0xe8590c)
+    static let bg = Color(light: 0xF6F6F4, dark: 0x0A0A0B)
+    static let surface = Color(light: 0xFFFFFF, dark: 0x141415)
+    static let surface2 = Color(light: 0xF1F1EF, dark: 0x1C1C1E)
+    static let ink = Color(light: 0x0A0A0A, dark: 0xF5F5F4)
+    static let ink2 = Color(light: 0x3A3A3A, dark: 0xCFCFCF)
+    static let muted = Color(light: 0x737373, dark: 0x8E8E8E)
+    static let faint = Color(light: 0xA3A3A3, dark: 0x5C5C5C)
+    static let line = Color(light: 0xE8E8E5, dark: 0x262628)
+    static let lineStrong = Color(light: 0xD6D6D2, dark: 0x3A3A3C)
+    static let ok = Color(light: 0x157F3B, dark: 0x3FB96B)
+    static let okSoft = Color(light: 0x157F3B, dark: 0x3FB96B, alpha: (0.08, 0.12))
+    static let bad = Color(light: 0xB42318, dark: 0xF06A5F)
+    static let badSoft = Color(light: 0xB42318, dark: 0xF06A5F, alpha: (0.08, 0.12))
+    static let warn = Color(light: 0x9A6700, dark: 0xE0A43A)
+    static let warnSoft = Color(light: 0x9A6700, dark: 0xE0A43A, alpha: (0.10, 0.12))
+    /// Over the part of the photo that stays private.
+    static let overlay = Color(UIColor(rgb: 0x0A0A0A, alpha: 0.55))
+    /// Text on an ink fill.
+    static let onInk = Color(light: 0xFFFFFF, dark: 0x0A0A0A)
+
+    /// Identifiers and hashes: 12 pt mono, on every surface.
+    static let mono = Font.system(size: 12, design: .monospaced)
+
+    enum Radius {
+        static let small: CGFloat = 6
+        static let control: CGFloat = 10
+        static let card: CGFloat = 14
+    }
+}
+
+enum Elevation { case flat, card, raised }
+
+extension Theme {
+    /// A card's border. Dark mode has no shadows, so the raised card takes the stronger line.
+    static func border(_ level: Elevation) -> Color {
+        level == .raised ? Color(light: 0xE8E8E5, dark: 0x3A3A3C) : line
+    }
+}
+
+extension View {
+    /// The two shadows of the system. Dark mode separates with lines only.
+    func elevation(_ level: Elevation) -> some View { modifier(ElevationModifier(level: level)) }
+}
+
+private struct ElevationModifier: ViewModifier {
+    let level: Elevation
+    @Environment(\.colorScheme) private var scheme
+
+    func body(content: Content) -> some View {
+        let on = scheme == .light
+        content
+            .shadow(color: .black.opacity(on && level != .flat ? 0.05 : 0), radius: 1, y: 1)
+            .shadow(color: .black.opacity(on && level == .raised ? 0.18 : 0), radius: 16, y: 12)
+    }
 }
 
 extension Color {
@@ -28,15 +65,17 @@ extension Color {
         self.init(uiColor: UIColor(rgb: rgb))
     }
 
-    init(light: UInt32, dark: UInt32) {
-        self.init(uiColor: UIColor { traits in UIColor(rgb: traits.userInterfaceStyle == .dark ? dark : light) })
+    init(light: UInt32, dark: UInt32, alpha: (CGFloat, CGFloat) = (1, 1)) {
+        self.init(uiColor: UIColor { traits in
+            traits.userInterfaceStyle == .dark ? UIColor(rgb: dark, alpha: alpha.1) : UIColor(rgb: light, alpha: alpha.0)
+        })
     }
 }
 
 extension UIColor {
-    convenience init(rgb: UInt32) {
+    convenience init(rgb: UInt32, alpha: CGFloat = 1) {
         self.init(
             red: CGFloat(rgb >> 16 & 0xff) / 255, green: CGFloat(rgb >> 8 & 0xff) / 255, blue: CGFloat(rgb & 0xff) / 255,
-            alpha: 1)
+            alpha: alpha)
     }
 }

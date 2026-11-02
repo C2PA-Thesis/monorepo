@@ -41,8 +41,9 @@ ngrok http 8791                                          # note its https URL
 provenance serve --web web/dist --public-url https://…   # in another terminal
 ```
 
-Open `http://127.0.0.1:8791/screen` on the laptop and scan the smaller QR
-code, under "Or with the browser", with the phone's camera.
+Open `http://127.0.0.1:8791/screen` on the laptop, choose "Use a browser
+instead" under the QR code, and scan the browser QR code with the phone's
+camera.
 
 For page development, `npm run dev` serves the sources with hot reload and
 proxies `/api` to a local `provenance serve`.

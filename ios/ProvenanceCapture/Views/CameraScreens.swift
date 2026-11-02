@@ -104,7 +104,7 @@ struct ScannerScreen: View {
                     Spacer()
                 }
                 Spacer()
-                Text(error ?? "Point the camera at the QR code for the app on the laptop's screen.")
+                Text(error ?? "Point at the app QR on the laptop")
                     .font(.footnote).foregroundStyle(.white).multilineTextAlignment(.center).padding(12)
                     .background(.black.opacity(0.6), in: RoundedRectangle(cornerRadius: 8))
                     .padding(.bottom, 40)

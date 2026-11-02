@@ -5,40 +5,28 @@ struct RegionStep: View {
     @Bindable var flow: CaptureFlow
 
     var body: some View {
-        StepCard(
-            number: 4, title: "Choose how precisely to reveal the place", summary: flow.regionSummary,
-            state: flow.composeState
-        ) {
+        StepCard(number: 4, title: "Area", value: flow.regionSummary, state: flow.composeState, raised: false) {
             VStack(alignment: .leading, spacing: 12) {
                 CellMap(
                     outline: nil, you: flow.shot.map { CLLocationCoordinate2D(latitude: $0.fix.latitude, longitude: $0.fix.longitude) },
                     span: flow.cellWidth * 3)
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack {
-                        Text("Area size").font(.subheadline)
-                        Spacer()
-                        Text(flow.resolutionText).font(.subheadline.weight(.semibold))
-                    }
-                    Slider(
-                        value: Binding(
-                            get: { Double(flow.resolution) },
-                            set: { flow.resolution = Int($0.rounded()) }),
-                        in: Double(Verdict.resolutions.lowerBound)...Double(Verdict.resolutions.upperBound), step: 1)
-                    HStack {
-                        Text("Larger, more private")
-                        Spacer()
-                        Text("Smaller, more precise")
-                    }
-                    .font(.caption).foregroundStyle(Theme.muted)
-                }
-                if !flow.cellText.isEmpty { Hint(flow.cellText, tone: flow.cellFailed ? Theme.bad : Theme.muted) }
-                if let warning = flow.accuracyWarning { Hint(warning, tone: Theme.privateInk) }
+                LabeledSlider(
+                    label: "Size", value: flow.resolutionText,
+                    position: Binding(
+                        get: { Double(flow.resolution) },
+                        set: { flow.resolution = Int($0.rounded()) }),
+                    range: Double(Verdict.resolutions.lowerBound)...Double(Verdict.resolutions.upperBound), step: 1,
+                    spoken: "Area size")
+                if flow.cellFailed { Note(flow.cellText, tone: Theme.bad) }
+                if let warning = flow.accuracyWarning { Note(warning, tone: Theme.warn) }
             }
         }
     }
 }
 
-/// The H3 cell on a map. The capture screen also shows the phone its own position.
+/// The H3 cell on a map, in grayscale as on the web. The capture screen also
+/// shows the phone its own position. The map does not pan or zoom, so a swipe
+/// on it scrolls the page and the cell or the dot never leaves the frame.
 struct CellMap: View {
     let outline: Outline?
     var you: CLLocationCoordinate2D?
@@ -47,21 +35,28 @@ struct CellMap: View {
     @State private var camera = MapCameraPosition.automatic
 
     var body: some View {
-        Map(position: $camera, interactionModes: [.pan, .zoom]) {
+        Map(position: $camera, interactionModes: []) {
             if let outline {
                 MapPolygon(coordinates: coordinates(outline))
-                    .foregroundStyle(Theme.accent.opacity(0.18))
-                    .stroke(Theme.accent, lineWidth: 2)
+                    .foregroundStyle(Theme.ink.opacity(0.06))
+                    .stroke(Theme.ink, lineWidth: 1.5)
             }
             if let you {
-                Annotation("You, exactly. Never published.", coordinate: you) {
-                    Circle().fill(Theme.you).stroke(.white, lineWidth: 2).frame(width: 14, height: 14)
+                Annotation("Your position, never published", coordinate: you) {
+                    // Ink with a surface ring: dark on light tiles, light on dark tiles.
+                    Circle().fill(Theme.ink).frame(width: 12, height: 12)
+                        .overlay(Circle().strokeBorder(Theme.surface, lineWidth: 2.5).padding(-2.5))
                 }
                 .annotationTitles(.hidden)
             }
         }
-        .frame(height: 240)
-        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .mapStyle(.standard(emphasis: .muted, pointsOfInterest: .excludingAll))
+        .mapControls {}
+        .saturation(0)
+        .contrast(0.92)
+        .frame(height: 180)
+        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.control))
+        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.control).strokeBorder(Theme.line))
         .onChange(of: outline?.cell, initial: true) { _, _ in fit() }
         .onChange(of: span) { _, _ in fit() }
     }

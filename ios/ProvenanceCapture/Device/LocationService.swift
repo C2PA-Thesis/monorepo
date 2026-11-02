@@ -40,7 +40,7 @@ final class LocationService: NSObject, CLLocationManagerDelegate {
     static let maxAge: TimeInterval = 10
     static let purposeKey = "capture"
 
-    private(set) var status = Status.waiting("Waiting for a GPS fix…")
+    private(set) var status = Status.waiting("Waiting for GPS")
     private(set) var last: Fix?
     @ObservationIgnored private let manager = CLLocationManager()
     @ObservationIgnored private var waiters: [UUID: Waiter] = [:]
@@ -94,8 +94,8 @@ final class LocationService: NSObject, CLLocationManagerDelegate {
         }
     }
 
-    private static let noFix = CaptureError(
-        "No GPS fix within \(Int(maxAge)) seconds of the shutter. Wait for the GPS badge to turn green, then take the photo again.")
+    /// The 10 s rule stays in `maxAge` and the README; the screen says only what to do.
+    private static let noFix = CaptureError("No GPS fix. Try again.")
 
     private static func matches(_ fix: Fix, _ shutter: Date) -> Bool {
         abs(fix.timestamp.timeIntervalSince(shutter)) <= maxAge
@@ -135,8 +135,8 @@ final class LocationService: NSObject, CLLocationManagerDelegate {
 
     private func denied() {
         status = .error(
-            "Location access is blocked for this app.",
-            help: "Settings › Privacy & Security › Location Services › Capture › While Using the App, with Precise Location on.")
+            "Location blocked",
+            help: "Allow While Using the App and Precise Location in Settings › Capture › Location.")
         failAll(CaptureError("Location access is blocked for this app."))
     }
 
@@ -145,19 +145,19 @@ final class LocationService: NSObject, CLLocationManagerDelegate {
         let fix = Fix(location)
         #if !targetEnvironment(simulator)
             if fix.simulated {
-                status = .error("This position comes from software, not from the GPS. It cannot be used.", help: nil)
+                status = .error("Position comes from software", help: nil)
                 return
             }
         #endif
         guard manager.accuracyAuthorization == .fullAccuracy else {
             status = .error(
-                "Location is approximate.",
-                help: "Settings › Privacy & Security › Location Services › Capture › Precise Location.")
+                "Location is approximate",
+                help: "Turn on Precise Location in Settings › Capture › Location.")
             return
         }
         last = fix
-        let source = fix.simulated ? ", simulated" : fix.accessory ? ", from an accessory" : ""
-        status = .ok("GPS fix, ±\(Int(fix.accuracy.rounded())) m\(source)")
+        let source = fix.simulated ? " · simulated" : fix.accessory ? " · accessory" : ""
+        status = .ok("±\(Int(fix.accuracy.rounded())) m\(source)")
         for (id, waiter) in waiters where Self.matches(fix, waiter.shutter) {
             waiters.removeValue(forKey: id)
             waiter.continuation.resume(returning: fix)
@@ -184,8 +184,11 @@ final class LocationService: NSObject, CLLocationManagerDelegate {
         MainActor.assumeIsolated {
             if (error as? CLError)?.code == .denied {
                 denied()
+            } else if (error as? CLError)?.code == .locationUnknown {
+                // Core Location keeps trying after this one.
+                if last == nil { status = .waiting("Waiting for GPS") }
             } else if last == nil {
-                status = .error("No GPS fix yet: \(error.localizedDescription)", help: nil)
+                status = .error("No GPS fix yet", help: nil)
             }
         }
     }

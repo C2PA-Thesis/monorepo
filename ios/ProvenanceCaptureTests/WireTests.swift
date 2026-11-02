@@ -99,6 +99,14 @@ final class WireTests: XCTestCase {
         XCTAssertEqual(groups[0].items[1].state, .failed(seconds: nil, detail: "boom", note: nil))
         XCTAssertEqual(groups[0].items[2].state, .skipped)
         XCTAssertEqual(groups[1].items[0].state, .skipped)
+        XCTAssertEqual(groups[0].seconds, 0.2, accuracy: 1e-9)
+        XCTAssertEqual(groups[1].seconds, 0)
+    }
+
+    func testRowTimesUnderFiftyMillisecondsAreOmitted() {
+        XCTAssertNil(Verdict.rowTime(0.049))
+        XCTAssertEqual(Verdict.rowTime(0.05), "0.1 s")
+        XCTAssertEqual(Verdict.rowTime(3.62), "3.6 s")
     }
 
     func testAreaAndResolutionText() {
@@ -107,7 +115,15 @@ final class WireTests: XCTestCase {
         XCTAssertEqual(Verdict.area(5.161), "5.2 km²")
         XCTAssertEqual(Verdict.area(0.737), "73.7 ha")
         XCTAssertEqual(Verdict.area(0.00215), "2,150 m²")
-        XCTAssertEqual(Verdict.resolutionText(7), "about 5.2 km², a neighbourhood")
+        XCTAssertEqual(Verdict.resolutionText(7), "~5.2 km² · a neighbourhood")
+        XCTAssertEqual(Verdict.cellShort("87c2e3062ffffff"), "87c2e3062…")
+        XCTAssertEqual(Verdict.cellShort("87c2e3062"), "87c2e3062")
+        XCTAssertEqual(Verdict.resolution(of: "87c2e3062ffffff"), 7)
+        XCTAssertEqual(Verdict.resolution(of: "8928308280fffff"), 9)
+        XCTAssertEqual(Verdict.area(of: "87c2e3062ffffff", outline: nil), "~5.2 km²")
+        XCTAssertEqual(LaptopTimeline.outcome("kept 512x512 at (0, 0)"), "512×512 at (0, 0)")
+        XCTAssertEqual(LaptopTimeline.outcome("proof accepted"), "Accepted")
+        XCTAssertEqual(LaptopTimeline.outcome("valid, with one edu.utdt.td8.zkloc assertion."), "Valid, with one edu.utdt.td8.zkloc assertion")
         XCTAssertEqual(Verdict.short("0x0123456789abcdef"), "0x0123…cdef")
         XCTAssertEqual(Verdict.short("abcd"), "abcd")
     }

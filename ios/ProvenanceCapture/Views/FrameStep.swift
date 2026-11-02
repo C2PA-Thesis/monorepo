@@ -4,22 +4,15 @@ struct FrameStep: View {
     @Bindable var flow: CaptureFlow
 
     var body: some View {
-        StepCard(
-            number: 3, title: "Choose what to publish", summary: "The \(flow.crop.text) of the 1024×512 frame",
-            state: flow.composeState
-        ) {
+        StepCard(number: 3, title: "Crop", value: StepValue(flow.crop.text), state: flow.composeState, raised: false) {
             VStack(alignment: .leading, spacing: 12) {
                 CropStage(image: flow.original?.image, crop: $flow.crop)
                 if flow.shot?.photo.window.slidable == true {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Slide to frame the photo at 2:1").font(.subheadline).foregroundStyle(Theme.ink)
-                        Slider(value: $flow.framePosition, in: 0...1)
-                    }
+                    BareSlider(
+                        position: $flow.framePosition, range: 0...1, spoken: "Frame position",
+                        value: "\(Int((flow.framePosition * 100).rounded()))%")
                 }
-                HStack(spacing: 14) {
-                    legend(Theme.publicInk, "Inside the box is published.")
-                    legend(Theme.privateInk, "The rest stays private.")
-                }
+                // The row bleeds to the card edge; its chips start and end on the content edge.
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
                         ForEach(CropPreset.all) { preset in
@@ -27,15 +20,11 @@ struct FrameStep: View {
                         }
                     }
                 }
-                Hint("Drag inside the box to move it, or anywhere else to draw a new one. Now \(flow.crop.text).")
+                .contentMargins(.horizontal, 16, for: .scrollContent)
+                .padding(.horizontal, -16)
+                .padding(.vertical, -6)
+                Note("The dimmed part stays private.")
             }
-        }
-    }
-
-    private func legend(_ color: Color, _ text: String) -> some View {
-        HStack(spacing: 6) {
-            RoundedRectangle(cornerRadius: 2).fill(color.opacity(0.35)).stroke(color).frame(width: 12, height: 12)
-            Text(text).font(.caption).foregroundStyle(Theme.muted)
         }
     }
 }
@@ -57,7 +46,7 @@ struct CropStage: View {
                     Rectangle().fill(Theme.surface2).overlay(ProgressView())
                 }
                 // Dims what stays private.
-                Rectangle().fill(.black.opacity(0.45))
+                Rectangle().fill(Theme.overlay)
                     .mask {
                         Rectangle().overlay(alignment: .topLeading) {
                             Rectangle().frame(width: Double(crop.width) * scale, height: Double(crop.height) * scale)
@@ -66,11 +55,18 @@ struct CropStage: View {
                         }
                         .compositingGroup()
                     }
-                Rectangle()
-                    .stroke(Theme.publicInk, lineWidth: 2)
-                    .frame(width: Double(crop.width) * scale, height: Double(crop.height) * scale)
-                    .overlay(alignment: .topLeading) { Tag(text: "published", isPublic: true).padding(4) }
-                    .offset(x: Double(crop.x) * scale, y: Double(crop.y) * scale)
+                // A white border with a thin ink line inside it reads on light and dark photos.
+                // Only the sides inside the photo are drawn, so a preset on the photo edge
+                // does not look inset from it.
+                let outline = CropOutline(rect: CGRect(
+                    x: Double(crop.x) * scale, y: Double(crop.y) * scale,
+                    width: Double(crop.width) * scale, height: Double(crop.height) * scale))
+                ZStack {
+                    outline.stroke(Color(rgb: 0x0A0A0A).opacity(0.6), lineWidth: 6)
+                    outline.stroke(.white, lineWidth: 4)
+                }
+                .clipShape(outline)
+                .allowsHitTesting(false)
             }
             .contentShape(Rectangle())
             .gesture(
@@ -89,8 +85,26 @@ struct CropStage: View {
             )
         }
         .aspectRatio(2, contentMode: .fit)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .clipShape(CropOutline.photo)
         .accessibilityElement()
         .accessibilityLabel("Published rectangle \(crop.text)")
+    }
+}
+
+/// The published rectangle in view points, pushed past the photo on the sides
+/// that lie on its edge, so a border drawn inside it shows on the inner sides only.
+private struct CropOutline: Shape {
+    static let photo = RoundedRectangle(cornerRadius: Theme.Radius.control)
+    var rect: CGRect
+
+    func path(in bounds: CGRect) -> Path {
+        let past: CGFloat = 8
+        let near: CGFloat = 0.5
+        var outline = rect
+        if outline.minX <= bounds.minX + near { outline.origin.x -= past; outline.size.width += past }
+        if outline.minY <= bounds.minY + near { outline.origin.y -= past; outline.size.height += past }
+        if outline.maxX >= bounds.maxX - near { outline.size.width += past }
+        if outline.maxY >= bounds.maxY - near { outline.size.height += past }
+        return Path(outline)
     }
 }

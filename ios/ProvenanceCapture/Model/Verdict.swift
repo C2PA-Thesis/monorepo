@@ -20,12 +20,31 @@ enum Verdict {
         "a house", "a room", "a desk", "a floor tile",
     ]
 
-    static let caveat =
-        "The proof ties the cell to the hints the device sealed in the envelope, not to the coordinate itself. The coordinate lies in the cell if the device computed those hints from it. See Known limits in the README."
+    /// The one honest limit, said once on a result. The README has the long version.
+    static let caveat = "The cell holds if the device computed the sealed hints from its position."
 
     /// The average size of a cell at `resolution`.
     static func resolutionText(_ resolution: Int) -> String {
-        "about \(area(averageKm2[resolution])), \(scale[resolution])"
+        "~\(area(averageKm2[resolution])) · \(scale[resolution])"
+    }
+
+    /// An H3 index without its unused trailing digits, as the cell is named on screen.
+    static func cellShort(_ cell: String) -> String {
+        var trimmed = Substring(cell)
+        while trimmed.last == "f" { trimmed = trimmed.dropLast() }
+        return trimmed.count < cell.count ? trimmed + "…" : cell
+    }
+
+    /// The resolution an H3 index encodes in bits 52 to 55.
+    static func resolution(of cell: String) -> Int? {
+        UInt64(cell, radix: 16).map { Int($0 >> 52 & 0xf) }
+    }
+
+    /// The cell's real area once its outline is known, the average for its resolution before.
+    static func area(of cell: String, outline: Outline?) -> String {
+        if let outline, outline.cell == cell { return area(outline.areaKm2) }
+        guard let resolution = resolution(of: cell), averageKm2.indices.contains(resolution) else { return "" }
+        return "~\(area(averageKm2[resolution]))"
     }
 
     static func area(_ km2: Double) -> String {
@@ -43,9 +62,26 @@ enum Verdict {
         return (prefixed ? "0x" : "") + digits.prefix(4) + "…" + digits.suffix(4)
     }
 
+    /// A step time. A step under 0.05 s reads "<0.1 s", not "0.0 s".
+    static func seconds(_ value: Double) -> String {
+        value < 0.05 ? "<0.1 s" : String(format: "%.1f s", value)
+    }
+
+    /// A row's time. Steps under 0.05 s show none: a column of "<0.1 s" is noise.
+    static func rowTime(_ value: Double) -> String? {
+        value >= 0.05 ? seconds(value) : nil
+    }
+
     static func time(_ rfc3339: String) -> String {
         guard let date = ISO8601DateFormatter().date(from: rfc3339) else { return rfc3339 }
         return date.formatted(date: .abbreviated, time: .standard)
+    }
+
+    /// The time of day today, the date and time otherwise.
+    static func when(_ rfc3339: String) -> String {
+        guard let date = ISO8601DateFormatter().date(from: rfc3339) else { return rfc3339 }
+        return Calendar.current.isDateInToday(date)
+            ? date.formatted(date: .omitted, time: .shortened) : date.formatted(date: .abbreviated, time: .shortened)
     }
 
     private static func grouped(_ value: Double) -> String {

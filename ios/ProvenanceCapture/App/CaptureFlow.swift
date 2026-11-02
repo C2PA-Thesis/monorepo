@@ -46,7 +46,7 @@ final class CaptureFlow {
     // 1. Pairing
     private(set) var key: (any DeviceKey)?
     private(set) var pairing: Pairing?
-    private(set) var pairStatus = "Creating this phone's signing key…"
+    private(set) var pairStatus = "Creating key…"
     private(set) var pairFailed = false
     private(set) var pairingBusy = false
     private(set) var paramsStatus: String?
@@ -57,7 +57,11 @@ final class CaptureFlow {
 
     // 2. Photo
     private(set) var shot: Shot?
-    private(set) var photoSummary = ""
+    /// A failure while the photo step is open.
+    private(set) var photoNote = ""
+    /// A photo is being decoded and matched to a GPS fix.
+    private(set) var photoBusy = false
+    private(set) var photoFailed = false
     var showCamera = false
 
     // 3. Frame and crop
@@ -84,10 +88,15 @@ final class CaptureFlow {
 
     // 6. The laptop
     private(set) var laptop: CaptureStatus?
+    /// A state of the follow worth a pill: "Queued", "Reconnecting…", "Lost contact".
+    private(set) var laptopNotice: String?
+    /// How the follow ended: the verdict, or why it stopped.
     private(set) var laptopSummary = ""
     private(set) var storedOnly = false
     private(set) var runningSince: [String: Date] = [:]
     private(set) var outcome: Outcome?
+    /// The published cell's outline, asked for once the cell is published.
+    private(set) var outline: Outline?
 
     @ObservationIgnored private var lookups = 0
     @ObservationIgnored private var lookupTask: Task<Void, Never>?
@@ -108,10 +117,16 @@ final class CaptureFlow {
     var sendState: StepState { shot == nil ? .locked : acceptedID != nil ? .done : .active }
     var laptopState: StepState { acceptedID == nil ? .locked : outcome == nil ? .active : .done }
 
-    var pairSummary: String {
-        guard let pairing else { return "" }
-        return "Trusted by the laptop as device \(Verdict.short(pairing.device))"
+    var pairSummary: StepValue {
+        guard let pairing else { return StepValue() }
+        return "Paired · " + .mono(Verdict.short(pairing.device))
     }
+
+    /// Something runs that the pair card waits for.
+    var pairWorking: Bool { !pairFailed && (key == nil || pairingBusy || paramsBusy) }
+
+    /// The failure is a permission only Settings can give back.
+    var pairNeedsSettings: Bool { pairFailed && pairStatus == Self.localNetworkHelp }
 
     // MARK: 1. Pairing
 
@@ -135,13 +150,19 @@ final class CaptureFlow {
 
     /// The Simulator asks the Mac's own `provenance serve` for the payload.
     func fetchFromMac() async {
-        pairStatus = "Asking provenance serve on this Mac for a pairing code…"
+        pairStatus = "Connecting…"
         pairFailed = false
+        pairingBusy = true
+        let payload: PairingPayload
         do {
-            await pair(with: try await LocalPairing.fetch())
+            payload = try await LocalPairing.fetch()
         } catch {
-            fail("Could not reach provenance serve on 127.0.0.1:8791: \(describe(error)). Start it, or paste the pairing code.")
+            pairingBusy = false
+            fail("provenance serve on this Mac did not answer: \(describe(error)).")
+            return
         }
+        pairingBusy = false
+        await pair(with: payload)
     }
 
     func pairPasted() async {
@@ -166,7 +187,7 @@ final class CaptureFlow {
         pairingBusy = true
         defer { pairingBusy = false }
         pairFailed = false
-        pairStatus = "Pairing with the laptop…"
+        pairStatus = "Pairing…"
         do {
             let token = payload.token
             let signature = try await Task.detached { try key.sign(Data(token.utf8)) }.value
@@ -254,24 +275,23 @@ final class CaptureFlow {
                 }
                 if Date.now >= deadline { break rounds }
             }
-            pairStatus = denied ? Self.localNetworkHelp : "Looking for the laptop on this network…"
+            pairStatus = denied ? Self.localNetworkHelp : "Looking for the laptop…"
             try await Task.sleep(for: .seconds(2))
         }
         if denied { throw CaptureError(Self.localNetworkHelp) }
         let reason = last.map { " (\(describe($0)))" } ?? ""
         throw CaptureError(
-            "no address in the pairing code answered within \(seconds) seconds\(reason). Check that this phone is on the same network as the laptop and that provenance serve is running")
+            "no laptop answered within \(seconds) s\(reason). Check that this phone is on the laptop's network and provenance serve runs")
     }
 
-    static let localNetworkHelp =
-        "This app may not use the local network, so it cannot reach the laptop. Tap Allow when iOS asks, or turn on Settings › Privacy & Security › Local Network › Capture, then pair again."
+    static let localNetworkHelp = "Turn on Local Network in Settings › Capture, then pair again."
 
     private func fetchParams() async {
         guard var pairing, let api, !paramsBusy else { return }
         paramsBusy = true
         defer { paramsBusy = false }
         pairFailed = false
-        pairStatus = "Downloading the location proof parameters…"
+        pairStatus = "Downloading proof parameters…"
         do {
             try await ProofParams.fetch(from: api, expected: pairing.params) { [weak self] status in
                 self?.paramsStatus = status
@@ -282,7 +302,7 @@ final class CaptureFlow {
             paramsStatus = nil
         } catch {
             paramsStatus = nil
-            fail("Paired, but the proof parameters did not download: \(describe(error)). Download them again, or pair again if the laptop was set up anew.")
+            fail("Proof parameters did not download: \(describe(error)).")
         }
     }
 
@@ -292,10 +312,7 @@ final class CaptureFlow {
 
     private func waitForPairing() {
         pairFailed = false
-        let id = key.map { Verdict.short($0.id) } ?? ""
-        pairStatus = Self.isSimulator
-            ? "This Simulator's key is \(id). It pairs with provenance serve on this Mac, or paste the pairing code."
-            : "This phone's key is \(id). Scan the QR code the laptop shows."
+        pairStatus = ""
     }
 
     private func fail(_ message: String) {
@@ -310,7 +327,8 @@ final class CaptureFlow {
             guard let url = Bundle.main.url(forResource: "sample", withExtension: "jpg"),
                 let data = try? Data(contentsOf: url)
             else {
-                photoSummary = "The sample photo is missing from the app."
+                photoNote = "The sample photo is missing."
+                photoFailed = true
                 return
             }
             await photoTaken(data, at: .now)
@@ -330,7 +348,10 @@ final class CaptureFlow {
         photos += 1
         let mine = photos
         let capturedAt = Timestamp.rfc3339(time)
-        photoSummary = location.last == nil ? "Waiting for a GPS fix…" : ""
+        photoFailed = false
+        photoNote = ""
+        photoBusy = true
+        defer { if mine == photos { photoBusy = false } }
         do {
             async let decoded = Task.detached { try Photo(data: data) }.value
             let fix = try await location.fix(at: time)
@@ -340,11 +361,12 @@ final class CaptureFlow {
             shot = Shot(photo: photo, capturedAt: capturedAt, fix: fix)
             framePosition = 0.5
             render()
-            photoSummary = "\(Verdict.time(capturedAt)), GPS ±\(Int(fix.accuracy.rounded())) m. Tap to retake."
+            photoNote = ""
             scheduleLookup(immediately: true)
         } catch {
             guard mine == photos else { return }
-            photoSummary = describe(error)
+            photoNote = describe(error)
+            photoFailed = true
         }
     }
 
@@ -368,9 +390,11 @@ final class CaptureFlow {
         acceptedID = nil
         laptop = nil
         laptopSummary = ""
+        laptopNotice = nil
         storedOnly = false
         runningSince = [:]
         outcome = nil
+        outline = nil
     }
 
     // MARK: 3. Frame
@@ -389,7 +413,7 @@ final class CaptureFlow {
     // MARK: 4. Region
 
     /// Average sizes only. The outline of a cell comes from the laptop, so the
-    /// app asks for it only once that cell is published (see `ResultMap`).
+    /// app asks for it only once that cell is published (see `showResult`).
     /// Asking while the slider moves would tell the laptop every finer cell
     /// the user looked at.
     var resolutionText: String {
@@ -405,12 +429,25 @@ final class CaptureFlow {
     var accuracyWarning: String? {
         guard region != nil, let fix = shot?.fix else { return nil }
         guard fix.accuracy * 2 >= cellWidth else { return nil }
-        return "The GPS fix is only accurate to ±\(Int(fix.accuracy.rounded())) m, which is coarse for a cell this small. The photo may have been taken in a neighbouring cell."
+        return "GPS ±\(Int(fix.accuracy.rounded())) m: the photo may fall in a neighbouring cell."
     }
 
-    var regionSummary: String {
-        guard let region else { return "" }
-        return "Cell \(region.cell), about \(Verdict.area(Verdict.averageKm2[region.resolution]))"
+    /// The cell and its real area once the published outline is known, the average before.
+    var regionSummary: StepValue {
+        guard let region else { return StepValue() }
+        let area = outline.flatMap { $0.cell == region.cell ? Verdict.area($0.areaKm2) : nil }
+            ?? "~\(Verdict.area(Verdict.averageKm2[region.resolution]))"
+        return .mono(Verdict.cellShort(region.cell)) + StepValue(" · \(area)")
+    }
+
+    /// The folded step's value: the laptop's total time once it finished, as the
+    /// result card already says the verdict; why the follow stopped otherwise.
+    var laptopValue: StepValue {
+        if outcome != nil, let laptop, !laptop.phase.isRunning {
+            let total = timeline.reduce(0) { $0 + $1.seconds }
+            if total > 0 { return StepValue(Verdict.seconds(total)) }
+        }
+        return StepValue(laptopSummary.isEmpty ? (laptopNotice ?? "") : laptopSummary)
     }
 
     private func scheduleLookup(immediately: Bool = false) {
@@ -440,8 +477,7 @@ final class CaptureFlow {
             region = found
             cellPending = false
             cellFailed = false
-            cellText =
-                "Cell \(found.cell). The published file names this cell, never the point inside it. Cell outlines come from the laptop, so the map draws this one only after it is published."
+            cellText = ""
         } catch {
             guard mine == lookups else { return }
             if region?.resolution != resolution { region = nil }
@@ -452,18 +488,6 @@ final class CaptureFlow {
     }
 
     // MARK: 5. Sign and send
-
-    var published: [String] {
-        [
-            "The \(crop.text) crop",
-            region.map { "Cell \($0.cell) (about \(Verdict.area(Verdict.averageKm2[$0.resolution])))" } ?? "The cell",
-            shot.map { "Capture time, \(Verdict.time($0.capturedAt))" } ?? "The capture time",
-            "This phone's key id, \(Verdict.short(key?.id ?? ""))",
-            "A fingerprint of the whole frame (384 numbers)",
-            "An envelope that seals the coordinate and its hints",
-            "A proof that the sealed hints map to the cell",
-        ]
-    }
 
     /// The region must be the one for the size the slider shows, not one still being replaced.
     var canSubmit: Bool {
@@ -484,27 +508,27 @@ final class CaptureFlow {
         let crop = crop
         let native = Native.library
         do {
-            let fingerprint = try await local("Fingerprint the whole frame, on this phone") {
+            let fingerprint = try await local("Fingerprint") {
                 let planes = original.channels()
                 return try native.fingerprint(r: planes.r, g: planes.g, b: planes.b)
             }
-            let secrets = try await local("Seal the coordinate and its hints in an envelope (MiMC)", detail: { Verdict.short($0.1) }) {
+            let secrets = try await local("Seal position", detail: { Verdict.short($0.1) }) {
                 let hints = try native.hints(latitude: fix.latitude, longitude: fix.longitude)
                 let secrets = LocationSecrets(
                     latitude: fix.latitude, longitude: fix.longitude, salt: LocationSecrets.freshSalt(), hints: hints)
                 return (secrets, try native.envelope(secrets))
             }
             let (sealed, envelope) = secrets
-            let proof = try await local("Prove the sealed hints map to cell \(region.cell) (Groth16)") {
+            let proof = try await local("Location proof", detail: { _ in Verdict.cellShort(region.cell) }) {
                 try native.prove(params: ProofParams.directory, cell: region.cell, secrets: sealed)
             }
             guard proof.envelope == envelope else {
                 throw CaptureError("the proof is for envelope \(Verdict.short(proof.envelope)), not \(Verdict.short(envelope))")
             }
-            let receipt = try await local("Sign fingerprint and envelope with this phone's key", detail: { "device \(Verdict.short($0.device))" }) {
+            let receipt = try await local("Sign", detail: { "device \(Verdict.short($0.device))" }) {
                 try Receipt.sign(fingerprint: fingerprint, envelope: envelope, capturedAt: capturedAt, key: key)
             }
-            let accepted = try await local("Send to the laptop, which checks it as a reader would", detail: { $0.id }) {
+            let accepted = try await local("Send", detail: { $0.id }) {
                 let upload = CaptureUpload(
                     originalPng: try original.png().base64EncodedString(), receipt: receipt, cell: region.cell,
                     resolution: region.resolution, crop: crop, accuracyMeters: fix.accuracy, locationProof: proof.proof,
@@ -520,7 +544,7 @@ final class CaptureFlow {
             if let index = localSteps.indices.last, localSteps[index].state == .running {
                 finish(index, .failed, detail: describe(error))
             } else {
-                localSteps.append(LocalStep(title: "Prepare the capture", started: .now, state: .failed, seconds: 0, detail: describe(error)))
+                localSteps.append(LocalStep(title: "Prepare", started: .now, state: .failed, seconds: 0, detail: describe(error)))
             }
             sending = false
         }
@@ -548,7 +572,12 @@ final class CaptureFlow {
         localSteps[index].detail = detail
     }
 
-    var sendSummary: String { acceptedID.map { "Signed and accepted as \($0)" } ?? "" }
+    var photoValue: StepValue {
+        guard let shot else { return StepValue() }
+        return StepValue("\(Verdict.when(shot.capturedAt)) · ±\(Int(shot.fix.accuracy.rounded())) m")
+    }
+
+    var sendSummary: StepValue { acceptedID == nil ? StepValue() : "Sent" }
 
     // MARK: 6. The laptop
 
@@ -567,9 +596,10 @@ final class CaptureFlow {
             let giveUp = Date.now.addingTimeInterval(Self.followLimit)
             while !Task.isCancelled {
                 guard Date.now < giveUp else {
-                    laptopSummary = "Stopped following the capture"
+                    laptopNotice = nil
+                    laptopSummary = "Stopped"
                     outcome = .rejected(
-                        title: "The laptop has not finished",
+                        title: "Still running",
                         reason: "The capture \(id) is still running after \(Int(Self.followLimit / 60)) minutes; check the laptop.")
                     return
                 }
@@ -582,34 +612,32 @@ final class CaptureFlow {
                     failingSince = since
                     let transient = (error as? URLError).map(HTTP.isConnectionFailure) ?? false
                     if !transient || Date.now.timeIntervalSince(since) > Self.laptopPatience {
-                        laptopSummary = "Lost track of the capture"
+                        laptopNotice = nil
+                        laptopSummary = "Lost contact"
                         outcome = .rejected(
-                            title: transient ? "The laptop stopped answering" : "The laptop's status could not be read",
-                            reason: "\(describe(error)). The capture \(id) may still finish there; check the laptop.")
+                            title: transient ? "Laptop not answering" : "Status unreadable",
+                            reason: "\(describe(error)). The capture \(id) may still finish on the laptop.")
                         return
                     }
-                    laptopSummary = "The laptop is not answering, retrying…"
+                    laptopNotice = "Reconnecting…"
                     try? await Task.sleep(for: .milliseconds(1500))
                     continue
                 }
                 guard let current = status, !Task.isCancelled else { return }
                 if current.phase == .stored {
                     storedOnly = true
-                    laptopSummary = ""
+                    laptopNotice = nil
                     return
                 }
                 laptop = current
                 noteRunning()
                 if !current.phase.isRunning { break }
-                laptopSummary = current.phase == .queued ? "Waiting for another capture to finish" : "Working…"
+                laptopNotice = current.phase == .queued ? "Queued" : nil
                 try? await Task.sleep(for: .milliseconds(700))
             }
             guard let status, !Task.isCancelled else { return }
-            laptopSummary = switch status.phase {
-            case .accepted: "Published and verified"
-            case .rejected: "Rejected"
-            default: "Failed"
-            }
+            laptopNotice = nil
+            laptopSummary = status.phase == .accepted ? "Verified" : status.phase == .rejected ? "Rejected" : "Failed"
             await showResult(status, api: api)
         }
     }
@@ -639,9 +667,12 @@ final class CaptureFlow {
             try png.write(to: file)
             guard !Task.isCancelled else { return }
             outcome = .accepted(claim, image: png, file: file)
+            let published = try? await api.outline(claim.cell)
+            guard !Task.isCancelled else { return }
+            outline = published
         } catch {
             guard !Task.isCancelled else { return }
-            outcome = .rejected(title: "Verified, but the signed file did not download", reason: describe(error))
+            outcome = .rejected(title: "Download failed", reason: "Verified on the laptop, but the signed file did not download: \(describe(error)).")
         }
     }
 }

@@ -3,78 +3,72 @@ import SwiftUI
 
 struct PairStep: View {
     @Bindable var flow: CaptureFlow
+    @State private var confirming = false
 
     var body: some View {
-        VStack(spacing: 0) {
-            StepCard(number: 1, title: "Pair this phone", summary: flow.pairSummary, state: flow.pairState) {
-                VStack(alignment: .leading, spacing: 12) {
-                    Text(flow.pairStatus)
-                        .font(.subheadline)
-                        .foregroundStyle(flow.pairFailed ? Theme.bad : Theme.muted)
-                        .fixedSize(horizontal: false, vertical: true)
-                    if let progress = flow.paramsStatus {
-                        HStack(spacing: 8) {
-                            ProgressView().controlSize(.small)
-                            Text(progress).font(.footnote).foregroundStyle(Theme.muted)
-                        }
+        StepCard(
+            number: 1, title: "Pair", value: flow.pairSummary, state: flow.pairState,
+            reopen: { confirming = true }, reopenHint: "Pairs this phone again"
+        ) {
+            VStack(alignment: .leading, spacing: 12) {
+                status
+                if flow.pairing != nil {
+                    if !flow.isPaired && !flow.paramsBusy {
+                        Button("Retry") { Task { await flow.retryParams() } }
+                            .buttonStyle(.primary)
+                        // The download can fail for good: the laptop's parameters, certificate
+                        // or address changed since the pairing was saved.
+                        Button("Pair again") { flow.pairAgain() }
+                            .buttonStyle(.secondary)
                     }
-                    if flow.pairing != nil {
-                        if !flow.isPaired && !flow.paramsBusy {
-                            Button("Download the parameters again") { Task { await flow.retryParams() } }
-                                .buttonStyle(WideButtonStyle())
-                            // The download can fail for good: the laptop's parameters, certificate
-                            // or address changed since the pairing was saved.
-                            Button("Pair again") { flow.pairAgain() }
-                                .buttonStyle(WideButtonStyle(quiet: true))
-                        }
-                    } else {
-                        actions
-                    }
-                    Hint(
-                        "The laptop shows a QR code for this app. Scanning it pairs this phone and pins the laptop's certificate. Pairing tells the laptop to trust this phone's key, which never leaves "
-                            + (CaptureFlow.isSimulator ? "the Keychain." : "the Secure Enclave."))
+                } else if !flow.pairWorking {
+                    actions
                 }
-                .disabled(flow.pairingBusy)
+                if flow.pairNeedsSettings { OpenSettingsButton() }
             }
-            if flow.isPaired {
-                HStack {
-                    Spacer()
-                    Button("Pair again") { flow.pairAgain() }
-                        .font(.footnote)
-                        .padding(.top, 6)
-                }
+            .disabled(flow.pairingBusy)
+        }
+        .confirmationDialog("Pair this phone again?", isPresented: $confirming, titleVisibility: .visible) {
+            Button("Pair again", role: .destructive) { flow.pairAgain() }
+        }
+    }
+
+    @ViewBuilder private var status: some View {
+        if flow.pairWorking {
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small).tint(Theme.ink)
+                Text(flow.paramsStatus ?? flow.pairStatus).font(.subheadline).foregroundStyle(Theme.ink2)
             }
+        } else if !flow.pairStatus.isEmpty {
+            Note(flow.pairStatus, tone: flow.pairFailed ? Theme.bad : Theme.muted)
         }
     }
 
     @ViewBuilder private var actions: some View {
         if CaptureFlow.isSimulator {
-            Button("Pair with provenance serve on this Mac") { Task { await flow.fetchFromMac() } }
-                .buttonStyle(WideButtonStyle())
+            Button("Pair with this Mac") { Task { await flow.fetchFromMac() } }
+                .buttonStyle(.primary)
         } else {
             Button {
                 flow.showScanner = true
             } label: {
-                Label("Scan the pairing QR code", systemImage: "qrcode.viewfinder")
+                Label("Scan QR", systemImage: "qrcode.viewfinder")
             }
-            .buttonStyle(WideButtonStyle())
+            .buttonStyle(.primary)
         }
-        DisclosureGroup("Paste the pairing code instead") {
-            VStack(spacing: 8) {
-                TextField("{\"v\":1,\"urls\":[…]}", text: $flow.pasted, axis: .vertical)
-                    .font(.caption.monospaced())
-                    .lineLimit(3...6)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .padding(8)
-                    .background(Theme.surface2, in: RoundedRectangle(cornerRadius: 8))
-                Button("Pair") { Task { await flow.pairPasted() } }
-                    .buttonStyle(WideButtonStyle(quiet: true))
-                    .disabled(flow.pasted.isEmpty)
-            }
-            .padding(.top, 8)
+        Details(title: "Paste code") {
+            TextField("Pairing code", text: $flow.pasted, axis: .vertical)
+                .font(.caption.monospaced())
+                .lineLimit(3...6)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .padding(10)
+                .background(Theme.surface2, in: RoundedRectangle(cornerRadius: Theme.Radius.control))
+                .overlay(RoundedRectangle(cornerRadius: Theme.Radius.control).strokeBorder(Theme.lineStrong))
+            Button("Pair") { Task { await flow.pairPasted() } }
+                .buttonStyle(.secondary)
+                .disabled(flow.pasted.isEmpty)
         }
-        .font(.footnote)
     }
 }
 
@@ -83,37 +77,37 @@ struct PhotoStep: View {
     @State private var picked: PhotosPickerItem?
 
     var body: some View {
-        StepCard(number: 2, title: "Take a photo", summary: flow.photoSummary, state: flow.photoState) {
+        StepCard(
+            number: 2, title: "Photo", value: flow.photoValue, state: flow.photoState,
+            reopen: flow.sending ? nil : { if CaptureFlow.isSimulator { flow.retake() } else { flow.openCamera() } },
+            reopenHint: "Takes another photo"
+        ) {
             VStack(alignment: .leading, spacing: 12) {
-                GPSBadge(status: flow.location.status)
-                if case .error(_, let help?) = flow.location.status { Hint(help) }
-                #if targetEnvironment(simulator)
-                    Button {
-                        Task { await flow.useSample() }
-                    } label: {
-                        Label("Use the sample photo", systemImage: "photo")
-                    }
-                    .buttonStyle(WideButtonStyle())
-                    PhotosPicker(selection: $picked, matching: .images) {
-                        Label("Choose a photo", systemImage: "photo.on.rectangle")
-                    }
-                    .buttonStyle(WideButtonStyle(quiet: true))
-                    Hint("The Simulator has no camera. Its location comes from Xcode (Features › Location or a GPX file) and is marked simulated.")
-                #else
-                    Button {
-                        flow.openCamera()
-                    } label: {
-                        Label("Open the camera", systemImage: "camera")
-                    }
-                    .buttonStyle(WideButtonStyle())
-                    Hint("The coordinate and the time are read when the shutter fires.")
-                #endif
+                GPSState(status: flow.location.status)
+                Group {
+                    #if targetEnvironment(simulator)
+                        Button {
+                            Task { await flow.useSample() }
+                        } label: {
+                            BusyLabel(busy: flow.photoBusy, title: "Use sample photo", systemImage: "photo")
+                        }
+                        .buttonStyle(.primary(busy: flow.photoBusy))
+                        PhotosPicker(selection: $picked, matching: .images) {
+                            Label("Choose photo", systemImage: "photo.on.rectangle")
+                        }
+                        .buttonStyle(.secondary)
+                    #else
+                        Button {
+                            flow.openCamera()
+                        } label: {
+                            BusyLabel(busy: flow.photoBusy, title: "Open camera", systemImage: "camera")
+                        }
+                        .buttonStyle(.primary(busy: flow.photoBusy))
+                    #endif
+                }
+                .disabled(flow.photoBusy)
+                if !flow.photoNote.isEmpty { Note(flow.photoNote, tone: flow.photoFailed ? Theme.bad : Theme.muted) }
             }
-        }
-        .contentShape(Rectangle())
-        .onTapGesture {
-            guard flow.photoState == .done, !flow.sending else { return }
-            if CaptureFlow.isSimulator { flow.retake() } else { flow.openCamera() }
         }
         .id("photo")
         .onChange(of: picked) { _, item in
@@ -129,32 +123,43 @@ struct PhotoStep: View {
     }
 }
 
-struct GPSBadge: View {
+/// A button label that becomes a spinner and "Locating…" while the photo is matched to a fix.
+private struct BusyLabel: View {
+    let busy: Bool
+    let title: String
+    let systemImage: String
+
+    var body: some View {
+        if busy {
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small).tint(Theme.onInk)
+                Text("Locating…")
+            }
+        } else {
+            Label(title, systemImage: systemImage)
+        }
+    }
+}
+
+/// The GPS state, shown only when it is not ready: a pill, and for a blocked
+/// permission the setting to change.
+struct GPSState: View {
     let status: LocationService.Status
 
     var body: some View {
-        HStack(spacing: 8) {
-            Circle().fill(color).frame(width: 9, height: 9)
-            Text(text).font(.subheadline).foregroundStyle(isError ? Theme.bad : Theme.ink)
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(isError ? Theme.badSoft : Theme.surface2, in: Capsule())
-    }
-
-    private var text: String {
         switch status {
-        case .waiting(let text), .ok(let text), .error(let text, _): text
-        }
-    }
-
-    private var isError: Bool { if case .error = status { true } else { false } }
-
-    private var color: Color {
-        switch status {
-        case .waiting: Theme.faint
-        case .ok: Theme.ok
-        case .error: Theme.bad
+        case .ok:
+            EmptyView()
+        case .waiting(let text):
+            Pill(text: text, tone: .waiting)
+        case .error(let text, let help):
+            VStack(alignment: .leading, spacing: 8) {
+                Pill(text: text, tone: .bad)
+                if let help {
+                    Note(help)
+                    OpenSettingsButton()
+                }
+            }
         }
     }
 }
