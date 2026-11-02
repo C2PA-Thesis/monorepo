@@ -20,6 +20,8 @@ protocol NativeLibrary: Sendable {
     func prove(params: URL, cell: String, secrets: LocationSecrets) throws -> LocationProof
     /// The H3 cell of the coordinate, as the circuit computes it.
     func cell(latitude: Double, longitude: Double, resolution: Int) throws -> Region
+    /// The corners and area of `cell`, computed on the phone.
+    func outline(_ cell: String) throws -> Outline
 }
 
 enum NativeError: LocalizedError {
@@ -146,6 +148,16 @@ private struct LinkedLibrary: NativeLibrary {
         #if canImport(ZKLocFFI)
             return try Self.call("zkloc_cell", Region.self) {
                 zkloc_cell(latitude, longitude, numericCast(resolution))
+            }
+        #else
+            throw NativeError.notBuilt("ZKLoc.xcframework")
+        #endif
+    }
+
+    func outline(_ cell: String) throws -> Outline {
+        #if canImport(ZKLocFFI)
+            return try Self.call("zkloc_outline", Outline.self) {
+                Self.withCString(cell) { zkloc_outline($0) }
             }
         #else
             throw NativeError.notBuilt("ZKLoc.xcframework")

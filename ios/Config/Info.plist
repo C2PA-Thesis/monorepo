@@ -4,26 +4,35 @@
 <dict>
 	<key>CFBundleDisplayName</key>
 	<string>Capture</string>
-	<key>NSCameraUsageDescription</key>
-	<string>The camera takes the photo this app signs, and reads the pairing QR code on the laptop.</string>
-	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>The position at the moment of the photo is sealed in the capture. Only the area you choose is published.</string>
-	<key>NSLocationTemporaryUsageDescriptionDictionary</key>
-	<dict>
-		<key>capture</key>
-		<string>The location proof needs the precise position to place the photo in the right cell.</string>
-	</dict>
-	<key>NSPhotoLibraryAddUsageDescription</key>
-	<string>The share sheet can save a copy of the signed file to Photos.</string>
-	<key>NSLocalNetworkUsageDescription</key>
-	<string>The app sends captures to provenance serve on the laptop on this network.</string>
-	<key>NSFaceIDUsageDescription</key>
-	<string>Face ID unlocks the Secure Enclave key that signs each capture.</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
+	<key>NSCameraUsageDescription</key>
+	<string>Capture takes the photos it certifies, and scans the code on your laptop to connect.</string>
+	<key>NSFaceIDUsageDescription</key>
+	<string>Face ID confirms it's you before this iPhone signs a photo.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Capture sends your photos to your laptop on this Wi-Fi.</string>
+	<key>NSLocationTemporaryUsageDescriptionDictionary</key>
+	<dict>
+		<key>capture</key>
+		<string>Precise location places the photo in the right area.</string>
+	</dict>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>To save your verified photos, with their proof, to your library.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>So each photo can prove where it was taken. Your location stays private.</string>
+	<key>UIAppFonts</key>
+	<array>
+		<string>HankenGrotesk-Regular.ttf</string>
+		<string>HankenGrotesk-Medium.ttf</string>
+		<string>HankenGrotesk-SemiBold.ttf</string>
+		<string>HankenGrotesk-Bold.ttf</string>
+		<string>IBMPlexMono-Regular.ttf</string>
+		<string>IBMPlexMono-Medium.ttf</string>
+	</array>
 	<key>UILaunchScreen</key>
 	<dict/>
 	<key>UIRequiredDeviceCapabilities</key>

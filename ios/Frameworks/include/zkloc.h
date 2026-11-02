@@ -49,6 +49,12 @@ char *zkloc_prove(const char *params_dir, const char *cell,
 /* {"cell","resolution","face","i","j","k"}: the cell the circuit accepts. */
 char *zkloc_cell(double lat, double lng, int resolution);
 
+/*
+ * {"cell","resolution","area_km2","boundary":[[lat,lng],...]}: the corners
+ * of any valid cell, for drawing it.
+ */
+char *zkloc_outline(const char *cell);
+
 /* Releases a string returned above. NULL is allowed. */
 void zkloc_free(char *text);
 

@@ -50,6 +50,11 @@ func zkloc_cell(lat, lng C.double, resolution C.int) *C.char {
 	return C.CString(cellReply(float64(lat), float64(lng), int(resolution)))
 }
 
+//export zkloc_outline
+func zkloc_outline(cell *C.char) *C.char {
+	return C.CString(outlineReply(goString(cell)))
+}
+
 //export zkloc_free
 func zkloc_free(text *C.char) {
 	C.free(unsafe.Pointer(text))
@@ -96,6 +101,16 @@ func proveReply(paramsDir, cell, secretsJSON *string) string {
 func cellReply(lat, lng float64, resolution int) string {
 	return respond(func() (any, error) {
 		return zkloc.CellOf(zkloc.Coordinate{Latitude: lat, Longitude: lng}, resolution)
+	})
+}
+
+// outlineReply draws the cell on the phone, so choosing a size never asks the laptop.
+func outlineReply(cell *string) string {
+	return respond(func() (any, error) {
+		if cell == nil {
+			return nil, errors.New("cell must not be NULL")
+		}
+		return zkloc.OutlineOf(*cell)
 	})
 }
 

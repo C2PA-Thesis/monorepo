@@ -206,3 +206,20 @@ struct CaptureStatus: Decodable, Sendable {
     let error: String?
     let claim: Claim?
 }
+
+/// What `POST /api/verify` returns: the checks that passed, the first that
+/// rejected the file, and the claim when every check passed.
+struct Report: Decodable, Sendable {
+    struct Step: Decodable, Sendable {
+        let check: String
+        let detail: String
+    }
+
+    struct Result: Decodable, Sendable {
+        let passed: [Step]
+        let rejected: Step?
+        let claim: Claim?
+    }
+
+    let verdict: Result
+}

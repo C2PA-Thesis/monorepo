@@ -1,8 +1,28 @@
 # ProvenanceCapture
 
-The native iOS capture app. It runs the same flow as the capture page in
-`web/` (pair, take a photo, choose the crop, choose the cell, sign and send,
-follow the laptop), with three differences:
+The native iOS capture app. It makes the same captures as the capture page in
+`web/`, with a different order and three differences.
+
+The order is camera first, one step per screen. A first run shows two
+pages on what the app does, then asks for location, the camera (on a device)
+and the laptop. After that the app opens on the camera. The shutter seals the
+photo on the phone right away: it reads the fix, renders the 1024x512 original
+from the framed box, fingerprints it, seals the position in the envelope and
+signs the receipt. Then two screens: the photo, with Edit (the crop for now)
+and Publish, and "Were you around here?" with the cell drawn on a map and the
+size of the area. "Yes, publish" makes the location proof on the phone,
+uploads, and follows the laptop while it proves the crop and runs the reader
+checks. Edits after the shutter cannot change what was signed: the crop and
+the cell are proved against the sealed original and envelope.
+
+Every verified photo is kept on the phone (Application Support/Verified, the
+signed PNG as the laptop returned it) and listed in a gallery behind the
+thumbnail next to the shutter. A photo can be shared, saved to Photos as the
+original file, or deleted. "Check a photo" sends a picked photo to the
+laptop's `POST /api/verify` and shows the reader's verdict; the device check
+only passes for devices that laptop has paired.
+
+The differences:
 
 - The device key lives in the Secure Enclave and every signature asks for
   Face ID, Touch ID or the passcode. The app declares this when it pairs;
@@ -122,8 +142,8 @@ They are kept in Application Support (`params/location/`, excluded from
 backups) next to a `version` file holding `sealed-hints-v1`, which
 `location-proof` checks. The pairing (address, pin, device id, parameter
 hashes) is kept in UserDefaults; "Pair again" forgets it and keeps the key.
-When the download fails, the step offers both "Download the parameters
-again" and "Pair again", because a retry fails for good when the laptop's
+When the download fails, the screen offers both "Try again" and "Connect
+again", because a retry fails for good when the laptop's
 parameters, certificate or address changed.
 
 Pairing tries every address in the payload, one at a time, with a 6 second
@@ -190,14 +210,16 @@ only file that calls them; it still guards each import with `#if canImport`,
 so a copy of the project without the libraries compiles and signing stops
 with "the native library ... is not built into this app".
 
-The cell is computed on the phone with `zkloc_cell` only. The app never sends
-the coordinate to the laptop, so it does not use `POST /api/cell`. Without
-ZKLoc no cell is found and Sign and send stays disabled. The library has no
-cell outline, so the outline comes from `GET /api/cells/{cell}`, and the app
-asks for it only for the published cell, on the result card. While the slider
-moves, the map shows the phone's position at the size of an average cell and
-nothing goes to the laptop, so the laptop learns no cell finer than the
-published one.
+The cell and its outline are computed on the phone with `zkloc_cell` and
+`zkloc_outline`. The app never sends the coordinate to the laptop, so it does
+not use `POST /api/cell`, and it does not ask `GET /api/cells/{cell}` either:
+choosing a size draws the hexagon without telling the laptop which finer
+cells the person looked at. Without ZKLoc no cell is found and publishing
+stays disabled.
+
+Debug builds take `-scenario <name>` as a launch argument to open a state that
+is hard to reach on purpose (`seal`, `sealFailed`, `sendFailed`, `rejected`,
+`lost`, `stored`, `pairFailed`). See `applyScenario` in `CaptureFlow.swift`.
 
 ## Wire format
 

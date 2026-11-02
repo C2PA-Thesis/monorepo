@@ -17,6 +17,10 @@ struct CropRect: Codable, Equatable, Hashable, Sendable {
         point.x >= x && point.x <= x + width && point.y >= y && point.y <= y + height
     }
 
+    static let whole = CropRect(x: 0, y: 0, width: Original.width, height: Original.height)
+
+    var isWhole: Bool { self == .whole }
+
     /// "512×512 at (0, 0)", as the web page and the CLI describe a crop.
     var text: String { "\(width)×\(height) at (\(x), \(y))" }
 }

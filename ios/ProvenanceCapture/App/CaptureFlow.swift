@@ -1,21 +1,23 @@
+import AVFoundation
+import CoreGraphics
+import CoreLocation
 import Foundation
 import Observation
 import UIKit
 
-enum StepState: Equatable {
-    case locked, active, done
+/// One row of a progress list.
+enum RowState: Equatable {
+    case idle, running, done, failed
 }
 
-/// One thing the phone does on its own while signing, with its timing.
-struct LocalStep: Identifiable, Equatable {
-    enum State: Equatable { case running, done, failed }
+/// What the phone does right after the shutter, in order.
+enum SealStep: Int, CaseIterable {
+    case locate, fingerprint, seal, sign
+}
 
-    let id = UUID()
-    let title: String
-    let started: Date
-    var state = State.running
-    var seconds: Double?
-    var detail: String?
+/// What the phone does when the person publishes, before the laptop takes over.
+enum SendStep: Int, CaseIterable {
+    case prove, upload
 }
 
 struct Shot {
@@ -24,14 +26,40 @@ struct Shot {
     let fix: Fix
 }
 
-enum Outcome {
-    case accepted(Claim, image: Data, file: URL)
-    case rejected(title: String, reason: String)
+/// Everything fixed at the shutter: the 1024x512 original, the sealed
+/// position and the device's signature over the fingerprint and the envelope.
+struct Sealed: Sendable {
+    let original: OriginalImage
+    let secrets: LocationSecrets
+    let envelope: String
+    let receipt: Receipt
 }
 
-/// The capture flow, step by step as web/src/main.ts runs it: pair once, take
-/// a photo, frame and crop it, choose the cell, then fingerprint, seal, prove
-/// and sign on the phone and follow the laptop while it publishes.
+/// A failure in words a person can act on. `detail` keeps the raw reason for
+/// the technical detail.
+struct Failure: Equatable {
+    enum Action: Equatable { case retake, retry, settings }
+
+    let title: String
+    let message: String
+    var detail = ""
+    var action = Action.retake
+}
+
+enum Outcome {
+    case accepted(Claim, image: Data, file: URL)
+    case rejected(Failure)
+}
+
+/// The screen the app shows.
+enum Stage: Equatable {
+    case launch, welcome, location, cameraAccess, pair, camera, sealing, photo, area, publishing, result
+}
+
+/// The capture flow: pair once, then camera first. The shutter seals the
+/// photo on the phone (fingerprint, sealed position, signature); cropping and
+/// choosing the area are optional; publishing proves the area on the phone
+/// and follows the laptop while it proves the crop and verifies.
 @MainActor
 @Observable
 final class CaptureFlow {
@@ -43,7 +71,7 @@ final class CaptureFlow {
 
     let location = LocationService()
 
-    // 1. Pairing
+    // Pairing
     private(set) var key: (any DeviceKey)?
     private(set) var pairing: Pairing?
     private(set) var pairStatus = "Creating key…"
@@ -55,97 +83,124 @@ final class CaptureFlow {
     var showScanner = false
     var pasted = ""
 
-    // 2. Photo
+    // Welcome
+    private(set) var welcomed = UserDefaults.standard.bool(forKey: CaptureFlow.welcomedKey)
+    private static let welcomedKey = "welcomed.v1"
+
+    // Capture and seal
     private(set) var shot: Shot?
-    /// A failure while the photo step is open.
-    private(set) var photoNote = ""
-    /// A photo is being decoded and matched to a GPS fix.
-    private(set) var photoBusy = false
-    private(set) var photoFailed = false
-    var showCamera = false
+    /// The 2:1 original, shown as soon as it renders.
+    private(set) var preview: CGImage?
+    private(set) var sealed: Sealed?
+    private(set) var sealSteps: [SealStep: RowState] = [:]
+    private(set) var sealFailure: Failure?
+    /// Between the shutter and the end of the seal.
+    private(set) var capturing = false
 
-    // 3. Frame and crop
-    private(set) var original: OriginalImage?
-    var framePosition = 0.5 {
-        didSet { if framePosition != oldValue { render() } }
-    }
-    var crop = CropPreset.leftHalf
-
-    // 4. Region
+    // Review
+    var crop = CropRect.whole
+    /// The photo step is done and the area step shows.
+    var photoChosen = false
     var resolution = Verdict.defaultResolution {
         didSet { if resolution != oldValue { scheduleLookup() } }
     }
     private(set) var region: Region?
-    private(set) var cellText = ""
+    /// The chosen cell's outline, computed on the phone.
+    private(set) var area: Outline?
     private(set) var cellFailed = false
-    /// A lookup for the size the slider shows has not finished yet.
+    /// A lookup for the size on screen has not finished yet.
     private(set) var cellPending = false
 
-    // 5. Sign and send
-    private(set) var localSteps: [LocalStep] = []
+    // Publish
+    private(set) var sendSteps: [SendStep: RowState] = [:]
+    private(set) var sendFailure: Failure?
     private(set) var sending = false
     private(set) var acceptedID: String?
 
-    // 6. The laptop
+    // The laptop
     private(set) var laptop: CaptureStatus?
-    /// A state of the follow worth a pill: "Queued", "Reconnecting…", "Lost contact".
+    /// "Queued" or "Reconnecting…" while following.
     private(set) var laptopNotice: String?
-    /// How the follow ended: the verdict, or why it stopped.
-    private(set) var laptopSummary = ""
     private(set) var storedOnly = false
     private(set) var runningSince: [String: Date] = [:]
     private(set) var outcome: Outcome?
-    /// The published cell's outline, asked for once the cell is published.
-    private(set) var outline: Outline?
+    let gallery = Gallery()
 
     @ObservationIgnored private var lookups = 0
     @ObservationIgnored private var lookupTask: Task<Void, Never>?
-    @ObservationIgnored private var renders = 0
     @ObservationIgnored private var photos = 0
-    @ObservationIgnored private var submitTask: Task<Void, Never>?
+    @ObservationIgnored private var sealTask: Task<Void, Never>?
+    @ObservationIgnored private var sendTask: Task<Void, Never>?
     @ObservationIgnored private var followTask: Task<Void, Never>?
 
     /// The one pinned session to the paired laptop, replaced only when the pairing is.
     private(set) var api: LaptopAPI?
     var isPaired: Bool { pairing?.paramsReady == true }
 
-    // MARK: Step states
+    /// The key and any saved pairing are loaded, so the stage below is the real one.
+    private(set) var booted = false
 
-    var pairState: StepState { isPaired ? .done : .active }
-    var photoState: StepState { !isPaired ? .locked : shot == nil ? .active : .done }
-    var composeState: StepState { shot == nil ? .locked : (sending || acceptedID != nil) ? .done : .active }
-    var sendState: StepState { shot == nil ? .locked : acceptedID != nil ? .done : .active }
-    var laptopState: StepState { acceptedID == nil ? .locked : outcome == nil ? .active : .done }
-
-    var pairSummary: StepValue {
-        guard let pairing else { return StepValue() }
-        return "Paired · " + .mono(Verdict.short(pairing.device))
+    var stage: Stage {
+        if !booted { return .launch }
+        if outcome != nil || storedOnly { return .result }
+        if sending || acceptedID != nil || sendFailure != nil { return .publishing }
+        if capturing || sealFailure != nil { return .sealing }
+        if sealed != nil { return photoChosen ? .area : .photo }
+        if !isPaired, !welcomed, pairing == nil { return .welcome }
+        if location.access == .notAsked || location.access == .denied { return .location }
+        if needsCameraAccess { return .cameraAccess }
+        if !isPaired { return .pair }
+        return .camera
     }
 
-    /// Something runs that the pair card waits for.
+    /// Something runs that the pair screen waits for.
     var pairWorking: Bool { !pairFailed && (key == nil || pairingBusy || paramsBusy) }
 
     /// The failure is a permission only Settings can give back.
     var pairNeedsSettings: Bool { pairFailed && pairStatus == Self.localNetworkHelp }
 
+    func finishWelcome() {
+        welcomed = true
+        UserDefaults.standard.set(true, forKey: Self.welcomedKey)
+    }
+
+    func allowLocation() {
+        location.start()
+    }
+
+    /// Set once the camera question was asked, so the stage moves on whatever the answer.
+    private(set) var cameraAsked = false
+
+    /// The Simulator has no camera, so it skips the question.
+    var needsCameraAccess: Bool {
+        !Self.isSimulator && !cameraAsked && AVCaptureDevice.authorizationStatus(for: .video) == .notDetermined
+    }
+
+    func allowCamera() async {
+        _ = await AVCaptureDevice.requestAccess(for: .video)
+        cameraAsked = true
+    }
+
     // MARK: 1. Pairing
 
     func boot() async {
         guard key == nil else { return }
-        location.start()
+        location.resume()
         do {
             key = try await Task.detached { try DeviceKeys.loadOrCreate() }.value
         } catch {
+            booted = true
             fail("Could not create this phone's key: \(describe(error))")
             return
         }
         if let saved = Pairing.load(), saved.device == key?.id {
             use(saved)
+            booted = true
             if !saved.paramsReady { await fetchParams() }
             return
         }
+        booted = true
         waitForPairing()
-        if Self.isSimulator { await fetchFromMac() }
     }
 
     /// The Simulator asks the Mac's own `provenance serve` for the payload.
@@ -320,105 +375,141 @@ final class CaptureFlow {
         pairFailed = true
     }
 
-    // MARK: 2. Photo
 
-    #if targetEnvironment(simulator)
-        func useSample() async {
-            guard let url = Bundle.main.url(forResource: "sample", withExtension: "jpg"),
-                let data = try? Data(contentsOf: url)
-            else {
-                photoNote = "The sample photo is missing."
-                photoFailed = true
-                return
-            }
-            await photoTaken(data, at: .now)
-        }
-    #endif
+    // MARK: 2. Shutter and seal
 
-    func openCamera() {
-        guard !sending else { return }
-        // Asked before the shutter, so the answer does not eat into the fix window.
-        Task { await location.requestFullAccuracy() }
-        showCamera = true
-    }
-
-    /// `at` is when the shutter fired, or when the picked photo reached the app.
-    func photoTaken(_ data: Data, at time: Date) async {
-        showCamera = false
+    func photoTaken(_ data: Data, at time: Date, fix injected: Fix? = nil) {
+        retake()
         photos += 1
         let mine = photos
+        capturing = true
+        sealSteps = [.locate: .running]
+        sealTask = Task { await seal(data, at: time, fix: injected, mine: mine) }
+    }
+
+    /// Fixes everything a later edit cannot change: the fix, the 2:1 original,
+    /// its fingerprint, the sealed position and the signature over both.
+    private func seal(_ data: Data, at time: Date, fix injected: Fix?, mine: Int) async {
         let capturedAt = Timestamp.rfc3339(time)
-        photoFailed = false
-        photoNote = ""
-        photoBusy = true
-        defer { if mine == photos { photoBusy = false } }
+        let native = Native.library
+        let fixTask = Task {
+            if let injected { return injected }
+            return try await location.fix(at: time)
+        }
+        var step = SealStep.locate
         do {
-            async let decoded = Task.detached { try Photo(data: data) }.value
-            let fix = try await location.fix(at: time)
-            let photo = try await decoded
+            let photo = try await Task.detached { try Photo(data: data) }.value
+            let original = try await Task.detached { try OriginalImage.render(photo, position: 0.5) }.value
             guard mine == photos else { return }
-            retake()
+            preview = original.image
+            let fix = try await fixTask.value
+            try Task.checkCancellation()
+            sealSteps[.locate] = .done
+
+            step = .fingerprint
+            let fingerprint = try await run(step, mine) {
+                let planes = original.channels()
+                return try native.fingerprint(r: planes.r, g: planes.g, b: planes.b)
+            }
+            step = .seal
+            let (secrets, envelope) = try await run(step, mine) {
+                let hints = try native.hints(latitude: fix.latitude, longitude: fix.longitude)
+                let secrets = LocationSecrets(
+                    latitude: fix.latitude, longitude: fix.longitude, salt: LocationSecrets.freshSalt(), hints: hints)
+                return (secrets, try native.envelope(secrets))
+            }
+            step = .sign
+            guard let key else { throw CaptureError("this phone has no key yet") }
+            let receipt = try await run(step, mine) {
+                try Receipt.sign(fingerprint: fingerprint, envelope: envelope, capturedAt: capturedAt, key: key)
+            }
+            // A beat on the finished list before the review replaces it.
+            try await Task.sleep(for: .milliseconds(600))
+            guard mine == photos else { return }
             shot = Shot(photo: photo, capturedAt: capturedAt, fix: fix)
-            framePosition = 0.5
-            render()
-            photoNote = ""
+            sealed = Sealed(original: original, secrets: secrets, envelope: envelope, receipt: receipt)
+            capturing = false
             scheduleLookup(immediately: true)
         } catch {
-            guard mine == photos else { return }
-            photoNote = describe(error)
-            photoFailed = true
+            fixTask.cancel()
+            guard mine == photos, !Task.isCancelled else { return }
+            sealSteps[step] = .failed
+            sealFailure = Self.sealFailure(step, error)
+            capturing = false
         }
     }
 
-    /// Drops the current shot and everything still running for it.
+    /// Runs `work` off the main actor as one row of the seal list.
+    private func run<T: Sendable>(_ step: SealStep, _ mine: Int, _ work: @escaping @Sendable () throws -> T) async throws -> T {
+        try Task.checkCancellation()
+        sealSteps[step] = .running
+        let task = Task.detached(priority: .userInitiated, operation: work)
+        let value = try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
+        try Task.checkCancellation()
+        if mine == photos { sealSteps[step] = .done }
+        return value
+    }
+
+    private static func sealFailure(_ step: SealStep, _ error: any Error) -> Failure {
+        let detail = describe(error)
+        guard step == .locate else {
+            return Failure(
+                title: "Couldn't seal this photo", message: "Take the photo again.",
+                detail: detail)
+        }
+        if detail.contains("blocked") || detail.contains("Allow location") {
+            return Failure(
+                title: "Location is off", message: "Turn it on in Settings.",
+                detail: detail, action: .settings)
+        }
+        if detail.contains("approximate") {
+            return Failure(
+                title: "Precise location is off",
+                message: "Turn it on in Settings.", detail: detail,
+                action: .settings)
+        }
+        return Failure(
+            title: "Couldn't find where you are",
+            message: "Step outside or near a window and try again.",
+            detail: detail)
+    }
+
+    /// Drops the current photo and everything still running for it.
     func retake() {
-        submitTask?.cancel()
-        submitTask = nil
+        sealTask?.cancel()
+        sendTask?.cancel()
         followTask?.cancel()
-        followTask = nil
         lookupTask?.cancel()
-        // Results still in flight for the old shot see a newer count and are dropped.
+        sealTask = nil
+        sendTask = nil
+        followTask = nil
+        // Results still in flight for the old photo see a newer count and are dropped.
         lookups += 1
-        renders += 1
+        photos += 1
         shot = nil
-        original = nil
+        preview = nil
+        sealed = nil
+        sealSteps = [:]
+        sealFailure = nil
+        capturing = false
+        crop = .whole
+        photoChosen = false
         region = nil
-        cellText = ""
+        area = nil
+        cellFailed = false
         cellPending = false
-        localSteps = []
+        sendSteps = [:]
+        sendFailure = nil
         sending = false
         acceptedID = nil
         laptop = nil
-        laptopSummary = ""
         laptopNotice = nil
         storedOnly = false
         runningSince = [:]
         outcome = nil
-        outline = nil
     }
 
-    // MARK: 3. Frame
-
-    private func render() {
-        guard let photo = shot?.photo else { return }
-        renders += 1
-        let mine = renders
-        let position = framePosition
-        Task {
-            let rendered = try? await Task.detached { try OriginalImage.render(photo, position: position) }.value
-            if mine == renders, let rendered { original = rendered }
-        }
-    }
-
-    // MARK: 4. Region
-
-    /// Average sizes only. The outline of a cell comes from the laptop, so the
-    /// app asks for it only once that cell is published (see `showResult`).
-    /// Asking while the slider moves would tell the laptop every finer cell
-    /// the user looked at.
-    var resolutionText: String {
-        Verdict.resolutionText(resolution)
-    }
+    // MARK: 3. Review
 
     /// The width of an average cell at the chosen resolution, in metres.
     var cellWidth: Double {
@@ -426,40 +517,23 @@ final class CaptureFlow {
     }
 
     /// The fix is coarser than the cell is wide, so the photo may be in a neighbouring cell.
-    var accuracyWarning: String? {
-        guard region != nil, let fix = shot?.fix else { return nil }
-        guard fix.accuracy * 2 >= cellWidth else { return nil }
-        return "GPS ±\(Int(fix.accuracy.rounded())) m: the photo may fall in a neighbouring cell."
-    }
-
-    /// The cell and its real area once the published outline is known, the average before.
-    var regionSummary: StepValue {
-        guard let region else { return StepValue() }
-        let area = outline.flatMap { $0.cell == region.cell ? Verdict.area($0.areaKm2) : nil }
-            ?? "~\(Verdict.area(Verdict.averageKm2[region.resolution]))"
-        return .mono(Verdict.cellShort(region.cell)) + StepValue(" · \(area)")
-    }
-
-    /// The folded step's value: the laptop's total time once it finished, as the
-    /// result card already says the verdict; why the follow stopped otherwise.
-    var laptopValue: StepValue {
-        if outcome != nil, let laptop, !laptop.phase.isRunning {
-            let total = timeline.reduce(0) { $0 + $1.seconds }
-            if total > 0 { return StepValue(Verdict.seconds(total)) }
-        }
-        return StepValue(laptopSummary.isEmpty ? (laptopNotice ?? "") : laptopSummary)
+    var looseFix: Bool {
+        guard let fix = shot?.fix else { return false }
+        return fix.accuracy * 2 >= cellWidth
     }
 
     private func scheduleLookup(immediately: Bool = false) {
         lookupTask?.cancel()
         cellPending = shot != nil
         lookupTask = Task {
-            if !immediately { try? await Task.sleep(for: .milliseconds(250)) }
+            if !immediately { try? await Task.sleep(for: .milliseconds(120)) }
             guard !Task.isCancelled else { return }
             await lookupCell()
         }
     }
 
+    /// The cell and its outline, both computed on the phone, so moving the
+    /// size never tells the laptop which finer cells the person looked at.
     private func lookupCell() async {
         guard let fix = shot?.fix else {
             cellPending = false
@@ -468,69 +542,68 @@ final class CaptureFlow {
         lookups += 1
         let mine = lookups
         let resolution = resolution
+        let native = Native.library
         do {
-            // Computed on the phone only: the exact coordinate never reaches the laptop.
-            let found = try await Task.detached {
-                try Native.library.cell(latitude: fix.latitude, longitude: fix.longitude, resolution: resolution)
+            let (found, outline) = try await Task.detached {
+                let found = try native.cell(latitude: fix.latitude, longitude: fix.longitude, resolution: resolution)
+                return (found, try native.outline(found.cell))
             }.value
             guard mine == lookups else { return }
             region = found
+            area = outline
             cellPending = false
             cellFailed = false
-            cellText = ""
         } catch {
             guard mine == lookups else { return }
-            if region?.resolution != resolution { region = nil }
+            if region?.resolution != resolution {
+                region = nil
+                area = nil
+            }
             cellPending = false
             cellFailed = true
-            cellText = "\(describe(error)). Try another size."
         }
     }
 
-    // MARK: 5. Sign and send
+    // MARK: 4. Publish
 
-    /// The region must be the one for the size the slider shows, not one still being replaced.
-    var canSubmit: Bool {
-        shot != nil && !cellPending && region?.resolution == resolution && original != nil && !sending && acceptedID == nil
+    /// The region must be the one for the size on screen, not one still being replaced.
+    var canPublish: Bool {
+        sealed != nil && !cellPending && region?.resolution == resolution && !sending && acceptedID == nil
     }
 
-    func submit() {
-        guard canSubmit else { return }
-        submitTask = Task { await send() }
+    func publish() {
+        guard canPublish else { return }
+        sendFailure = nil
+        sendTask = Task { await send() }
+    }
+
+    /// Back to the review after a failed publish, keeping the sealed photo.
+    func backToReview() {
+        guard acceptedID == nil, !sending else { return }
+        sendFailure = nil
+        sendSteps = [:]
+        photoChosen = true
     }
 
     private func send() async {
-        guard let shot, let region, let original, let key, let api, canSubmit else { return }
+        guard let sealed, let shot, let region, let api, canPublish else { return }
         sending = true
-        localSteps = []
-        let fix = shot.fix
-        let capturedAt = shot.capturedAt
+        sendSteps = [.prove: .running]
         let crop = crop
+        let fix = shot.fix
         let native = Native.library
+        var step = SendStep.prove
         do {
-            let fingerprint = try await local("Fingerprint") {
-                let planes = original.channels()
-                return try native.fingerprint(r: planes.r, g: planes.g, b: planes.b)
+            let proof = try await sendRun(step) {
+                try native.prove(params: ProofParams.directory, cell: region.cell, secrets: sealed.secrets)
             }
-            let secrets = try await local("Seal position", detail: { Verdict.short($0.1) }) {
-                let hints = try native.hints(latitude: fix.latitude, longitude: fix.longitude)
-                let secrets = LocationSecrets(
-                    latitude: fix.latitude, longitude: fix.longitude, salt: LocationSecrets.freshSalt(), hints: hints)
-                return (secrets, try native.envelope(secrets))
+            guard proof.envelope == sealed.envelope else {
+                throw CaptureError("the proof is for envelope \(Verdict.short(proof.envelope)), not \(Verdict.short(sealed.envelope))")
             }
-            let (sealed, envelope) = secrets
-            let proof = try await local("Location proof", detail: { _ in Verdict.cellShort(region.cell) }) {
-                try native.prove(params: ProofParams.directory, cell: region.cell, secrets: sealed)
-            }
-            guard proof.envelope == envelope else {
-                throw CaptureError("the proof is for envelope \(Verdict.short(proof.envelope)), not \(Verdict.short(envelope))")
-            }
-            let receipt = try await local("Sign", detail: { "device \(Verdict.short($0.device))" }) {
-                try Receipt.sign(fingerprint: fingerprint, envelope: envelope, capturedAt: capturedAt, key: key)
-            }
-            let accepted = try await local("Send", detail: { $0.id }) {
+            step = .upload
+            let accepted = try await sendRun(step) {
                 let upload = CaptureUpload(
-                    originalPng: try original.png().base64EncodedString(), receipt: receipt, cell: region.cell,
+                    originalPng: try sealed.original.png().base64EncodedString(), receipt: sealed.receipt, cell: region.cell,
                     resolution: region.resolution, crop: crop, accuracyMeters: fix.accuracy, locationProof: proof.proof,
                     location: .init(simulated: fix.simulated, accessory: fix.accessory))
                 return try await api.upload(upload)
@@ -539,47 +612,32 @@ final class CaptureFlow {
             acceptedID = accepted.id
             follow(accepted.id, api: api)
         } catch {
-            // A retake already reset the steps for the next shot.
             if Task.isCancelled { return }
-            if let index = localSteps.indices.last, localSteps[index].state == .running {
-                finish(index, .failed, detail: describe(error))
-            } else {
-                localSteps.append(LocalStep(title: "Prepare", started: .now, state: .failed, seconds: 0, detail: describe(error)))
-            }
+            sendSteps[step] = .failed
+            sendFailure =
+                step == .prove
+                ? Failure(
+                    title: "Couldn't prove the area", message: "Try again.",
+                    detail: describe(error), action: .retry)
+                : Failure(
+                    title: "Your laptop didn't answer",
+                    message: "Check it's on and on the same Wi-Fi.",
+                    detail: describe(error), action: .retry)
             sending = false
         }
     }
 
-    /// Runs `work` off the main actor as one timed row of the list. Cancelling
-    /// the caller cancels `work`, so a retake stops a pending upload.
-    private func local<T: Sendable>(
-        _ title: String, detail: (T) -> String? = { _ in nil }, _ work: @escaping @Sendable () async throws -> T
-    ) async throws -> T {
+    private func sendRun<T: Sendable>(_ step: SendStep, _ work: @escaping @Sendable () async throws -> T) async throws -> T {
         try Task.checkCancellation()
-        localSteps.append(LocalStep(title: title, started: .now))
-        let index = localSteps.count - 1
+        sendSteps[step] = .running
         let task = Task.detached(priority: .userInitiated, operation: work)
         let value = try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
         try Task.checkCancellation()
-        finish(index, .done, detail: detail(value))
+        sendSteps[step] = .done
         return value
     }
 
-    private func finish(_ index: Int, _ state: LocalStep.State, detail: String?) {
-        guard localSteps.indices.contains(index) else { return }
-        localSteps[index].state = state
-        localSteps[index].seconds = Date.now.timeIntervalSince(localSteps[index].started)
-        localSteps[index].detail = detail
-    }
-
-    var photoValue: StepValue {
-        guard let shot else { return StepValue() }
-        return StepValue("\(Verdict.when(shot.capturedAt)) · ±\(Int(shot.fix.accuracy.rounded())) m")
-    }
-
-    var sendSummary: StepValue { acceptedID == nil ? StepValue() : "Sent" }
-
-    // MARK: 6. The laptop
+    // MARK: 5. The laptop
 
     var timeline: [Timeline.Group] {
         let halted = laptop?.phase == .failed ? (laptop?.error ?? "failed") : nil
@@ -597,10 +655,10 @@ final class CaptureFlow {
             while !Task.isCancelled {
                 guard Date.now < giveUp else {
                     laptopNotice = nil
-                    laptopSummary = "Stopped"
-                    outcome = .rejected(
-                        title: "Still running",
-                        reason: "The capture \(id) is still running after \(Int(Self.followLimit / 60)) minutes; check the laptop.")
+                    outcome = .rejected(Failure(
+                        title: "Still working on it",
+                        message: "Your laptop is slower than usual. Check it.",
+                        detail: "The capture \(id) is still running after \(Int(Self.followLimit / 60)) minutes."))
                     return
                 }
                 do {
@@ -613,10 +671,10 @@ final class CaptureFlow {
                     let transient = (error as? URLError).map(HTTP.isConnectionFailure) ?? false
                     if !transient || Date.now.timeIntervalSince(since) > Self.laptopPatience {
                         laptopNotice = nil
-                        laptopSummary = "Lost contact"
-                        outcome = .rejected(
-                            title: transient ? "Laptop not answering" : "Status unreadable",
-                            reason: "\(describe(error)). The capture \(id) may still finish on the laptop.")
+                        outcome = .rejected(Failure(
+                            title: "Lost your laptop",
+                            message: "Check it's on and on the same Wi-Fi.",
+                            detail: "\(describe(error)). Capture \(id)."))
                         return
                     }
                     laptopNotice = "Reconnecting…"
@@ -632,12 +690,11 @@ final class CaptureFlow {
                 laptop = current
                 noteRunning()
                 if !current.phase.isRunning { break }
-                laptopNotice = current.phase == .queued ? "Queued" : nil
+                laptopNotice = current.phase == .queued ? "Waiting for your laptop" : nil
                 try? await Task.sleep(for: .milliseconds(700))
             }
             guard let status, !Task.isCancelled else { return }
             laptopNotice = nil
-            laptopSummary = status.phase == .accepted ? "Verified" : status.phase == .rejected ? "Rejected" : "Failed"
             await showResult(status, api: api)
         }
     }
@@ -657,22 +714,84 @@ final class CaptureFlow {
 
     private func showResult(_ status: CaptureStatus, api: LaptopAPI) async {
         guard status.phase == .accepted, let claim = status.claim else {
-            outcome = .rejected(
-                title: status.phase == .rejected ? "Rejected" : "Publishing failed", reason: status.error ?? "unknown error")
+            let rejected = status.phase == .rejected
+            outcome = .rejected(Failure(
+                title: rejected ? "This photo didn't pass the checks" : "Publishing stopped",
+                message: rejected
+                    ? "It wasn't published. Take the photo again."
+                    : "Something went wrong on your laptop. Take the photo again.",
+                detail: status.error ?? "unknown error"))
             return
         }
         do {
             let png = try await api.signedPNG(status.id)
-            let file = URL.temporaryDirectory.appending(path: "\(status.id).png")
-            try png.write(to: file)
+            let file = try gallery.add(SavedPhoto(id: status.id, capturedAt: claim.capturedAt, cell: claim.cell), png: png)
             guard !Task.isCancelled else { return }
             outcome = .accepted(claim, image: png, file: file)
-            let published = try? await api.outline(claim.cell)
-            guard !Task.isCancelled else { return }
-            outline = published
         } catch {
             guard !Task.isCancelled else { return }
-            outcome = .rejected(title: "Download failed", reason: "Verified on the laptop, but the signed file did not download: \(describe(error)).")
+            outcome = .rejected(Failure(
+                title: "Couldn't bring the file back",
+                message: "It's verified and saved on your laptop.",
+                detail: describe(error)))
         }
     }
+
+    /// The published cell's outline: the one already drawn when it is the chosen cell.
+    var publishedArea: Outline? {
+        guard case .accepted(let claim, _, _) = outcome else { return nil }
+        if let area, area.cell == claim.cell { return area }
+        return try? Native.library.outline(claim.cell)
+    }
 }
+
+#if DEBUG
+    /// States that are hard to reach on purpose, for checking each screen in
+    /// the Simulator: launch with `-scenario <name>`.
+    extension CaptureFlow {
+        func applyScenario() {
+            guard let name = UserDefaults.standard.string(forKey: "scenario"),
+                let url = Bundle.main.url(forResource: "sample", withExtension: "jpg"),
+                let data = try? Data(contentsOf: url)
+            else { return }
+            let preview = (try? Photo(data: data)).flatMap { try? OriginalImage.render($0, position: 0.5) }?.image
+            switch name {
+            case "seal":
+                // A real seal of the sample photo at Universidad Torcuato Di Tella.
+                let fix = Fix(CLLocation(
+                    coordinate: CLLocationCoordinate2D(latitude: -34.5478, longitude: -58.4462), altitude: 0,
+                    horizontalAccuracy: 8, verticalAccuracy: 8, timestamp: .now))
+                photoTaken(data, at: .now, fix: fix)
+            case "sealFailed":
+                self.preview = preview
+                sealSteps = [.locate: .failed]
+                sealFailure = Self.sealFailure(.locate, CaptureError("No GPS fix. Try again."))
+            case "sendFailed":
+                self.preview = preview
+                sendSteps = [.prove: .done, .upload: .failed]
+                sendFailure = Failure(
+                    title: "Your laptop didn't answer",
+                    message: "Check it's on and on the same Wi-Fi.",
+                    detail: "Could not connect to the server.", action: .retry)
+            case "rejected":
+                outcome = .rejected(Failure(
+                    title: "This photo didn't pass the checks",
+                    message: "It wasn't published. Take the photo again.",
+                    detail: "location: the proof does not verify for cell 87c2e3020ffffff"))
+            case "lost":
+                outcome = .rejected(Failure(
+                    title: "Lost your laptop",
+                    message: "Check it's on and on the same Wi-Fi.",
+                    detail: "Could not connect to the server. Capture 20261102-124501-3f2a."))
+            case "stored":
+                acceptedID = "20261102-124501-3f2a"
+                storedOnly = true
+            case "pairFailed":
+                use(nil)
+                fail("Could not pair: no laptop answered within 10 s (Could not connect to the server.).")
+            default:
+                break
+            }
+        }
+    }
+#endif

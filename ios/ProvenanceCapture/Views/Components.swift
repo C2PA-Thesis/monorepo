@@ -1,649 +1,385 @@
+import MapKit
 import SwiftUI
 
-/// A numbered step of the flow. The active card holds the step; a done card
-/// folds to its title and value, and tapping it runs `reopen`. A locked step is
-/// a bare row, as on the web page. Inside a `StepStack` group the card draws no
-/// surface of its own.
-struct StepCard<Content: View>: View {
-    let number: Int
-    let title: String
-    var value = StepValue()
-    let state: StepState
-    /// A done card shows its body again.
-    var open = false
-    var reopen: (() -> Void)?
-    var reopenHint = ""
-    /// `reopen` shows the body again, so the done header gets a chevron.
-    var expands = false
-    /// Only the card that holds the primary action is raised.
-    var raised: Bool?
-    @ViewBuilder var content: Content
-    @Environment(\.inStepGroup) private var grouped
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            if state == .done, let reopen {
-                Button {
-                    withAnimation(.easeOut(duration: 0.18)) { reopen() }
-                } label: { header }
-                    .buttonStyle(.plain)
-                    .accessibilityHint(reopenHint)
-            } else {
-                header
-            }
-            if state == .active || (state == .done && open) {
-                content.transition(.opacity.combined(with: .move(edge: .top)))
-            }
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, state == .locked ? 10 : grouped ? 12 : 16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .modifier(CardSurface(on: !grouped && state != .locked, elevation: elevation))
-        .overlay(alignment: .top) {
-            if grouped, number > 1 { Rectangle().fill(Theme.line).frame(height: 1) }
-        }
-        .animation(.easeOut(duration: 0.18), value: state)
-        .animation(.easeOut(duration: 0.18), value: open)
-    }
-
-    private var elevation: Elevation {
-        switch state {
-        case .active: (raised ?? true) ? .raised : .card
-        case .done: .card
-        case .locked: .flat
-        }
-    }
-
-    private var header: some View {
-        HStack(spacing: 10) {
-            StepMark(number: number, state: state)
-            Text(title).font(.system(size: 17, weight: .semibold))
-                .foregroundStyle(state == .locked ? Theme.faint : Theme.ink)
-            Spacer(minLength: 8)
-            if state == .done, !value.isEmpty {
-                value.text.font(.system(size: 13, weight: .medium).monospacedDigit()).foregroundStyle(Theme.muted)
-                    .lineLimit(1).truncationMode(.middle)
-            }
-            if state == .done, expands, reopen != nil {
-                Image(systemName: "chevron.down").font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(Theme.faint).rotationEffect(.degrees(open ? 180 : 0))
-                    .accessibilityHidden(true)
-            }
-        }
-        .frame(minHeight: 22)
-        .contentShape(Rectangle())
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(accessibilityText)
-    }
-
-    private var accessibilityText: String {
-        switch state {
-        case .done: "Step \(number), \(title), done" + (value.isEmpty ? "" : ", \(value.string)")
-        case .active: "Step \(number), \(title)"
-        case .locked: "Step \(number), \(title), not yet"
-        }
-    }
-}
-
-/// A done step's value: plain text, with identifiers set in 12 pt mono as the
-/// web page sets them ("Paired · 1e94…a847").
-struct StepValue: Equatable, ExpressibleByStringLiteral {
-    struct Part: Equatable {
-        let text: String
-        let mono: Bool
-    }
-
-    var parts: [Part] = []
-
-    init(_ text: String = "") {
-        parts = text.isEmpty ? [] : [Part(text: text, mono: false)]
-    }
-
-    init(stringLiteral text: String) { self.init(text) }
-
-    static func mono(_ text: String) -> StepValue {
-        var value = StepValue()
-        value.parts = [Part(text: text, mono: true)]
-        return value
-    }
-
-    static func + (left: StepValue, right: StepValue) -> StepValue {
-        var value = left
-        value.parts += right.parts
-        return value
-    }
-
-    var isEmpty: Bool { parts.allSatisfy(\.text.isEmpty) }
-    var string: String { parts.map(\.text).joined() }
-
-    var text: Text {
-        var joined = AttributedString()
-        for part in parts {
-            var run = AttributedString(part.text)
-            if part.mono { run.font = Theme.mono }
-            joined += run
-        }
-        return Text(joined)
-    }
-}
-
-/// The card surface: fill, border and one of the two shadows.
-struct CardSurface: ViewModifier {
-    var on = true
-    let elevation: Elevation
-
-    func body(content: Content) -> some View {
-        if on {
-            content
-                .background(Theme.surface, in: card)
-                // Content leaving during the collapse animation must not draw outside the card.
-                .clipShape(card)
-                .overlay(card.strokeBorder(Theme.border(elevation)))
-                .elevation(elevation)
-        } else {
-            content
-        }
-    }
-
-    private var card: RoundedRectangle { RoundedRectangle(cornerRadius: Theme.Radius.card) }
-}
-
-private struct InStepGroupKey: EnvironmentKey {
-    static let defaultValue = false
-}
-
-extension EnvironmentValues {
-    var inStepGroup: Bool {
-        get { self[InStepGroupKey.self] }
-        set { self[InStepGroupKey.self] = newValue }
-    }
-}
-
-/// The step cards. Once every step is done they become rows of one card,
-/// split by hairlines, so the result is the only large object on screen.
-struct StepStack<Content: View>: View {
-    let grouped: Bool
-    @ViewBuilder var content: Content
-
-    var body: some View {
-        VStack(spacing: grouped ? 0 : 12) { content }
-            .environment(\.inStepGroup, grouped)
-            .background(grouped ? Theme.surface : .clear, in: card)
-            .overlay(card.strokeBorder(grouped ? Theme.line : .clear))
-            .elevation(grouped ? .card : .flat)
-            .animation(.easeOut(duration: 0.18), value: grouped)
-    }
-
-    private var card: RoundedRectangle { RoundedRectangle(cornerRadius: Theme.Radius.card) }
-}
-
-private struct StepMark: View {
-    let number: Int
-    let state: StepState
+/// The verified mark: a solid green seal with a white check.
+struct VerifiedMark: View {
+    var size: CGFloat = 72
 
     var body: some View {
         ZStack {
-            switch state {
-            case .done:
-                // Green is kept for verdicts: a finished step is an ink circle with a check.
-                Circle().fill(Theme.ink)
-                Image(systemName: "checkmark").font(.system(size: 10, weight: .bold)).foregroundStyle(Theme.onInk)
-            case .active:
-                Circle().fill(Theme.ink)
-                Text("\(number)").font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.onInk)
-            case .locked:
-                Circle().strokeBorder(Theme.lineStrong, lineWidth: 1.5)
-                Text("\(number)").font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.faint)
-            }
+            Image(systemName: "seal.fill").resizable().scaledToFit().foregroundStyle(Theme.verify)
+            Image(systemName: "checkmark").font(.system(size: size * 0.36, weight: .bold)).foregroundStyle(.white)
         }
-        .frame(width: 22, height: 22)
+        .frame(width: size, height: size)
         .accessibilityHidden(true)
     }
 }
 
-/// One short muted line, or a failure in bad color.
-struct Note: View {
-    let text: String
-    var tone: Color = Theme.muted
-
-    init(_ text: String, tone: Color = Theme.muted) {
-        self.text = text
-        self.tone = tone
-    }
+/// The PoC's ring spinner: a faint ring with a colored arc.
+struct Spinner: View {
+    var color = Theme.signal
+    @State private var turning = false
 
     var body: some View {
-        Text(text).font(.footnote).foregroundStyle(tone).fixedSize(horizontal: false, vertical: true)
-    }
-}
-
-/// A state that needs attention: waiting, blocked or a warning. Waiting is a
-/// warn pill with a pulsing dot, as on the web page.
-struct Pill: View {
-    enum Tone { case waiting, bad, warn }
-    let text: String
-    let tone: Tone
-    @State private var dim = false
-
-    var body: some View {
-        HStack(spacing: 6) {
-            Circle().fill(color).frame(width: 6, height: 6)
-                .opacity(tone == .waiting && dim ? 0.25 : 1)
-                .animation(tone == .waiting ? .easeInOut(duration: 0.6).repeatForever() : nil, value: dim)
-                .onAppear { if tone == .waiting { dim = true } }
-            Text(text).font(.system(size: 13, weight: .medium)).foregroundStyle(color)
+        ZStack {
+            Circle().stroke(Theme.line2, lineWidth: 2)
+            Circle().trim(from: 0, to: 0.28).stroke(color, style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                .rotationEffect(.degrees(turning ? 360 : 0))
         }
-        .padding(.horizontal, 10)
-        .frame(height: 24)
-        .background(background, in: Capsule())
-    }
-
-    private var color: Color { tone == .bad ? Theme.bad : Theme.warn }
-    private var background: Color { tone == .bad ? Theme.badSoft : Theme.warnSoft }
-}
-
-/// Ink fill, 44 pt, 15/600. A disabled button fades as on the web page.
-struct PrimaryButtonStyle: ButtonStyle {
-    /// The action runs: the button keeps its full ink fill while it is disabled.
-    var busy = false
-    @Environment(\.isEnabled) private var isEnabled
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.system(size: 15, weight: .semibold))
-            .frame(maxWidth: .infinity, minHeight: 44)
-            .foregroundStyle(Theme.onInk)
-            .background(Theme.ink, in: RoundedRectangle(cornerRadius: Theme.Radius.control))
-            .opacity(isEnabled || busy ? (configuration.isPressed ? 0.88 : 1) : 0.35)
-            .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.control))
+        .onAppear { withAnimation(.linear(duration: 0.7).repeatForever(autoreverses: false)) { turning = true } }
+        .accessibilityHidden(true)
     }
 }
 
-/// Surface, a strong hairline and ink text.
-struct SecondaryButtonStyle: ButtonStyle {
-    @Environment(\.isEnabled) private var isEnabled
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.system(size: 15, weight: .semibold))
-            .frame(maxWidth: .infinity, minHeight: 44)
-            .foregroundStyle(Theme.ink)
-            .background(configuration.isPressed ? Theme.surface2 : Theme.surface, in: RoundedRectangle(cornerRadius: Theme.Radius.control))
-            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.control).strokeBorder(Theme.lineStrong))
-            .opacity(isEnabled ? 1 : 0.35)
-            .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.control))
-    }
-}
-
-extension ButtonStyle where Self == PrimaryButtonStyle {
-    static var primary: PrimaryButtonStyle { PrimaryButtonStyle() }
-    static func primary(busy: Bool) -> PrimaryButtonStyle { PrimaryButtonStyle(busy: busy) }
-}
-
-extension ButtonStyle where Self == SecondaryButtonStyle {
-    static var secondary: SecondaryButtonStyle { SecondaryButtonStyle() }
-}
-
-/// Opens this app's page in Settings.
-struct OpenSettingsButton: View {
-    var body: some View {
-        if let url = URL(string: UIApplication.openSettingsURLString) {
-            Link("Open Settings", destination: url).buttonStyle(.secondary)
-        }
-    }
-}
-
+/// A selectable pill.
 struct Chip: View {
     let title: String
     let selected: Bool
+    var dark = false
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
             Text(title)
-                .font(.system(size: 13, weight: .medium))
-                .padding(.horizontal, 12)
-                .frame(minHeight: 32)
-                .foregroundStyle(selected ? Theme.onInk : Theme.ink)
-                .background(selected ? Theme.ink : Theme.surface2, in: Capsule())
-                // A 44 pt target around the 32 pt chip.
-                .padding(.vertical, 6)
+                .font(Typeface.sans(14, .semibold, relativeTo: .subheadline))
+                .padding(.horizontal, 14)
+                .frame(minHeight: 36)
+                .foregroundStyle(foreground)
+                .background(background, in: Capsule())
+                .overlay(Capsule().strokeBorder(selected ? .clear : border))
+                .padding(.vertical, 4)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
+
+    private var foreground: Color { dark ? (selected ? .black : .white) : (selected ? Theme.onInk : Theme.ink) }
+    private var background: Color { dark ? (selected ? .white : .white.opacity(0.12)) : (selected ? Theme.ink : Theme.paper) }
+    private var border: Color { dark ? .white.opacity(0.18) : Theme.line2 }
 }
 
-/// "Details": a quiet disclosure for what is hidden by default.
-struct Details<Content: View>: View {
-    var title = "Details"
-    /// The body continues the rows above the toggle at their own spacing, with no gap of its own.
-    var flush = false
-    @ViewBuilder var content: Content
-    @State private var open = false
+/// A short message with a colored mark: what went wrong or needs attention.
+struct Callout: View {
+    enum Tone { case danger, warn, signal }
+    let tone: Tone
+    let title: String
+    var message: String?
 
     var body: some View {
-        DisclosureGroup(isExpanded: $open) {
-            VStack(alignment: .leading, spacing: 8) { content }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.top, flush ? 0 : 4)
-        } label: {
-            Text(title)
-        }
-        .disclosureGroupStyle(QuietDisclosure(spacing: flush ? 0 : 8))
-    }
-}
-
-/// The title and a small chevron in muted, the body under it.
-private struct QuietDisclosure: DisclosureGroupStyle {
-    let spacing: CGFloat
-
-    func makeBody(configuration: Configuration) -> some View {
-        VStack(alignment: .leading, spacing: spacing) {
-            Button {
-                withAnimation(.easeOut(duration: 0.15)) { configuration.isExpanded.toggle() }
-            } label: {
-                HStack(spacing: 6) {
-                    configuration.label.font(.footnote.weight(.medium))
-                    Image(systemName: "chevron.down").font(.system(size: 10, weight: .semibold))
-                        .rotationEffect(.degrees(configuration.isExpanded ? 180 : 0))
-                    Spacer(minLength: 0)
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: icon).font(.system(size: 16, weight: .semibold)).foregroundStyle(color).padding(.top, 1)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title).font(Typeface.sans(15, .semibold, relativeTo: .headline)).foregroundStyle(Theme.ink)
+                if let message {
+                    Text(message).font(Typeface.sans(14, relativeTo: .subheadline)).foregroundStyle(Theme.ink2)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                .foregroundStyle(Theme.muted)
-                .frame(minHeight: 32)
-                .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
-            .accessibilityValue(configuration.isExpanded ? "expanded" : "collapsed")
-            if configuration.isExpanded { configuration.content }
+            Spacer(minLength: 0)
+        }
+        .padding(14)
+        .background(soft, in: RoundedRectangle(cornerRadius: Theme.Radius.sm))
+        .accessibilityElement(children: .combine)
+    }
+
+    private var icon: String {
+        switch tone {
+        case .danger: "exclamationmark.circle.fill"
+        case .warn: "exclamationmark.triangle.fill"
+        case .signal: "info.circle.fill"
+        }
+    }
+
+    private var color: Color {
+        switch tone {
+        case .danger: Theme.danger
+        case .warn: Theme.warn
+        case .signal: Theme.signal
+        }
+    }
+
+    private var soft: Color {
+        switch tone {
+        case .danger: Theme.dangerSoft
+        case .warn: Theme.warnSoft
+        case .signal: Theme.signalSoft
         }
     }
 }
 
-/// The mark in front of a status row, as web/src/style.css draws it: a faint
-/// dot, a spinner, a plain check in ink, or a cross on a bad circle.
-struct RowMark: View {
-    enum Kind { case pending, running, done, failed, skipped }
-    let kind: Kind
+/// Opens this app's page in Settings.
+struct OpenSettingsButton: View {
+    var style = PillButtonStyle(kind: .ghost)
 
     var body: some View {
-        Group {
-            switch kind {
-            case .running: ProgressView().controlSize(.small).tint(Theme.ink).scaleEffect(0.8)
-            case .done: Image(systemName: "checkmark").font(.system(size: 11, weight: .bold)).foregroundStyle(Theme.ink2)
-            case .failed: Image(systemName: "xmark.circle.fill").font(.system(size: 18)).foregroundStyle(Theme.bad)
-            case .pending, .skipped: Circle().fill(Theme.faint).frame(width: 6, height: 6)
+        if let url = URL(string: UIApplication.openSettingsURLString) {
+            Link(destination: url) { Text("Open Settings") }.buttonStyle(style)
+        }
+    }
+}
+
+/// The area on a muted map: the hexagon in teal, and on this phone only, a
+/// dot where the photo was taken.
+struct AreaMap: View {
+    let outline: Outline?
+    var you: CLLocationCoordinate2D?
+    /// Metres around `you` while the outline is not known yet.
+    var span: Double = 4000
+    /// Nil lets the map take the room it is given.
+    var height: CGFloat? = 240
+    @State private var camera = MapCameraPosition.automatic
+
+    var body: some View {
+        Map(position: $camera, interactionModes: []) {
+            if let outline {
+                MapPolygon(coordinates: Self.coordinates(outline))
+                    .foregroundStyle(Theme.signalBright.opacity(0.16))
+                    .stroke(Theme.signal, style: StrokeStyle(lineWidth: 2.5, lineJoin: .round))
+            }
+            if let you {
+                Annotation("Where you took it", coordinate: you) {
+                    Circle().fill(Theme.ink).frame(width: 10, height: 10)
+                        .overlay(Circle().strokeBorder(Theme.paper, lineWidth: 2.5).padding(-2.5))
+                }
+                .annotationTitles(.hidden)
             }
         }
-        .frame(width: RowMark.width, height: RowMark.width)
+        .mapStyle(.standard(emphasis: .muted, pointsOfInterest: .excludingAll))
+        .mapControls {}
+        .frame(height: height)
+        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.md))
+        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.md).strokeBorder(Theme.line))
+        .onChange(of: outline?.cell, initial: true) { _, _ in fit() }
+        .accessibilityElement()
+        .accessibilityLabel(outline.map { "Map of the shared area, about \(Verdict.area($0.areaKm2))" } ?? "Map")
+    }
+
+    static func coordinates(_ outline: Outline) -> [CLLocationCoordinate2D] {
+        outline.boundary.compactMap { pair in
+            pair.count == 2 ? CLLocationCoordinate2D(latitude: pair[0], longitude: pair[1]) : nil
+        }
+    }
+
+    private func fit() {
+        guard let outline else {
+            if let you {
+                camera = .region(MKCoordinateRegion(center: you, latitudinalMeters: span, longitudinalMeters: span))
+            }
+            return
+        }
+        let points = Self.coordinates(outline).map(MKMapPoint.init)
+        guard let first = points.first else { return }
+        var rect = MKMapRect(origin: first, size: MKMapSize(width: 0, height: 0))
+        for point in points.dropFirst() { rect = rect.union(MKMapRect(origin: point, size: MKMapSize(width: 0, height: 0))) }
+        let pad = max(rect.width, rect.height) * 0.22
+        withAnimation(Theme.ease) { camera = .rect(rect.insetBy(dx: -pad, dy: -pad)) }
+    }
+}
+
+/// Only the part of the original that gets published.
+struct PublishedImage: View {
+    let image: CGImage?
+    let crop: CropRect
+    var maxHeight: CGFloat = 420
+
+    var body: some View {
+        FitBox(ratio: CGFloat(crop.width) / CGFloat(crop.height), maxHeight: maxHeight) {
+            if let image, let part = image.cropping(to: rect(in: image)) {
+                Image(decorative: part, scale: 1).resizable().interpolation(.medium)
+            } else {
+                Theme.surface2
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.md))
+    }
+
+    private func rect(in image: CGImage) -> CGRect {
+        let scale = Double(image.width) / Double(Original.width)
+        return CGRect(
+            x: Double(crop.x) * scale, y: Double(crop.y) * scale,
+            width: Double(crop.width) * scale, height: Double(crop.height) * scale)
+    }
+}
+
+/// Sizes its child to a ratio: full width, unless that is taller than `maxHeight`.
+private struct FitBox: Layout {
+    let ratio: CGFloat
+    let maxHeight: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = proposal.width ?? maxHeight * ratio
+        let height = min(width / ratio, maxHeight)
+        return CGSize(width: height * ratio, height: height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        for subview in subviews {
+            subview.place(at: bounds.origin, proposal: ProposedViewSize(bounds.size))
+        }
+    }
+}
+
+/// The 2:1 original with the private part shaded, for the editor.
+struct CropPreview: View {
+    let image: CGImage?
+    let crop: CropRect
+    var shade = true
+
+    var body: some View {
+        GeometryReader { geometry in
+            let scale = geometry.size.width / Double(Original.width)
+            ZStack(alignment: .topLeading) {
+                if let image {
+                    Image(decorative: image, scale: 1).resizable().interpolation(.medium)
+                } else {
+                    Rectangle().fill(Theme.surface2)
+                }
+                if shade, !crop.isWhole {
+                    Theme.shade.mask {
+                        Rectangle().overlay(alignment: .topLeading) {
+                            Rectangle()
+                                .frame(width: Double(crop.width) * scale, height: Double(crop.height) * scale)
+                                .offset(x: Double(crop.x) * scale, y: Double(crop.y) * scale)
+                                .blendMode(.destinationOut)
+                        }
+                        .compositingGroup()
+                    }
+                    Rectangle().strokeBorder(.white, lineWidth: 2)
+                        .frame(width: Double(crop.width) * scale, height: Double(crop.height) * scale)
+                        .offset(x: Double(crop.x) * scale, y: Double(crop.y) * scale)
+                }
+            }
+        }
+        .aspectRatio(2, contentMode: .fit)
+        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.md))
+    }
+}
+
+/// A screen's heading: a large title and one line under it.
+struct Heading: View {
+    let title: String
+    var subtitle: String?
+    var center = false
+
+    var body: some View {
+        VStack(alignment: center ? .center : .leading, spacing: 8) {
+            Text(title).font(Typeface.title).tight(26).foregroundStyle(Theme.ink)
+                .accessibilityAddTraits(.isHeader)
+            if let subtitle {
+                Text(subtitle).font(Typeface.body).foregroundStyle(Theme.soft).lineSpacing(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .multilineTextAlignment(center ? .center : .leading)
+        .frame(maxWidth: .infinity, alignment: center ? .center : .leading)
+    }
+}
+
+/// Names for the area sizes.
+enum AreaWords {
+    /// Short names for the size picker, coarse to fine.
+    static let names: [Int: String] = [
+        4: "Region", 5: "City", 6: "District", 7: "Neighbourhood", 8: "A few blocks", 9: "One block",
+    ]
+}
+
+/// The app's mark: a camera aperture whose six blades leave a hexagon open,
+/// the shape of the area a photo shares.
+struct ApertureMark: View, Animatable {
+    /// The hexagon's size against the lens, 0 closed to 1 wide open.
+    var opening: Double = 0.5
+    var rotation: Double = 0
+
+    nonisolated var animatableData: AnimatablePair<Double, Double> {
+        get { AnimatablePair(opening, rotation) }
+        set {
+            opening = newValue.first
+            rotation = newValue.second
+        }
+    }
+
+    var body: some View {
+        Canvas { context, size in
+            let blades = Aperture.blades(in: CGRect(origin: .zero, size: size), opening: opening, rotation: rotation)
+            let radius = min(size.width, size.height) / 2
+            for (index, blade) in blades.enumerated() {
+                let colors = [Theme.iris[index], Theme.iris[index + 1]]
+                context.fill(
+                    blade.path,
+                    with: .linearGradient(Gradient(colors: colors), startPoint: blade.from, endPoint: blade.to))
+            }
+            // Thin gaps between the blades, cut through to whatever is behind.
+            context.blendMode = .destinationOut
+            for blade in blades {
+                context.stroke(blade.path, with: .color(.black), style: StrokeStyle(lineWidth: radius * 0.05, lineJoin: .round))
+            }
+        }
+        .aspectRatio(1, contentMode: .fit)
         .accessibilityHidden(true)
     }
-
-    static let width: CGFloat = 18
-    /// Where a row's title starts: the mark and the gap after it.
-    static let indent: CGFloat = width + 10
 }
 
-/// Mark, title and time on one line. What the step establishes and what it
-/// found sit behind a tap; only a failure reason shows inline.
-struct StatusRow: View {
-    let mark: RowMark.Kind
-    let title: String
-    var time: String?
-    var details: [(text: String, mono: Bool)] = []
-    var failure: String?
-    @State private var open = false
+/// The mark turning slowly while something runs.
+struct ApertureLoader: View {
+    var size: CGFloat = 96
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            if details.isEmpty {
-                line.accessibilityElement(children: .combine).accessibilityLabel(accessibilityText)
-            } else {
-                Button { open.toggle() } label: { line }
-                    .buttonStyle(.plain)
-                    .accessibilityElement(children: .combine)
-                    .accessibilityLabel(accessibilityText)
-                    .accessibilityValue(open ? "expanded" : "collapsed")
-            }
-            if let failure {
-                Text(failure).font(.system(size: 13)).foregroundStyle(Theme.bad).padding(.leading, RowMark.indent)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .textSelection(.enabled)
-                    .padding(.bottom, 6)
-            }
-            if open {
-                VStack(alignment: .leading, spacing: 4) {
-                    ForEach(Array(details.enumerated()), id: \.offset) { _, line in
-                        Text(line.text)
-                            .font(line.mono ? Theme.mono : .system(size: 13))
-                            .foregroundStyle(Theme.ink2)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .textSelection(.enabled)
-                    }
-                }
-                .padding(.vertical, 10)
-                .padding(.horizontal, 12)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Theme.surface2, in: RoundedRectangle(cornerRadius: Theme.Radius.small))
-                .padding(.leading, RowMark.indent)
-                .padding(.bottom, 10)
-            }
+        TimelineView(.animation(paused: reduceMotion)) { context in
+            let time = context.date.timeIntervalSinceReferenceDate
+            ApertureMark(opening: 0.4 + 0.1 * sin(time * 1.6), rotation: reduceMotion ? 0 : time * 0.5)
         }
-        .animation(.easeOut(duration: 0.15), value: open)
-    }
-
-    private var line: some View {
-        RowLine(mark: mark, title: title, time: time, chevron: details.isEmpty ? nil : open)
-    }
-
-    private var accessibilityText: String {
-        [title, mark.spoken, time].compactMap { $0 }.joined(separator: ", ")
+        .frame(width: size, height: size)
+        .accessibilityElement()
+        .accessibilityLabel("Working")
     }
 }
 
-extension RowMark.Kind {
-    var spoken: String {
-        switch self {
-        case .pending: "waiting"
-        case .running: "running"
-        case .done: "done"
-        case .failed: "failed"
-        case .skipped: "not run"
-        }
+enum Aperture {
+    struct Blade {
+        let path: Path
+        let from: CGPoint
+        let to: CGPoint
     }
-}
 
-/// One 36 pt line of a status list. `chevron` is the open state of a row that
-/// opens; a row that does not keeps a clear one, so times line up.
-private struct RowLine: View {
-    let mark: RowMark.Kind
-    let title: String
-    var time: String?
-    var chevron: Bool?
-
-    var body: some View {
-        HStack(spacing: 10) {
-            RowMark(kind: mark)
-            Text(title).font(.system(size: 15))
-                .foregroundStyle(mark == .skipped || mark == .pending ? Theme.faint : Theme.ink)
-            Spacer(minLength: 8)
-            if let time {
-                Text(time).font(.system(size: 13).monospacedDigit()).foregroundStyle(chevron == true ? Theme.ink : Theme.muted)
+    /// Six blades around a hexagon. Each blade runs from one hexagon edge out
+    /// to the lens along the extensions of that edge and the one before it.
+    static func blades(in rect: CGRect, opening: Double, rotation: Double) -> [Blade] {
+        let center = CGPoint(x: rect.midX, y: rect.midY)
+        let lens = min(rect.width, rect.height) / 2
+        let inner = lens * min(max(opening, 0.05), 0.95)
+        let corners = (0..<6).map { index in
+            let angle = rotation - .pi / 2 + Double(index) * .pi / 3
+            return CGPoint(x: center.x + inner * cos(angle), y: center.y + inner * sin(angle))
+        }
+        // Where the edge from corner k to k+1, carried on past k+1, meets the lens.
+        let exits = (0..<6).map { index in
+            let a = corners[index]
+            let b = corners[(index + 1) % 6]
+            let length = hypot(b.x - a.x, b.y - a.y)
+            let d = CGPoint(x: (b.x - a.x) / length, y: (b.y - a.y) / length)
+            let p = CGPoint(x: b.x - center.x, y: b.y - center.y)
+            let dot = p.x * d.x + p.y * d.y
+            let t = -dot + (dot * dot - (p.x * p.x + p.y * p.y - lens * lens)).squareRoot()
+            return CGPoint(x: b.x + t * d.x, y: b.y + t * d.y)
+        }
+        return (0..<6).map { index in
+            let previous = exits[(index + 5) % 6]
+            let exit = exits[index]
+            var path = Path()
+            path.move(to: corners[index])
+            path.addLine(to: corners[(index + 1) % 6])
+            path.addLine(to: exit)
+            var start = atan2(exit.y - center.y, exit.x - center.x)
+            let end = atan2(previous.y - center.y, previous.x - center.x)
+            if start < end { start += 2 * .pi }
+            for step in 1...24 {
+                let angle = start + (end - start) * Double(step) / 24
+                path.addLine(to: CGPoint(x: center.x + lens * cos(angle), y: center.y + lens * sin(angle)))
             }
-            Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold))
-                .foregroundStyle(chevron == nil ? .clear : Theme.faint).rotationEffect(.degrees(chevron == true ? 180 : 0))
-                .accessibilityHidden(true)
+            path.closeSubpath()
+            return Blade(path: path, from: previous, to: exit)
         }
-        .frame(minHeight: 36)
-        .contentShape(Rectangle())
-    }
-}
-
-struct LocalStepsList: View {
-    let steps: [LocalStep]
-
-    var body: some View {
-        TimelineView(.periodic(from: .now, by: 0.2)) { context in
-            VStack(alignment: .leading, spacing: 0) {
-                ForEach(steps) { step in
-                    StatusRow(
-                        mark: step.state == .running ? .running : step.state == .done ? .done : .failed,
-                        title: step.title,
-                        time: Verdict.rowTime(step.seconds ?? context.date.timeIntervalSince(step.started)),
-                        details: step.state == .failed ? [] : step.detail.map { [($0, true)] } ?? [],
-                        failure: step.state == .failed ? step.detail : nil)
-                }
-            }
-        }
-    }
-}
-
-/// The laptop's two groups, as web/src/timeline.ts draws them: a group that
-/// fully passed folds into one row with its total time; a running or stopped
-/// group shows its steps under its row; a group not reached is one faint row.
-struct LaptopTimeline: View {
-    let groups: [Timeline.Group]
-    let runningSince: [String: Date]
-
-    var body: some View {
-        TimelineView(.periodic(from: .now, by: 0.5)) { context in
-            VStack(alignment: .leading, spacing: 16) {
-                ForEach(groups) { group in
-                    GroupRows(group: group, runningSince: runningSince, now: context.date)
-                }
-            }
-        }
-    }
-
-    /// What a step found, as a value, the same as web/src/timeline.ts outcome():
-    /// "kept 512x512 at (0, 0)" reads "512×512 at (0, 0)" and "proof accepted"
-    /// reads "Accepted".
-    nonisolated static func outcome(_ detail: String) -> String {
-        var value = detail.trimmingCharacters(in: .whitespaces)
-            .replacing(/^(?i:kept|proof) (?=\S)/, with: "")
-            .replacing(/(\d)x(\d)/) { "\($0.1)×\($0.2)" }
-        if value.hasSuffix(".") { value.removeLast() }
-        guard let first = value.first else { return value }
-        return first.uppercased() + value.dropFirst()
-    }
-}
-
-private struct GroupRows: View {
-    let group: Timeline.Group
-    let runningSince: [String: Date]
-    let now: Date
-    @State private var open = false
-
-    var body: some View {
-        let states = group.items.map(\.state)
-        if states.allSatisfy({ $0 == .pending || $0 == .skipped }) {
-            StatusRow(mark: .pending, title: group.title)
-        } else if states.allSatisfy({ if case .done = $0 { true } else { false } }) {
-            let total = group.seconds
-            VStack(alignment: .leading, spacing: 0) {
-                Button { open.toggle() } label: {
-                    RowLine(mark: .done, title: group.title, time: Verdict.seconds(total), chevron: open)
-                }
-                .buttonStyle(.plain)
-                .accessibilityElement(children: .combine)
-                .accessibilityLabel("\(group.title), done, \(Verdict.seconds(total))")
-                .accessibilityValue(open ? "expanded" : "collapsed")
-                if open { items }
-            }
-            .animation(.easeOut(duration: 0.15), value: open)
-        } else {
-            let failed = states.contains { if case .failed = $0 { true } else { false } }
-            VStack(alignment: .leading, spacing: 0) {
-                StatusRow(mark: failed ? .failed : .running, title: group.title, time: failed ? nil : elapsed)
-                    .accessibilityAddTraits(.isHeader)
-                items
-            }
-        }
-    }
-
-    private var items: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            ForEach(group.items) { item in row(item) }
-        }
-        .padding(.leading, RowMark.indent)
-        .padding(.bottom, 4)
-    }
-
-    /// Since the group's first step was seen running.
-    private var elapsed: String {
-        let since = group.items.compactMap { runningSince[$0.id] }.min() ?? now
-        return String(format: "%.0f s", now.timeIntervalSince(since))
-    }
-
-    private func row(_ item: Timeline.Item) -> StatusRow {
-        let row = item.row
-        switch item.state {
-        case .pending:
-            return StatusRow(mark: .pending, title: row.title)
-        case .skipped:
-            return StatusRow(mark: .skipped, title: row.title)
-        case .running:
-            let elapsed = now.timeIntervalSince(runningSince[item.id] ?? now)
-            let time = row.typical.map { String(format: "%.0f / ~%.0f s", elapsed, $0) } ?? String(format: "%.0f s", elapsed)
-            return StatusRow(mark: .running, title: row.title, time: time)
-        case .done(let seconds, let detail, _):
-            return StatusRow(
-                mark: .done, title: row.title, time: Verdict.rowTime(seconds), details: lines(row, detail))
-        case .failed(let seconds, let detail, _):
-            return StatusRow(
-                mark: .failed, title: row.title, time: seconds.flatMap(Verdict.rowTime),
-                details: lines(row, nil), failure: detail)
-        }
-    }
-
-    private func lines(_ row: Timeline.Row, _ detail: String?) -> [(text: String, mono: Bool)] {
-        var lines = [(text: row.what, mono: false)]
-        if let detail, !detail.isEmpty { lines.append((LaptopTimeline.outcome(detail), true)) }
-        return lines
-    }
-}
-
-/// Label left, value right, the slider under them, as the web page's Size control.
-struct LabeledSlider: View {
-    let label: String
-    let value: String
-    @Binding var position: Double
-    let range: ClosedRange<Double>
-    var step: Double?
-    /// The slider's VoiceOver name.
-    let spoken: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(label).font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.muted)
-                Spacer()
-                Text(value).font(.system(size: 15).monospacedDigit()).foregroundStyle(Theme.ink)
-            }
-            .accessibilityHidden(true)
-            BareSlider(position: $position, range: range, step: step, spoken: spoken, value: value)
-        }
-    }
-}
-
-/// An ink slider with no label row, as the web page's range inputs.
-struct BareSlider: View {
-    @Binding var position: Double
-    let range: ClosedRange<Double>
-    var step: Double?
-    let spoken: String
-    let value: String
-
-    var body: some View {
-        Group {
-            if let step {
-                Slider(value: $position, in: range, step: step)
-            } else {
-                Slider(value: $position, in: range)
-            }
-        }
-        .tint(Theme.ink)
-        .accessibilityLabel(spoken)
-        .accessibilityValue(value)
     }
 }

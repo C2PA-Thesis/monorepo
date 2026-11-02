@@ -40,7 +40,11 @@ final class LocationService: NSObject, CLLocationManagerDelegate {
     static let maxAge: TimeInterval = 10
     static let purposeKey = "capture"
 
+    /// What the person allowed, for the onboarding step.
+    enum Access: Equatable { case notAsked, denied, approximate, granted }
+
     private(set) var status = Status.waiting("Waiting for GPS")
+    private(set) var access = Access.notAsked
     private(set) var last: Fix?
     @ObservationIgnored private let manager = CLLocationManager()
     @ObservationIgnored private var waiters: [UUID: Waiter] = [:]
@@ -55,6 +59,21 @@ final class LocationService: NSObject, CLLocationManagerDelegate {
         manager.delegate = self
         manager.desiredAccuracy = kCLLocationAccuracyBest
         manager.distanceFilter = kCLDistanceFilterNone
+        updateAccess()
+    }
+
+    /// Starts updates only when the person already answered, so the prompt
+    /// comes from the onboarding step and not at launch.
+    func resume() {
+        if manager.authorizationStatus != .notDetermined { start() }
+    }
+
+    private func updateAccess() {
+        switch manager.authorizationStatus {
+        case .notDetermined: access = .notAsked
+        case .denied, .restricted: access = .denied
+        default: access = manager.accuracyAuthorization == .fullAccuracy ? .granted : .approximate
+        }
     }
 
     func start() {
@@ -166,6 +185,7 @@ final class LocationService: NSObject, CLLocationManagerDelegate {
 
     nonisolated func locationManagerDidChangeAuthorization(_ client: CLLocationManager) {
         MainActor.assumeIsolated {
+            updateAccess()
             switch self.manager.authorizationStatus {
             case .denied, .restricted: denied()
             case .authorizedWhenInUse, .authorizedAlways: authorized()

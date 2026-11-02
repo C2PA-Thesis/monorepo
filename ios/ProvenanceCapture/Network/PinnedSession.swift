@@ -105,6 +105,17 @@ struct PinnedSession: Sendable {
         }
     }
 
+    /// Posts raw bytes. Only for calls that are safe to repeat on another address.
+    func post(_ path: String, data body: Data, type: String) async throws -> Data {
+        try await fallingBack(idempotent: true) { base in
+            var request = URLRequest(url: url(path, base))
+            request.httpMethod = "POST"
+            request.setValue(type, forHTTPHeaderField: "content-type")
+            request.httpBody = body
+            return try await send(request)
+        }
+    }
+
     func post(_ path: String, json body: some Encodable) async throws -> Data {
         let encoder = JSONEncoder()
         encoder.outputFormatting = .withoutEscapingSlashes

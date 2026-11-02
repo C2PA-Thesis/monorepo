@@ -121,9 +121,6 @@ final class WireTests: XCTestCase {
         XCTAssertEqual(Verdict.resolution(of: "87c2e3062ffffff"), 7)
         XCTAssertEqual(Verdict.resolution(of: "8928308280fffff"), 9)
         XCTAssertEqual(Verdict.area(of: "87c2e3062ffffff", outline: nil), "~5.2 km²")
-        XCTAssertEqual(LaptopTimeline.outcome("kept 512x512 at (0, 0)"), "512×512 at (0, 0)")
-        XCTAssertEqual(LaptopTimeline.outcome("proof accepted"), "Accepted")
-        XCTAssertEqual(LaptopTimeline.outcome("valid, with one edu.utdt.td8.zkloc assertion."), "Valid, with one edu.utdt.td8.zkloc assertion")
         XCTAssertEqual(Verdict.short("0x0123456789abcdef"), "0x0123…cdef")
         XCTAssertEqual(Verdict.short("abcd"), "abcd")
     }

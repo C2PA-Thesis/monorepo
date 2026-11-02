@@ -52,6 +52,16 @@ func TestCell(t *testing.T) {
 	}
 }
 
+func TestOutline(t *testing.T) {
+	var got zkloc.Outline
+	if err := json.Unmarshal([]byte(outlineReply(text(demoCell))), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Cell != demoCell || got.Resolution != 7 || len(got.Boundary) != 6 || got.AreaKm2 <= 0 {
+		t.Fatalf("outline gave %+v", got)
+	}
+}
+
 func TestErrorsAreJSON(t *testing.T) {
 	for name, reply := range map[string]string{
 		"latitude out of range": hintsReply(91, 0),
@@ -61,6 +71,8 @@ func TestErrorsAreJSON(t *testing.T) {
 		"unknown field":         envelopeReply(text(`{"latitude": 0, "longitude": 0, "salt": "0x01", "x": 1}`)),
 		"missing coordinate":    envelopeReply(text(`{"salt": "0x0000000000000000000000000000000000000000000000000000000000000001"}`)),
 		"trailing data":         envelopeReply(text(demoSecrets + " trailing")),
+		"NULL cell":             outlineReply(nil),
+		"not a cell":            outlineReply(text("zz")),
 		"NULL params":           proveReply(nil, text(demoCell), text(demoSecrets)),
 		"missing params":        proveReply(text(t.TempDir()), text(demoCell), text(demoSecrets)),
 	} {

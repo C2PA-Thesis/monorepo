@@ -41,6 +41,12 @@ struct LaptopAPI: Sendable {
         try await http.get("/api/captures/\(id)/signed.png")
     }
 
+    /// Runs the laptop's reader checks on a file. A published photo carries no
+    /// more than what anyone it is shared with already sees.
+    func verify(_ file: Data) async throws -> Report {
+        try HTTP.decode(Report.self, try await http.post("/api/verify", data: file, type: "image/png"))
+    }
+
     func param(_ name: String) async throws -> URL {
         try await http.download("/api/params/location/\(name)")
     }
