@@ -101,15 +101,21 @@ nor the salt.
 
 ### On an iPhone
 
-Not run yet; these are the steps a free Personal Team needs.
+On 2026-11-02 this ran end to end on an iPhone 17 Pro (iOS 26.2) with a free
+Personal Team: pairing by QR over Wi-Fi, a Secure Enclave key, the real
+camera, the location proof on the phone, then publish and the reader checks
+on the laptop. These are the steps.
 
 1. In Xcode, Settings, Accounts, add your Apple ID. Xcode lists it as a
    Personal Team. A paid Apple Developer Program team works too, without the
    7-day limit below.
 2. Select the ProvenanceCapture target, Signing and Capabilities, and choose
    that team (the project leaves `DEVELOPMENT_TEAM` empty). If Xcode says the
-   bundle id `edu.utdt.td8.capture` is not available, change it to one of your
-   own; nothing in the code or on the laptop depends on it.
+   bundle id `edu.utdt.td8.capture` is not available (it is registered to
+   another team), change it to one of your own; nothing in the code or on the
+   laptop depends on it. Both can also be passed to `xcodebuild` without
+   editing the project: `DEVELOPMENT_TEAM=<team id>
+   PRODUCT_BUNDLE_IDENTIFIER=<your id> -allowProvisioningUpdates`.
 3. On the iPhone, set a passcode if it has none: the Secure Enclave key is
    created with `.userPresence`, and every signature asks for Face ID, Touch
    ID or the passcode.
