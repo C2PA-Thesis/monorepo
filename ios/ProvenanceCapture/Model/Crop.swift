@@ -13,10 +13,6 @@ struct CropRect: Codable, Equatable, Hashable, Sendable {
     var width: Int
     var height: Int
 
-    func contains(_ point: CropPoint) -> Bool {
-        point.x >= x && point.x <= x + width && point.y >= y && point.y <= y + height
-    }
-
     static let whole = CropRect(x: 0, y: 0, width: Original.width, height: Original.height)
 
     var isWhole: Bool { self == .whole }
@@ -25,65 +21,73 @@ struct CropRect: Codable, Equatable, Hashable, Sendable {
     var text: String { "\(width)×\(height) at (\(x), \(y))" }
 }
 
-struct CropPoint: Equatable, Sendable {
-    var x: Int
-    var y: Int
+/// A handle on the crop box: four corners and four edges.
+enum CropHandle: CaseIterable, Sendable {
+    case topLeft, topRight, bottomLeft, bottomRight, top, bottom, left, right
+
+    var isCorner: Bool { [.topLeft, .topRight, .bottomLeft, .bottomRight].contains(self) }
 }
 
-struct CropPreset: Identifiable, Sendable {
-    let name: String
-    let rect: CropRect
-    var id: String { name }
+/// Moving and resizing the crop box, in original pixels. Every result fits
+/// the original, which is what the crop proof accepts.
+extension CropRect {
+    /// Smallest side a handle can make.
+    static let minSide = 64
 
-    static let leftHalf = CropRect(x: 0, y: 0, width: 512, height: 512)
-
-    /// The same presets as web/src/crop.ts.
-    static let all: [CropPreset] = [
-        CropPreset(name: "Left half", rect: leftHalf),
-        CropPreset(name: "Center", rect: CropRect(x: 256, y: 0, width: 512, height: 512)),
-        CropPreset(name: "Right half", rect: CropRect(x: 512, y: 0, width: 512, height: 512)),
-        CropPreset(name: "Whole frame", rect: CropRect(x: 0, y: 0, width: Original.width, height: Original.height)),
-    ]
-}
-
-/// One drag over the frame, in original pixel coordinates: a drag that starts
-/// inside the box moves it, anywhere else it draws a new one (web/src/crop.ts).
-struct CropDrag: Sendable {
-    static let minSide = 16
-
-    let start: CropPoint
-    let moving: CropRect?
-
-    init(start: CropPoint, current: CropRect) {
-        self.start = start
-        moving = current.contains(start) ? current : nil
-    }
-
-    func rect(to end: CropPoint) -> CropRect {
-        let width = Original.width
-        let height = Original.height
-        if let from = moving {
-            return CropRect(
-                x: clamp(from.x + end.x - start.x, 0, width - from.width),
-                y: clamp(from.y + end.y - start.y, 0, height - from.height),
-                width: from.width, height: from.height)
-        }
-        let x = min(start.x, end.x)
-        let y = min(start.y, end.y)
-        let left = min(x, width - Self.minSide)
-        let top = min(y, height - Self.minSide)
+    /// The same box, pulled back inside the original.
+    var fitted: CropRect {
+        let width = clamp(width, 1, Original.width)
+        let height = clamp(height, 1, Original.height)
         return CropRect(
-            x: left, y: top,
-            width: clamp(abs(end.x - start.x), Self.minSide, width - left),
-            height: clamp(abs(end.y - start.y), Self.minSide, height - top))
+            x: clamp(x, 0, Original.width - width), y: clamp(y, 0, Original.height - height),
+            width: width, height: height)
     }
 
-    /// A point on a view `viewWidth` points wide that shows the whole original.
-    static func originalPoint(x: Double, y: Double, viewWidth: Double) -> CropPoint {
-        let scale = Double(Original.width) / viewWidth
-        return CropPoint(
-            x: clamp(Int((x * scale).rounded()), 0, Original.width),
-            y: clamp(Int((y * scale).rounded()), 0, Original.height))
+    func moved(dx: Int, dy: Int) -> CropRect {
+        CropRect(x: x + dx, y: y + dy, width: width, height: height).fitted
+    }
+
+    /// Any shape: the handle moves its own edges.
+    func resized(_ handle: CropHandle, dx: Int, dy: Int) -> CropRect {
+        var left = x
+        var top = y
+        var right = x + width
+        var bottom = y + height
+        let min = Self.minSide
+        if [.topLeft, .bottomLeft, .left].contains(handle) { left = clamp(left + dx, 0, right - min) }
+        if [.topRight, .bottomRight, .right].contains(handle) { right = clamp(right + dx, left + min, Original.width) }
+        if [.topLeft, .topRight, .top].contains(handle) { top = clamp(top + dy, 0, bottom - min) }
+        if [.bottomLeft, .bottomRight, .bottom].contains(handle) { bottom = clamp(bottom + dy, top + min, Original.height) }
+        return CropRect(x: left, y: top, width: right - left, height: bottom - top).fitted
+    }
+
+    /// A fixed shape: the opposite corner stays put and the box keeps `ratio`.
+    func resized(corner: CropHandle, dx: Int, dy: Int, ratio: Double) -> CropRect {
+        let growsRight = corner == .topRight || corner == .bottomRight
+        let growsDown = corner == .bottomLeft || corner == .bottomRight
+        let anchorX = Double(growsRight ? x : x + width)
+        let anchorY = Double(growsDown ? y : y + height)
+        let byWidth = Double(width + (growsRight ? dx : -dx))
+        let byHeight = Double(height + (growsDown ? dy : -dy)) * ratio
+        let room = Swift.min(
+            growsRight ? Double(Original.width) - anchorX : anchorX,
+            (growsDown ? Double(Original.height) - anchorY : anchorY) * ratio)
+        let newWidth = Int(clamp(Swift.max(byWidth, byHeight), Double(Self.minSide) * Swift.max(1, ratio), room).rounded(.down))
+        let newHeight = Int((Double(newWidth) / ratio).rounded(.down))
+        let anchorXi = Int(anchorX)
+        let anchorYi = Int(anchorY)
+        return CropRect(
+            x: growsRight ? anchorXi : anchorXi - newWidth, y: growsDown ? anchorYi : anchorYi - newHeight,
+            width: newWidth, height: newHeight).fitted
+    }
+
+    /// The largest box of this shape that fits the original, centred where `current` is.
+    static func fit(_ ratio: Double, around current: CropRect) -> CropRect {
+        let width = Int(Swift.min(Double(Original.width), Double(Original.height) * ratio).rounded(.down))
+        let height = Int((Double(width) / ratio).rounded(.down))
+        let centerX = current.x + current.width / 2
+        let centerY = current.y + current.height / 2
+        return CropRect(x: centerX - width / 2, y: centerY - height / 2, width: width, height: height).fitted
     }
 }
 

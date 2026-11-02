@@ -8,11 +8,14 @@ pages on what the app does, then asks for location, the camera (on a device)
 and the laptop. After that the app opens on the camera. The shutter seals the
 photo on the phone right away: it reads the fix, renders the 1024x512 original
 from the framed box, fingerprints it, seals the position in the envelope and
-signs the receipt. Then two screens: the photo, with Edit (the crop for now)
-and Publish, and "Were you around here?" with the cell drawn on a map and the
-size of the area. "Yes, publish" makes the location proof on the phone,
-uploads, and follows the laptop while it proves the crop and runs the reader
-checks. Edits after the shutter cannot change what was signed: the crop and
+signs the receipt. Then two screens: the photo, with Edit and Publish, and
+"Were you around here?" with the cell drawn on a map and the size of the area.
+Edit opens an editor with a tool bar at the bottom. Crop works by hand: drag a
+corner or an edge, drag inside to move, or pick Free, Square, 4:3 or 16:9.
+Rotate, blur and greyscale show as coming soon, because the crop is the only
+edit the laptop can prove today. "Yes, publish" makes the location proof on
+the phone, uploads, and follows the laptop while it proves the crop and runs
+the reader checks. Edits after the shutter cannot change what was signed: the crop and
 the cell are proved against the sealed original and envelope.
 
 Every verified photo is kept on the phone (Application Support/Verified, the
@@ -266,7 +269,8 @@ lists them.
   evaluation fails.
 - A CryptoKit DER signature verifies with CryptoKit, and a signed receipt
   verifies over its signed bytes.
-- Crop drags and presets, the 2:1 framing window, the timestamp format, the
+- Crop handles and fixed shapes, and that every crop they make fits the
+  original, the 2:1 framing window, the timestamp format, the
   pairing payload checks, the upload JSON, the hints in the secrets JSON, the
   timeline rules.
 - Rendering the sample photo gives an opaque 1024x512 bitmap whose PNG decodes

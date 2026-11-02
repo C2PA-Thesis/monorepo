@@ -67,7 +67,7 @@ final class WireTests: XCTestCase {
             fingerprint: Fingerprint(algorithm: "a", size: .init(width: 1, height: 1), r: [], g: [], b: []),
             envelope: "0x01", capturedAt: "t", device: "d", signature: "s")
         let upload = CaptureUpload(
-            originalPng: "png", receipt: receipt, cell: "87", resolution: 7, crop: CropPreset.leftHalf, accuracyMeters: nil,
+            originalPng: "png", receipt: receipt, cell: "87", resolution: 7, crop: CropRect(x: 0, y: 0, width: 512, height: 512), accuracyMeters: nil,
             locationProof: "proof", location: .init(simulated: true, accessory: false))
         let object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(upload)) as? [String: Any])
         XCTAssertTrue(object["accuracy_meters"] is NSNull)
