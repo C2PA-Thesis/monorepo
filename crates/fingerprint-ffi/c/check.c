@@ -3,6 +3,9 @@
  * test image's fingerprint to stdout, for the caller to hash, and the time
  * of each run to stderr. Usage: check [runs]
  */
+/* clock_gettime is POSIX, which glibc hides under -std=c11. */
+#define _POSIX_C_SOURCE 199309L
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
