@@ -1,0 +1,36 @@
+name: docs
+
+on:
+  push:
+    paths: &paths
+      - 'docs/**'
+      - '.github/workflows/docs.yml'
+  pull_request:
+    paths: *paths
+  workflow_dispatch:
+
+jobs:
+  security-analysis:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      # The writing rules ban em dashes; in LaTeX "---" also renders as one.
+      - name: Refuse em dashes
+        run: |
+          if grep -rn $'\xe2\x80\x94' docs || grep -rn -- '---' docs --include='*.tex'; then
+            exit 1
+          fi
+
+      - name: Build the PDF
+        uses: xu-cheng/latex-action@v3
+        with:
+          working_directory: docs/security
+          root_file: security-analysis.tex
+          args: -pdf -interaction=nonstopmode -halt-on-error
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: security-analysis
+          path: docs/security/security-analysis.pdf
