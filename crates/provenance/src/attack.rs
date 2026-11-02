@@ -8,18 +8,31 @@ use serde::Serialize;
 use crate::{
     capture::{self, DeviceKey, Receipt, Secrets},
     demo::OTHER_PLACE,
+    location::LocationTool,
     manifest::{self, Assertion},
     verify::{Check, Verdict},
     Workspace,
 };
 
+/// Resolution-13 cell of the demo coordinate, about 44 m^2. It is the finest
+/// resolution where the circuit's float32 mapping still matches H3 there.
+const FINE_CELL: &str = "8dc2e30205ad07f";
+
 pub struct Attack {
     pub name: &'static str,
     pub summary: &'static str,
-    /// The check that must reject the forged file.
-    pub expected: Check,
+    pub expected: Expected,
     needs_other_capture: bool,
     tamper: fn(&mut Evidence, &Forger) -> Result<()>,
+}
+
+/// Most attacks must be rejected by one check. The accepted ones show what the
+/// pipeline trusts instead of checking: the device key and what it signs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(tag = "outcome", content = "check", rename_all = "kebab-case")]
+pub enum Expected {
+    Rejected(Check),
+    Accepted,
 }
 
 /// What gets republished: the assertion and the pixels it is attached to.
@@ -28,10 +41,13 @@ struct Evidence {
     pixels: RgbImage,
 }
 
-/// What the attacker is granted: the device key itself, and a second genuine
-/// capture of another photo taken somewhere else.
+/// What the attacker is granted: the device key itself, the photographer's
+/// secrets, the location prover, and a second genuine capture of another photo
+/// taken somewhere else.
 struct Forger {
     device: DeviceKey,
+    secrets: Secrets,
+    location: LocationTool,
     other: Option<Assertion>,
 }
 
@@ -47,7 +63,7 @@ pub const ATTACKS: &[Attack] = &[
     Attack {
         name: "signature",
         summary: "flip one bit of the device signature",
-        expected: Check::Device,
+        expected: Expected::Rejected(Check::Device),
         needs_other_capture: false,
         tamper: |evidence, _| {
             let mut signature = BASE64.decode(&evidence.assertion.receipt.signature)?;
@@ -59,7 +75,7 @@ pub const ATTACKS: &[Attack] = &[
     Attack {
         name: "fingerprint",
         summary: "swap two fingerprint values without re-signing",
-        expected: Check::Device,
+        expected: Expected::Rejected(Check::Device),
         needs_other_capture: false,
         tamper: |evidence, _| {
             evidence.assertion.receipt.fingerprint.r.swap(0, 1);
@@ -69,7 +85,7 @@ pub const ATTACKS: &[Attack] = &[
     Attack {
         name: "resigned-fingerprint",
         summary: "swap two fingerprint values and re-sign with the device key",
-        expected: Check::Image,
+        expected: Expected::Rejected(Check::Image),
         needs_other_capture: false,
         tamper: |evidence, forger| {
             evidence.assertion.receipt.fingerprint.r.swap(0, 1);
@@ -79,7 +95,7 @@ pub const ATTACKS: &[Attack] = &[
     Attack {
         name: "pixel",
         summary: "change one published pixel",
-        expected: Check::Image,
+        expected: Expected::Rejected(Check::Image),
         needs_other_capture: false,
         tamper: |evidence, _| {
             let mut channels = evidence.pixels.channels().clone();
@@ -91,7 +107,7 @@ pub const ATTACKS: &[Attack] = &[
     Attack {
         name: "region",
         summary: "claim another cell for the same location proof",
-        expected: Check::Location,
+        expected: Expected::Rejected(Check::Location),
         needs_other_capture: true,
         tamper: |evidence, forger| {
             evidence.assertion.cell = forger.other().cell.clone();
@@ -101,7 +117,7 @@ pub const ATTACKS: &[Attack] = &[
     Attack {
         name: "cross-photo-location",
         summary: "attach the location proof of another photo taken elsewhere",
-        expected: Check::Location,
+        expected: Expected::Rejected(Check::Location),
         needs_other_capture: true,
         tamper: |evidence, forger| {
             let other = forger.other();
@@ -113,7 +129,7 @@ pub const ATTACKS: &[Attack] = &[
     Attack {
         name: "cross-photo-receipt",
         summary: "attach the receipt and location proof of another photo, keeping this crop proof",
-        expected: Check::Image,
+        expected: Expected::Rejected(Check::Image),
         needs_other_capture: true,
         tamper: |evidence, forger| {
             let other = forger.other();
@@ -123,21 +139,50 @@ pub const ATTACKS: &[Attack] = &[
             Ok(())
         },
     },
+    Attack {
+        name: "signed-elsewhere",
+        summary: "with the device key, sign this photo at Tokyo and prove that cell",
+        expected: Expected::Accepted,
+        needs_other_capture: false,
+        tamper: |evidence, forger| {
+            let secrets = Secrets::new(OTHER_PLACE.latitude, OTHER_PLACE.longitude);
+            let fingerprint = evidence.assertion.receipt.fingerprint.clone();
+            let envelope = forger.location.commit(&secrets)?;
+            evidence.assertion.receipt = Receipt::sign(fingerprint, envelope, &forger.device)?;
+            evidence.assertion.cell = OTHER_PLACE.cell.to_string();
+            evidence.assertion.location_proof =
+                forger.location.prove(&secrets, OTHER_PLACE.cell)?.proof;
+            Ok(())
+        },
+    },
+    Attack {
+        name: "fine-cell",
+        summary: "publish the honest coordinate in a resolution-13 cell, about 44 m^2",
+        expected: Expected::Accepted,
+        needs_other_capture: false,
+        tamper: |evidence, forger| {
+            evidence.assertion.cell = FINE_CELL.to_string();
+            evidence.assertion.location_proof =
+                forger.location.prove(&forger.secrets, FINE_CELL)?.proof;
+            Ok(())
+        },
+    },
 ];
 
 #[derive(Debug, Serialize)]
 pub struct Outcome {
     pub attack: &'static str,
-    pub expected: Check,
+    pub expected: Expected,
     pub verdict: Verdict,
 }
 
 impl Outcome {
     pub fn as_expected(&self) -> bool {
-        self.verdict
-            .rejected
-            .as_ref()
-            .is_some_and(|step| step.check == self.expected)
+        match (self.expected, &self.verdict.rejected) {
+            (Expected::Rejected(check), Some(step)) => step.check == check,
+            (Expected::Accepted, None) => true,
+            _ => false,
+        }
     }
 }
 
@@ -171,7 +216,16 @@ pub fn run(
         true => Some(other_capture(workspace, run, &device)?),
         false => None,
     };
-    let forger = Forger { device, other };
+    let secrets_path = run.join("secrets.json");
+    let secrets = serde_json::from_slice(
+        &fs::read(&secrets_path).with_context(|| format!("reading {}", secrets_path.display()))?,
+    )?;
+    let forger = Forger {
+        device,
+        secrets,
+        location: workspace.location_tool(),
+        other,
+    };
     let editor = workspace.editor()?;
     let verifier = workspace.verifier()?;
 

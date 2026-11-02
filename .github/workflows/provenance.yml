@@ -31,12 +31,18 @@ jobs:
         run: |
           cargo fmt --check
           cargo clippy --workspace --all-targets -- -D warnings
+          cargo clippy -p crop-proof --all-targets --features attack-hooks -- -D warnings
           cd location-proof && test -z "$(gofmt -l .)" && go vet ./...
 
       - name: Unit tests
         run: |
           cargo test --workspace
           cd location-proof && go test ./...
+
+      # Slow tests: the crop-proof round trip and the attacks of the security
+      # analysis, which pass while each attack still works.
+      - name: Crop proof round trip and attacks
+        run: cargo test --release -p crop-proof --features attack-hooks -- --ignored
 
       - name: Build
         run: cargo build --release -p provenance
@@ -47,8 +53,12 @@ jobs:
       - name: Publish and verify the sample photo
         run: ./target/release/provenance demo
 
-      - name: Reject every attack at the expected check
+      - name: Run every attack and check its expected outcome
         run: ./target/release/provenance attack
+
+      # Passes while a third party can still replace the published crop.
+      - name: Republish forged crops of the demo file
+        run: cargo test --release -p provenance --test forged_crops -- --ignored --test-threads=1
 
       - name: Upload the published photo and the forged copies
         if: always()
