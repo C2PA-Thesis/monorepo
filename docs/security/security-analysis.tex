@@ -210,7 +210,10 @@ B3 & Both setups are single-party & C1, C2 & setup operator & by inspection \\
   (\code{substitute_crop}
   in \code{crates/crop-proof/src/forge.rs}, with the solver in
   \code{src/lattice.rs}, pure Rust). The deltas stay within $\pm70$
-  around mid-gray, so every pixel is in $[0,255]$. The forged image differs
+  around mid-gray, so every pixel is in $[0,255]$. A solution is short but not
+  always within that range: over 30 random instances the largest delta was 89,
+  and in one CI run a delta of $-135$ appeared. When that happens the forger
+  moves the 64 pixels and solves again, up to eight times per channel. The forged image differs
   from the honest crop in 783{,}398 of 786{,}432 channel values and the
   unmodified verifier accepts it with the honest proof and fingerprint,
   unchanged. The whole test, including the honest proof it starts from, takes

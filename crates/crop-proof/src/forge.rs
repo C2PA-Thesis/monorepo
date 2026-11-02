@@ -39,9 +39,13 @@ use crate::{
 
 /// Published pixels that absorb the difference in A2, one per lattice
 /// dimension. With 64 of them a solution of size about p^(1/64), or 2^4, exists.
-fn corrective_pixels() -> impl Iterator<Item = usize> {
-    (0..64).map(|j| 97 * j + 13)
+fn corrective_pixels(attempt: usize) -> Vec<usize> {
+    (0..64).map(|j| 97 * j + 13 + 7 * attempt).collect()
 }
+
+/// A solution is short but not always within 0..=255 around mid-gray; moving
+/// the corrective pixels gives a new lattice and usually a shorter solution.
+const ATTEMPTS: usize = 8;
 
 /// Returns `target` with a few pixels per channel adjusted so that `verify`
 /// accepts it with the honest `proof` and `fingerprint`, unchanged. Needs only
@@ -58,30 +62,48 @@ pub fn substitute_crop(
     );
     ensure!(target.size() == CROP, "the target must be {CROP}");
     let challenges = hooks::crop_challenges(fingerprint, proof)?;
-    let modulus = BigInt::from_bytes_be(Sign::Plus, &F::MODULUS.to_bytes_be());
-    let positions: Vec<usize> = corrective_pixels().collect();
+    let mut channels = Vec::with_capacity(3);
+    for (honest, target) in published.channels().iter().zip(target.channels()) {
+        let fitted = (0..ATTEMPTS)
+            .map(|attempt| fit_channel(&challenges, honest, target, attempt))
+            .find_map(|fitted| fitted.transpose())
+            .transpose()?
+            .with_context(|| format!("no correction within 0..=255 in {ATTEMPTS} attempts"))?;
+        channels.push(fitted);
+    }
+    RgbImage::new(CROP, channels.try_into().expect("three channels"))
+}
+
+/// `target` with the corrective pixels of `attempt` set so that its claim
+/// equals the honest one, or `None` when a correction leaves 0..=255.
+fn fit_channel(
+    challenges: &[F],
+    honest: &[u8],
+    target: &[u8],
+    attempt: usize,
+) -> Result<Option<Vec<u8>>> {
+    let positions = corrective_pixels(attempt);
     let coefficients: Vec<BigInt> = positions
         .iter()
         .map(|&i| to_bigint(&challenges[i]))
         .collect();
+    let modulus = BigInt::from_bytes_be(Sign::Plus, &F::MODULUS.to_bytes_be());
 
-    let mut channels = target.channels().clone();
-    for (channel, honest) in channels.iter_mut().zip(published.channels()) {
-        // Mid-gray leaves room for a signed correction on either side.
-        for &i in &positions {
-            channel[i] = 128;
-        }
-        let gap = claim(&challenges, honest) - claim(&challenges, channel);
-        let deltas = lattice::solve_congruence(&coefficients, &to_bigint(&gap), &modulus)
-            .context("no short lattice solution")?;
-        for (&i, delta) in positions.iter().zip(&deltas) {
-            let value = BigInt::from(128) + delta;
-            channel[i] = u8::try_from(&value)
-                .ok()
-                .with_context(|| format!("correction {delta} leaves 0..=255"))?;
+    let mut channel = target.to_vec();
+    // Mid-gray leaves room for a signed correction on either side.
+    for &i in &positions {
+        channel[i] = 128;
+    }
+    let gap = claim(challenges, honest) - claim(challenges, &channel);
+    let deltas = lattice::solve_congruence(&coefficients, &to_bigint(&gap), &modulus)
+        .context("no short lattice solution")?;
+    for (&i, delta) in positions.iter().zip(&deltas) {
+        match u8::try_from(BigInt::from(128) + delta) {
+            Ok(value) => channel[i] = value,
+            Err(_) => return Ok(None),
         }
     }
-    RgbImage::new(CROP, channels)
+    Ok(Some(channel))
 }
 
 fn claim(challenges: &[F], pixels: &[u8]) -> F {
