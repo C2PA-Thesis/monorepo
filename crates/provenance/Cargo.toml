@@ -22,3 +22,7 @@ serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 time = { version = "0.3", features = ["formatting"] }
+
+[dev-dependencies]
+# The forgers of the security analysis, for the end-to-end attack tests.
+crop-proof = { path = "../crop-proof", features = ["attack-hooks"] }
