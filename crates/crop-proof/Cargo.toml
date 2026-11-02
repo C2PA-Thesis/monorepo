@@ -17,6 +17,8 @@ ark-poly = "0.4"
 ark-serialize = "0.4"
 ark-std = "0.4"
 hex.workspace = true
+# Only for the lattice solver of the security analysis.
+num-bigint = { version = "0.4", optional = true }
 rand = "0.8"
 rand_chacha = "0.3"
 serde.workspace = true
@@ -25,5 +27,16 @@ sha2.workspace = true
 subroutines = { git = "https://github.com/glgreiner/hyperplonk", rev = "bed02ac877968512f6b920a1a449f4226944ce09" }
 transcript = { git = "https://github.com/glgreiner/hyperplonk", rev = "bed02ac877968512f6b920a1a449f4226944ce09" }
 
+[features]
+# Attack code and test hooks for the security analysis. Off by default.
+attack-hooks = ["dep:num-bigint"]
+
 [dev-dependencies]
+# Self dependency so the crate's own tests build with the hooks feature on.
+crop-proof = { path = ".", features = ["attack-hooks"] }
+ark-bls12-381 = "0.4"
+ark-ff = "0.4"
+ark-serialize = "0.4"
+num-bigint = "0.4"
+rand = "0.8"
 tempfile = "3"

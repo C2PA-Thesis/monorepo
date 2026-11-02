@@ -12,7 +12,13 @@ use serde::{Deserialize, Serialize};
 
 mod crop;
 mod fingerprint;
+#[cfg(feature = "attack-hooks")]
+pub mod forge;
+#[cfg(feature = "attack-hooks")]
+pub mod hooks;
 mod iop;
+#[cfg(feature = "attack-hooks")]
+pub mod lattice;
 mod params;
 mod wire;
 

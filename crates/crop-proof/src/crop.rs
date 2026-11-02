@@ -62,11 +62,11 @@ pub fn verify(
     .map_err(|_| anyhow!("the image proof is malformed"))?
 }
 
-fn new_transcript() -> IOPTranscript<F> {
+pub(crate) fn new_transcript() -> IOPTranscript<F> {
     <PolyIOP<F> as ProductCheck<Bls12_381, Pcs>>::init_transcript()
 }
 
-fn append(
+pub(crate) fn append(
     transcript: &mut IOPTranscript<F>,
     label: &'static [u8],
     commitment: &Commitment<Bls12_381>,
@@ -157,7 +157,26 @@ fn prove_core(pcs: &MultilinearProverParam<Bls12_381>, original: &RgbImage) -> R
     })
 }
 
-fn open(
+/// Replays the verifier up to the crop challenges. Read-only: it runs the same
+/// shared prefix the verifier runs, it does not relax any check.
+#[cfg(feature = "attack-hooks")]
+pub(crate) fn replay_crop_challenges(hashes: &[Vec<F>; 3], proof: &CropProof) -> Result<Vec<F>> {
+    Ok(verify_prefix(hashes, proof)?.crop_challenges)
+}
+
+/// Commits to one channel exactly as `prove_core` does, for the linkage test.
+#[cfg(feature = "attack-hooks")]
+pub(crate) fn commit_channel(
+    pcs: &MultilinearProverParam<Bls12_381>,
+    pixels: &[u8],
+) -> Result<Commitment<Bls12_381>> {
+    check(
+        Pcs::commit(pcs, &poly(iop::field_values(pixels))),
+        "committing to the image",
+    )
+}
+
+pub(crate) fn open(
     pcs: &MultilinearProverParam<Bls12_381>,
     polynomials: &[&Poly],
     points: &[Vec<F>],
@@ -206,12 +225,17 @@ struct RangeClaim {
     expected: F,
 }
 
-fn verify_core(
-    pcs: &MultilinearVerifierParam<Bls12_381>,
-    crop: &RgbImage,
-    hashes: &[Vec<F>; 3],
-    proof: &CropProof,
-) -> Result<()> {
+/// What the verifier derives before it reads the published pixels. Shared with
+/// `hooks::crop_challenges` so the challenges have one source.
+struct VerifyPrefix {
+    transcript: IOPTranscript<F>,
+    combined_rows: Vec<F>,
+    hash_claims: Vec<SumcheckClaim>,
+    range_claims: Vec<RangeClaim>,
+    crop_challenges: Vec<F>,
+}
+
+fn verify_prefix(hashes: &[Vec<F>; 3], proof: &CropProof) -> Result<VerifyPrefix> {
     let commitments = &proof.commitments;
     let mut transcript = new_transcript();
     for commitment in &commitments[..3] {
@@ -252,10 +276,35 @@ fn verify_core(
         });
     }
 
+    // The published pixels and the fingerprint are never absorbed before this
+    // draw, so these challenges depend only on the proof.
     let crop_challenges = check(
         transcript.get_and_append_challenge_vectors(b"frievald", CROP.pixels()),
         "deriving crop challenges",
     )?;
+    Ok(VerifyPrefix {
+        transcript,
+        combined_rows,
+        hash_claims,
+        range_claims,
+        crop_challenges,
+    })
+}
+
+fn verify_core(
+    pcs: &MultilinearVerifierParam<Bls12_381>,
+    crop: &RgbImage,
+    hashes: &[Vec<F>; 3],
+    proof: &CropProof,
+) -> Result<()> {
+    let commitments = &proof.commitments;
+    let VerifyPrefix {
+        mut transcript,
+        combined_rows,
+        hash_claims,
+        range_claims,
+        crop_challenges,
+    } = verify_prefix(hashes, proof)?;
     let mut crop_claims = Vec::with_capacity(3);
     for (sumcheck, pixels) in proof.crop.iter().zip(crop.channels()) {
         let claimed = crop_challenges
