@@ -7,13 +7,15 @@ import QRCode from "qrcode";
 import "./style.css";
 import "./screen.css";
 import * as api from "./api";
-import { $, h, icon, short, svg, time, when } from "./dom";
+import { $, h, icon, short, svg, taken, time, when } from "./dom";
 import { CellMap } from "./map";
+import { loader, viewfinder } from "./mark";
 import { Timeline } from "./timeline";
 import * as verdict from "./verdict";
 
 const app = $("app");
 const list = h("ol", { class: "capture-list" });
+const count = h("span", { class: "count num" });
 const detail = h("section", { class: "detail" });
 const verifyView = h("section", { class: "verify-view", hidden: true });
 let captures: api.Status[] = [];
@@ -23,14 +25,18 @@ let followNewest = true;
 let verifying = false;
 
 async function main() {
+  $("logo").innerHTML = viewfinder();
   let session: api.Session;
   try {
     session = await api.session();
   } catch (error) {
+    const mark = h("span", { class: "blocked-mark" });
+    mark.innerHTML = viewfinder();
     app.replaceChildren(
       h(
         "div",
         { class: "card blocked" },
+        mark,
         h("h2", {}, "Open this page on the laptop"),
         h("p", { class: "muted" }, message(error)),
       ),
@@ -38,7 +44,12 @@ async function main() {
     return;
   }
   app.replaceChildren(
-    h("aside", { class: "side" }, await connect(session), list),
+    h(
+      "aside",
+      { class: "side" },
+      await connect(session),
+      h("section", { class: "photos" }, h("div", { class: "rail-head" }, h("h3", {}, "Photos"), count), list),
+    ),
     h("main", { class: "main" }, detail, verifyView),
   );
   verifyView.append(...dropZone());
@@ -52,12 +63,14 @@ async function connect(session: api.Session): Promise<HTMLElement> {
   await app.refresh();
   window.setInterval(() => void app.refresh(), 2000);
 
+  const title = h("h2", {}, "Connect your iPhone");
+  const hint = h("p", { class: "muted" }, "Open Capture and scan this code.");
   // The capture page needs HTTPS for the camera and GPS, so it is offered only through a tunnel.
   const browser = h("div", { class: "browser-pair", hidden: true });
   if (session.pair_url) {
     const qr = h("div", { class: "qr qr-browser" });
     qr.innerHTML = await QRCode.toString(session.pair_url, { type: "svg", margin: 1, errorCorrectionLevel: "M" });
-    browser.append(qr, h("p", { class: "meta" }, "Scan with the phone's camera"));
+    browser.append(qr);
   }
   const toggle = h(
     "button",
@@ -67,20 +80,28 @@ async function connect(session: api.Session): Promise<HTMLElement> {
       "aria-expanded": "false",
       onclick: () => {
         browser.hidden = !browser.hidden;
+        app.element.hidden = !browser.hidden;
         toggle.setAttribute("aria-expanded", String(!browser.hidden));
         toggle.textContent = browser.hidden ? "Use a browser instead" : "Use the app instead";
-        app.element.hidden = !browser.hidden;
+        title.textContent = browser.hidden ? "Connect your iPhone" : "Connect a phone's browser";
+        hint.textContent = browser.hidden ? "Open Capture and scan this code." : "Scan this code with the phone's camera.";
       },
     },
     "Use a browser instead",
   );
   return h(
-    "div",
-    { class: "connect" },
+    "section",
+    { class: "card connect" },
+    h("div", { class: "connect-head" }, title, hint),
     h("div", { class: "qr-panel" }, app.element, browser),
-    h("p", { class: "code" }, h("span", { class: "sr-only" }, "Pairing code "), h("span", { class: "mono" }, session.pairing_code)),
+    h(
+      "p",
+      { class: "code" },
+      h("span", { class: "meta" }, "Pairing code"),
+      h("span", { class: "mono" }, session.pairing_code),
+    ),
     session.pair_url && toggle,
-    !session.publishes && h("p", { class: "meta" }, "Captures are stored, not published."),
+    !session.publishes && h("p", { class: "callout warn" }, "Photos are stored here, not published."),
   );
 }
 
@@ -93,7 +114,7 @@ class AppPairing {
   private shown: string | undefined;
 
   constructor() {
-    this.element.append(this.qr, this.problem, h("p", { class: "meta" }, "Scan with the Capture app"));
+    this.element.append(this.qr, this.problem);
   }
 
   async refresh() {
@@ -174,6 +195,24 @@ async function refresh() {
   else if (!captures.length) renderEmpty();
 }
 
+/// One thumbnail per capture, kept across refreshes so the list does not
+/// fetch its images every second.
+const thumbs = new Map<string, HTMLImageElement>();
+
+function thumb(status: api.Status): HTMLElement {
+  const src = status.published && !api.isRunning(status.phase) ? api.signedUrl(status.id) : api.originalUrl(status.id);
+  let image = thumbs.get(status.id);
+  if (!image) {
+    image = h("img", { alt: "", loading: "lazy", decoding: "async" });
+    thumbs.set(status.id, image);
+  }
+  if (image.dataset.src !== src) {
+    image.dataset.src = src;
+    image.src = src === api.signedUrl(status.id) ? `${src}?${Date.now()}` : src;
+  }
+  return h("span", { class: "thumb" }, image);
+}
+
 function renderList() {
   list.replaceChildren(
     ...captures.map((status) =>
@@ -194,18 +233,31 @@ function renderList() {
               void refresh();
             },
           },
-          h("span", { class: "capture-time num" }, when(status.captured_at)),
+          thumb(status),
+          h(
+            "span",
+            { class: "capture-text" },
+            h("span", { class: "capture-time num" }, when(status.captured_at)),
+            h("span", { class: `capture-state ${tone(status.phase)}` }, PHASE[status.phase]),
+          ),
           phaseMark(status.phase),
         ),
       ),
     ),
   );
+  count.textContent = captures.length ? String(captures.length) : "";
 }
 
 function renderEmpty() {
   shown = undefined;
   detail.replaceChildren(
-    h("div", { class: "empty" }, h("h2", {}, "Waiting for a capture"), h("p", { class: "meta" }, "Scan the QR with the app.")),
+    h(
+      "div",
+      { class: "empty" },
+      loader(88, "Waiting"),
+      h("h2", {}, "Waiting for a photo"),
+      h("p", { class: "muted" }, "Scan the code with Capture on your iPhone, then take a photo."),
+    ),
   );
 }
 
@@ -216,13 +268,18 @@ function renderDetail(status: api.Status) {
   timeline.update(status.events, status.phase === "failed" ? (status.error ?? "failed") : undefined);
   parts.steps!.hidden = !status.events.length && !api.isRunning(status.phase);
 
+  parts.region!.classList.toggle("is-running", api.isRunning(status.phase));
   const key = `${status.phase}`;
   if (parts.published!.dataset.key !== key) {
     parts.published!.dataset.key = key;
     parts.published!.replaceChildren(
       status.published && !api.isRunning(status.phase)
         ? h("img", { src: `${api.signedUrl(status.id)}?${Date.now()}`, alt: "The published file" })
-        : h("div", { class: "placeholder" }, api.isRunning(status.phase) ? h("span", { class: "spinner", "aria-label": "Publishing" }) : "Not published"),
+        : h(
+            "div",
+            { class: api.isRunning(status.phase) ? "placeholder is-running" : "placeholder" },
+            api.isRunning(status.phase) ? [loader(48, "Publishing"), h("span", {}, PHASE[status.phase])] : "Not published",
+          ),
     );
     showOutcome(status, shown!.km2);
     parts.actions!.replaceChildren(...actions(status));
@@ -260,8 +317,9 @@ function buildDetail(status: api.Status) {
     verdict: h("div", { class: "outcome" }),
     outcome: h("div", { class: "outcome" }),
     actions: h("div", { class: "detail-actions" }),
-    steps: h("div", { class: "card pad" }, timeline.element),
+    steps: h("div", { class: "card pad steps" }, h("h3", {}, "Proofs and checks"), timeline.element),
   };
+  parts.region = h("div", { class: "card pad region" }, parts.verdict, map.element, parts.outcome);
   const { crop } = status.capture;
   const overlay = h("div", {
     class: "overlay",
@@ -275,10 +333,12 @@ function buildDetail(status: api.Status) {
       h(
         "div",
         { class: "detail-title" },
-        h("div", { class: "title-line" }, h("h2", { class: "num", title: time(status.captured_at) }, when(status.captured_at)), parts.badges),
+        h("div", { class: "title-line" }, h("h2", { class: "num", title: time(status.captured_at) }, taken(status.captured_at)), parts.badges),
         h(
           "p",
           { class: "meta num", title: status.id },
+          deviceKind(status),
+          " · ",
           h("span", { class: "mono" }, short(status.device)),
           status.capture.accuracy_meters ? ` · ±${Math.round(status.capture.accuracy_meters)} m` : "",
         ),
@@ -286,9 +346,9 @@ function buildDetail(status: api.Status) {
       parts.actions,
     ),
     board(
-      [figure("Original · private", original, 1024, 512), figure("Published", parts.published!, crop.width, crop.height)],
+      [figure("Original, private", original, 1024, 512), figure("Published", parts.published!, crop.width, crop.height)],
       parts.steps!,
-      h("div", { class: "card pad region" }, parts.verdict, map.element, parts.outcome),
+      parts.region,
     ),
   );
   shown = { id: status.id, timeline, map, parts };
@@ -322,7 +382,7 @@ function showOutcome(status: api.Status, km2?: number) {
           ? verdict.pending("idle", "Not published", h("button", { type: "button", onclick: (event: Event) => void publish(status, event) }, "Publish"))
           : phase === "published"
             ? verdict.pending("idle", "Not verified", verify)
-            : verdict.pending("running", PHASE[phase]),
+            : verdict.pending("running", PHASE[phase], undefined, h("span", { class: "working-bar", role: "presentation" })),
   );
 }
 
@@ -381,23 +441,33 @@ function badges(status: api.Status): HTMLElement[] {
   return status.capture.location?.simulated ? [h("span", { class: "pill warn" }, "Simulated GPS")] : [];
 }
 
-/// The rail's mark: a verdict, a spinner, or a faint dot for a capture with no verdict here.
-function phaseMark(phase: api.Phase): HTMLElement {
-  const label = h("span", { class: "sr-only" }, PHASE[phase]);
-  const tone = phase === "accepted" ? "ok" : phase === "rejected" || phase === "failed" ? "bad" : api.isRunning(phase) ? "running" : "idle";
-  return h("span", { class: "phase-mark" }, verdict.mark(tone), label);
+function tone(phase: api.Phase): verdict.Tone {
+  return phase === "accepted" ? "ok" : phase === "rejected" || phase === "failed" ? "bad" : api.isRunning(phase) ? "running" : "idle";
+}
+
+/// The rail's mark: a verdict, a spinner, or nothing for a capture with no verdict here.
+function phaseMark(phase: api.Phase): HTMLElement | false {
+  const kind = tone(phase);
+  return kind !== "idle" && h("span", { class: "phase-mark", "aria-hidden": "true" }, verdict.mark(kind));
 }
 
 // Verify a file
 
 const result = h("div", { class: "verify-result" });
-const dropLabel = h("span", { class: "drop-label" }, "Drop a PNG to verify, or click to choose");
+const dropMark = h("span", { class: "drop-mark" });
+const dropLabel = h(
+  "span",
+  { class: "drop-label" },
+  h("span", { class: "drop-title" }, "Drop a photo to check it"),
+  h("span", { class: "muted" }, "A PNG from Capture, or any image. Or click to choose one."),
+);
 const dropAgain = h("span", { class: "drop-again", hidden: true }, "Choose another");
 
 function dropZone(): HTMLElement[] {
   const input = h("input", { type: "file", accept: "image/png", hidden: true }) as HTMLInputElement;
   input.onchange = () => input.files?.[0] && void verifyFile(input.files[0]);
-  const zone = h("label", { class: "drop", id: "drop" }, input, dropLabel, dropAgain);
+  dropMark.innerHTML = viewfinder();
+  const zone = h("label", { class: "drop", id: "drop" }, input, dropMark, dropLabel, dropAgain);
   zone.ondragover = (event) => {
     event.preventDefault();
     zone.classList.add("over");
@@ -419,7 +489,11 @@ async function verifyFile(file: File) {
   const preview = URL.createObjectURL(file);
   const timeline = new Timeline(["verify"]);
   timeline.update([{ event: "checking", check: "manifest", intent: "reading the C2PA manifest and validating its claim signature" }]);
-  const verdictSlot = h("div", { class: "outcome" }, verdict.pending("running", "Verifying"));
+  const verdictSlot = h(
+    "div",
+    { class: "outcome" },
+    verdict.pending("running", "Checking", undefined, h("span", { class: "working-bar", role: "presentation" })),
+  );
   const outcomeSlot = h("div", { class: "outcome" });
   const map = new CellMap();
   map.element.hidden = true;
@@ -427,7 +501,7 @@ async function verifyFile(file: File) {
   result.replaceChildren(
     board(
       [h("figure", { class: "solo" }, h("div", { class: "well" }, h("img", { src: preview, alt: file.name })))],
-      h("div", { class: "card pad" }, timeline.element),
+      h("div", { class: "card pad steps" }, h("h3", {}, "Checks"), timeline.element),
       region,
     ),
   );

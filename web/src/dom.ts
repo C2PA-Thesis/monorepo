@@ -56,6 +56,16 @@ export function when(rfc3339: string): string {
   return `${date.toLocaleDateString(undefined, { month: "short", day: "numeric", year })} · ${clock}`;
 }
 
+/// "Taken today at 3:45 pm", as the app titles a photo.
+export function taken(rfc3339: string): string {
+  const date = new Date(rfc3339);
+  if (Number.isNaN(date.getTime())) return rfc3339;
+  const clock = date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  if (date.toDateString() === new Date().toDateString()) return `Taken today at ${clock}`;
+  const year = date.getFullYear() === new Date().getFullYear() ? undefined : "numeric";
+  return `Taken ${date.toLocaleDateString(undefined, { month: "short", day: "numeric", year })} at ${clock}`;
+}
+
 export function time(rfc3339: string): string {
   const date = new Date(rfc3339);
   return Number.isNaN(date.getTime())

@@ -12,6 +12,7 @@ import { envelope, freshSalt, hints } from "./envelope";
 import { fingerprint } from "./fingerprint";
 import { loadOrCreateKey, type DeviceKey } from "./key";
 import { CellMap } from "./map";
+import { viewfinder } from "./mark";
 import { signReceipt, timestamp } from "./receipt";
 import { Timeline } from "./timeline";
 import * as verdict from "./verdict";
@@ -42,6 +43,7 @@ function step(name: StepName, state: StepState, ...summary: (string | Node)[]) {
 const mono = (text: string) => h("span", { class: "mono" }, text);
 
 async function main() {
+  $("logo").innerHTML = viewfinder();
   $("map-slot").append(map.element);
   $("presets").append(
     ...PRESETS.map((preset) =>

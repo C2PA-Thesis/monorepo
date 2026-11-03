@@ -2,7 +2,7 @@ body.screen {
   min-height: 100vh;
 }
 
-/* Top bar: mark, name, tabs. */
+/* Top bar: the mark, the name, the tabs. */
 
 .bar {
   position: sticky;
@@ -12,26 +12,42 @@ body.screen {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  height: 56px;
-  padding: 0 24px;
-  background: var(--bg);
+  height: 64px;
+  padding: 0 28px;
+  background: color-mix(in srgb, var(--bg) 86%, transparent);
+  backdrop-filter: saturate(1.4) blur(14px);
+  -webkit-backdrop-filter: saturate(1.4) blur(14px);
   border-bottom: 1px solid var(--line);
 }
 
+.bar-note {
+  margin-left: 2px;
+  font-weight: 500;
+}
+
+@media (max-width: 40rem) {
+  .bar-note {
+    display: none;
+  }
+}
+
+/* A segmented control, like the app's chips. */
 .tabs {
   display: flex;
-  gap: 4px;
+  gap: 2px;
+  padding: 3px;
+  background: var(--surface-2);
+  border-radius: var(--r-pill);
 }
 
 .tabs button {
-  min-height: 40px;
-  padding: 0 14px;
-  font-size: 13px;
-  font-weight: 500;
+  min-height: 36px;
+  padding: 0 16px;
+  font-size: 14px;
+  font-weight: 600;
   color: var(--muted);
   background: transparent;
   border-color: transparent;
-  border-radius: var(--r-pill);
 }
 
 .tabs button:hover:not(:disabled) {
@@ -41,18 +57,19 @@ body.screen {
 
 .tabs button[aria-selected="true"] {
   color: var(--ink);
-  background: var(--surface-2);
+  background: var(--surface);
+  box-shadow: 0 1px 2px rgb(11 11 12 / 8%), 0 0 0 1px var(--line);
 }
 
 /* Rail and main column. */
 
 .layout {
   display: grid;
-  grid-template-columns: 248px minmax(0, 1fr);
+  grid-template-columns: 300px minmax(0, 1fr);
   gap: 32px;
-  max-width: 1440px;
+  max-width: 1480px;
   margin: 0 auto;
-  padding: 24px;
+  padding: 28px;
 }
 
 @media (max-width: 60rem) {
@@ -68,12 +85,12 @@ body.screen {
 
 .side {
   position: sticky;
-  top: 80px;
+  top: 92px;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
-  gap: 24px;
+  gap: 28px;
   align-content: start;
-  max-height: calc(100vh - 104px);
+  max-height: calc(100vh - 120px);
 }
 
 @media (max-width: 60rem) {
@@ -87,24 +104,36 @@ body.screen {
   }
 }
 
-/* Pairing */
+/* Pairing: one card, the code on white so any phone reads it. */
 
 .connect {
   display: grid;
-  gap: 8px;
-  justify-items: center;
-  text-align: center;
+  gap: 14px;
+  padding: 20px;
+  border-radius: var(--r-xl);
+}
+
+.connect-head {
+  display: grid;
+  gap: 4px;
+}
+
+.connect h2 {
+  font-size: 19px;
+}
+
+.connect-head .muted {
+  font-size: 14px;
 }
 
 .qr-panel {
   width: 100%;
-  padding: 16px 16px 12px;
+  padding: 14px;
   /* A QR code needs a light ground in either theme. */
-  color: #737373;
+  color: #6b6b73;
   background: #fff;
   border: 1px solid var(--line);
   border-radius: var(--r-lg);
-  box-shadow: var(--shadow-2);
 }
 
 .app-pair,
@@ -119,43 +148,80 @@ body.screen {
   height: auto;
 }
 
-.qr-panel .meta {
-  color: #737373;
-}
-
 .qr-panel .warn-text {
-  color: #9a6700;
+  color: #b5762a;
 }
 
 .code {
-  margin-top: 4px;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 2px;
 }
 
 .code .mono {
   font-size: var(--code-size);
-  font-weight: 600;
+  font-weight: 500;
   letter-spacing: var(--code-tracking);
   font-variant-numeric: tabular-nums;
 }
 
 .link-button {
+  justify-self: start;
   min-height: 36px;
-  padding: 0 8px;
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--muted);
+  padding: 0 12px;
+  margin-left: -12px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
   background: transparent;
   border-color: transparent;
 }
 
 .link-button:hover:not(:disabled) {
   opacity: 1;
-  color: var(--ink);
-  text-decoration: underline;
-  text-underline-offset: 3px;
+  background: var(--surface-2);
 }
 
-/* Capture list: time and a mark. */
+/* A short message with a colored ground, as the app's Callout. */
+.callout {
+  padding: 10px 12px;
+  font-size: 13.5px;
+  font-weight: 500;
+  border-radius: var(--r-md);
+}
+
+.callout.warn {
+  color: var(--warn);
+  background: var(--warn-soft);
+}
+
+/* Photo list: a thumbnail, the time, the state. */
+
+.photos {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 10px;
+  min-height: 0;
+}
+
+.rail-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 0 4px;
+}
+
+.rail-head h3 {
+  font-size: 15px;
+}
+
+.count {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+}
 
 .capture-list {
   display: grid;
@@ -170,17 +236,18 @@ body.screen {
 }
 
 .capture-item {
-  justify-content: space-between;
+  justify-content: flex-start;
+  gap: 12px;
   width: 100%;
-  min-height: 40px;
-  padding: 0 12px;
+  min-height: 60px;
+  padding: 8px 12px 8px 8px;
   font-size: 15px;
   font-weight: 400;
   text-align: left;
   color: var(--ink-2);
   background: transparent;
   border: 1px solid transparent;
-  border-radius: var(--r-md);
+  border-radius: var(--r-lg);
 }
 
 .capture-item:hover:not(:disabled) {
@@ -189,21 +256,74 @@ body.screen {
   background: var(--surface-2);
 }
 
+.capture-item:active:not(:disabled) {
+  transform: none;
+}
+
 .capture-item[aria-current="true"] {
   color: var(--ink);
-  font-weight: 500;
   background: var(--surface);
   border-color: var(--line);
   box-shadow: var(--shadow-1);
+}
+
+.thumb {
+  flex: none;
+  width: 44px;
+  height: 44px;
+  background: var(--surface-2);
+  border-radius: var(--r-sm);
+  overflow: hidden;
+}
+
+.thumb img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.capture-text {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+}
+
+.capture-time {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.capture-state {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--muted);
+}
+
+.capture-state.ok {
+  color: var(--ok);
+}
+
+.capture-state.bad {
+  color: var(--bad);
+}
+
+.capture-state.running {
+  color: var(--signal);
 }
 
 .phase-mark {
   display: inline-flex;
 }
 
+.capture-item .mark {
+  width: 20px;
+  height: 20px;
+}
+
 .capture-item .spinner {
-  width: 12px;
-  height: 12px;
+  width: 14px;
+  height: 14px;
 }
 
 /* Detail */
@@ -215,7 +335,7 @@ body.screen {
 .detail,
 .verify-view {
   display: grid;
-  gap: 16px;
+  gap: 18px;
   align-content: start;
 }
 
@@ -225,35 +345,30 @@ body.screen {
   justify-content: space-between;
   align-items: flex-end;
   gap: 16px;
-  padding-bottom: 8px;
+  padding: 4px 0 6px;
 }
 
 .detail-title {
   display: grid;
-  gap: 4px;
+  gap: 6px;
   min-width: 0;
 }
 
 .title-line {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 12px;
 }
 
 .title-line h2 {
-  font-size: 28px;
-  letter-spacing: -0.01em;
+  font-size: 32px;
+  letter-spacing: -0.03em;
 }
 
 .detail-actions {
   display: flex;
   gap: 8px;
-}
-
-.detail-actions .button,
-.detail-actions button {
-  min-height: 40px;
-  padding: 0 16px;
 }
 
 .badges {
@@ -265,19 +380,19 @@ body.screen {
   display: none;
 }
 
-/* The board: images over the steps on the left, the cell and the verdict on
-   the right. Each card hugs its content. */
+/* The board: the photo and the steps on the left, the area and the verdict
+   on the right. Each card hugs its content. */
 
 .board {
   display: grid;
-  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
-  gap: 12px;
+  grid-template-columns: minmax(0, 1.9fr) minmax(320px, 1fr);
+  gap: 16px;
   align-items: start;
 }
 
 .board-main {
   display: grid;
-  gap: 12px;
+  gap: 16px;
   align-content: start;
   min-width: 0;
 }
@@ -290,13 +405,18 @@ body.screen {
 
 .images {
   display: flex;
-  gap: 12px;
+  gap: 14px;
   align-items: flex-end;
+  padding: 16px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-xl);
+  box-shadow: var(--shadow-1);
 }
 
 figure {
   display: grid;
-  gap: 8px;
+  gap: 10px;
   align-content: start;
   min-width: 0;
   margin: 0;
@@ -304,8 +424,11 @@ figure {
 
 figcaption {
   overflow: hidden;
+  font-size: 12.5px;
+  font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
+  color: var(--muted);
 }
 
 .frame {
@@ -326,7 +449,7 @@ figcaption {
   object-fit: contain;
 }
 
-/* A verified file alone fills the column. */
+/* A checked file alone fills the card. */
 .solo {
   flex: 1;
 }
@@ -342,34 +465,48 @@ figcaption {
 .solo img {
   display: block;
   max-width: 100%;
-  max-height: 420px;
+  max-height: 440px;
   object-fit: contain;
 }
 
+/* What stays private is shaded, as in the app's editor. */
 .overlay {
   position: absolute;
   border: 2px solid #fff;
-  outline: 1px solid var(--ink);
   box-shadow: 0 0 0 9999px var(--overlay);
 }
 
 .placeholder {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  font-size: 13px;
-  font-weight: 500;
+  display: grid;
+  gap: 12px;
+  justify-items: center;
+  font-size: 13.5px;
+  font-weight: 600;
   color: var(--muted);
 }
 
 .pad {
-  padding: 20px;
+  padding: 20px 22px;
+}
+
+.card.pad {
+  border-radius: var(--r-xl);
+}
+
+.steps {
+  display: grid;
+  gap: 8px;
+}
+
+.steps > h3,
+.region h3 {
+  font-size: 15px;
 }
 
 .region,
 .outcome {
   display: grid;
-  gap: 16px;
+  gap: 18px;
   align-content: start;
 }
 
@@ -381,83 +518,168 @@ figcaption {
   display: none;
 }
 
+.region .verdict h2 {
+  font-size: 24px;
+  letter-spacing: -0.025em;
+}
+
+.region .verdict .mark {
+  width: 34px;
+  height: 34px;
+}
+
+.region .verdict .spinner {
+  width: 20px;
+  height: 20px;
+  border-width: 2.5px;
+}
+
+.region .map {
+  height: 260px;
+}
+
 /* Empty and blocked states */
 
 .empty {
   display: grid;
-  gap: 4px;
+  gap: 8px;
+  justify-items: center;
   place-content: center;
-  min-height: 60vh;
+  min-height: 62vh;
   text-align: center;
 }
 
+.empty .vf-loader {
+  margin-bottom: 18px;
+}
+
 .empty h2 {
-  font-size: 17px;
+  font-size: 26px;
+  letter-spacing: -0.025em;
+}
+
+.empty p {
+  max-width: 26rem;
+  font-size: 16px;
 }
 
 .blocked {
   grid-column: 1 / -1;
-  max-width: 32rem;
-  margin: 48px auto;
-  padding: 20px;
   display: grid;
   gap: 8px;
+  justify-items: center;
+  max-width: 30rem;
+  margin: 64px auto;
+  padding: 32px;
+  text-align: center;
+  border-radius: var(--r-xl);
+}
+
+.blocked-mark {
+  width: 56px;
+  height: 56px;
+  margin-bottom: 10px;
+}
+
+.blocked-mark svg {
+  display: block;
 }
 
 .blocked h2 {
-  font-size: 17px;
+  font-size: 22px;
 }
 
-/* Verify: a calm drop zone, then a single row naming the file. */
+/* Check a photo: a roomy drop zone, then a single row naming the file. */
 
 .drop {
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 16px;
-  min-height: 96px;
-  padding: 24px;
+  min-height: 300px;
+  padding: 32px;
   font-weight: 500;
   color: var(--muted);
   text-align: center;
+  background: var(--surface);
   border: 1.5px dashed var(--line-strong);
-  border-radius: var(--r-lg);
+  border-radius: var(--r-xl);
   cursor: pointer;
-  transition: border-color var(--ease), color var(--ease), background var(--ease);
+  transition: border-color var(--ease), background var(--ease), transform var(--ease);
 }
 
 .drop:hover,
 .drop.over {
-  color: var(--ink);
-  border-color: var(--ink);
+  border-color: var(--signal);
 }
 
 .drop.over {
-  background: var(--surface);
+  background: var(--signal-soft);
+  transform: scale(1.005);
 }
 
-.drop.compact {
-  justify-content: space-between;
-  min-height: 44px;
-  padding: 0 16px;
-  font-size: 13px;
-  text-align: left;
-  border-radius: var(--r-md);
+.drop-mark {
+  width: 72px;
+  height: 72px;
+  transition: transform var(--ease);
+}
+
+.drop-mark svg {
+  display: block;
+}
+
+.drop:hover .vf-brackets,
+.drop.over .vf-brackets {
+  transform: scale(0.88);
 }
 
 .drop-label {
+  display: grid;
+  gap: 4px;
   min-width: 0;
+}
+
+.drop-title {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+}
+
+.drop.compact {
+  flex-direction: row;
+  justify-content: flex-start;
+  min-height: 56px;
+  padding: 0 18px 0 10px;
+  font-size: 14px;
+  text-align: left;
+  border-style: solid;
+  border-color: var(--line);
+  border-radius: var(--r-pill);
+}
+
+.drop.compact .drop-mark {
+  width: 34px;
+  height: 34px;
+}
+
+.drop.compact .drop-label {
+  display: block;
+  flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .drop.compact .drop-name {
+  font-weight: 600;
   color: var(--ink);
 }
 
 .drop-again {
   flex: none;
+  font-weight: 600;
   color: var(--ink);
 }
 
@@ -468,4 +690,82 @@ figcaption {
 
 .verify-result:empty {
   display: none;
+}
+
+/* Work in progress always moves, so a long proof never looks stuck. */
+
+.working-bar {
+  position: relative;
+  display: block;
+  height: 4px;
+  margin-top: 4px;
+  overflow: hidden;
+  background: var(--surface-2);
+  border-radius: var(--r-pill);
+}
+
+.working-bar::after {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 36%;
+  background: var(--signal);
+  border-radius: inherit;
+  animation: sweep 1.5s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
+
+@keyframes sweep {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(280%);
+  }
+}
+
+.placeholder.is-running {
+  position: absolute;
+  inset: 0;
+  place-content: center;
+  overflow: hidden;
+}
+
+.placeholder.is-running::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(100deg, transparent 30%, color-mix(in srgb, var(--surface) 70%, transparent) 50%, transparent 70%);
+  animation: shimmer 1.8s ease-in-out infinite;
+}
+
+@keyframes shimmer {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(100%);
+  }
+}
+
+.placeholder.is-running > * {
+  position: relative;
+}
+
+.region.is-running .cell-shape {
+  stroke-dasharray: 10 8;
+  animation: march 0.9s linear infinite;
+}
+
+@keyframes march {
+  to {
+    stroke-dashoffset: -18;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .working-bar::after,
+  .placeholder.is-running::before,
+  .region.is-running .cell-shape {
+    animation: none;
+  }
 }

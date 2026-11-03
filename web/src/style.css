@@ -1,66 +1,117 @@
-/* Tokens. The same values drive the iOS app. Color carries meaning only:
-   ok, bad, warn. Everything else is ink on paper. */
+/* Tokens: the iOS app's (ios/ProvenanceCapture/Views/Theme.swift). Ink on
+   paper; teal for what is running or chosen, green for verified, red for
+   what failed. */
+
+@font-face {
+  font-family: "Hanken Grotesk";
+  font-weight: 400;
+  font-display: swap;
+  src: url("./fonts/HankenGrotesk-Regular.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Hanken Grotesk";
+  font-weight: 500;
+  font-display: swap;
+  src: url("./fonts/HankenGrotesk-Medium.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Hanken Grotesk";
+  font-weight: 600;
+  font-display: swap;
+  src: url("./fonts/HankenGrotesk-SemiBold.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Hanken Grotesk";
+  font-weight: 700;
+  font-display: swap;
+  src: url("./fonts/HankenGrotesk-Bold.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-weight: 400;
+  font-display: swap;
+  src: url("./fonts/IBMPlexMono-Regular.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-weight: 500;
+  font-display: swap;
+  src: url("./fonts/IBMPlexMono-Medium.woff2") format("woff2");
+}
 
 :root {
   color-scheme: light;
-  --bg: #f6f6f4;
+  --bg: #f6f6f3;
   --surface: #ffffff;
-  --surface-2: #f1f1ef;
-  --ink: #0a0a0a;
-  --ink-2: #3a3a3a;
-  --muted: #737373;
-  --faint: #a3a3a3;
-  --line: #e8e8e5;
-  --line-strong: #d6d6d2;
-  --ok: #157f3b;
-  --ok-soft: rgb(21 127 59 / 8%);
-  --bad: #b42318;
-  --bad-soft: rgb(180 35 24 / 8%);
-  --warn: #9a6700;
-  --warn-soft: rgb(154 103 0 / 10%);
-  --overlay: rgb(10 10 10 / 55%);
-  --on-ink: var(--surface);
+  --surface-2: #efefea;
+  --ink: #0b0b0c;
+  --ink-2: #2a2a2e;
+  --muted: #6b6b73;
+  --faint: #9a9aa2;
+  --line: #e7e7e1;
+  --line-strong: #dcdcd4;
+  --signal: #0a7d72;
+  --signal-bright: #14b8a6;
+  --signal-soft: #e6f5f2;
+  --ok: #128a5c;
+  --ok-soft: #e8f4ee;
+  --bad: #c2402f;
+  --bad-soft: #fdeceb;
+  --warn: #b5762a;
+  --warn-soft: #fbf1e4;
+  --overlay: rgb(0 0 0 / 62%);
+  --on-ink: #ffffff;
 
-  --shadow-1: 0 1px 2px rgb(0 0 0 / 5%);
-  --shadow-2: 0 1px 2px rgb(0 0 0 / 5%), 0 12px 32px -12px rgb(0 0 0 / 18%);
+  --shadow-1: 0 1px 2px rgb(11 11 12 / 4%);
+  --shadow-2: 0 1px 2px rgb(11 11 12 / 4%), 0 18px 40px -20px rgb(11 11 12 / 22%);
 
-  --r-sm: 6px;
-  --r-md: 10px;
-  --r-lg: 14px;
+  --r-sm: 8px;
+  --r-md: 12px;
+  --r-lg: 18px;
+  --r-xl: 26px;
   --r-pill: 999px;
 
-  --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
-  --mono: ui-monospace, "SF Mono", Menlo, monospace;
+  --sans: "Hanken Grotesk", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
   /* The pairing code is read aloud and typed: the one mono text set large and tracked. */
-  --code-size: 17px;
-  --code-tracking: 0.08em;
-  --ease: 180ms ease-out;
+  --code-size: 20px;
+  --code-tracking: 0.12em;
+  --ease: 320ms cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-fast: 160ms ease-out;
 
   font-family: var(--sans);
   font-size: 15px;
   line-height: 1.45;
   -webkit-text-size-adjust: 100%;
+  -webkit-font-smoothing: antialiased;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
     color-scheme: dark;
-    --bg: #0a0a0b;
-    --surface: #141415;
-    --surface-2: #1c1c1e;
-    --ink: #f5f5f4;
-    --ink-2: #cfcfcf;
-    --muted: #8e8e8e;
-    --faint: #5c5c5c;
-    --line: #262628;
-    --line-strong: #3a3a3c;
-    --ok: #3fb96b;
-    --ok-soft: rgb(63 185 107 / 12%);
-    --bad: #f06a5f;
-    --bad-soft: rgb(240 106 95 / 12%);
-    --warn: #e0a43a;
-    --warn-soft: rgb(224 164 58 / 12%);
-    --on-ink: var(--bg);
+    --bg: #0b0b0c;
+    --surface: #151517;
+    --surface-2: #1d1d20;
+    --ink: #f4f4f1;
+    --ink-2: #d4d4d0;
+    --muted: #9a9aa2;
+    --faint: #66666e;
+    --line: #27272b;
+    --line-strong: #36363c;
+    --signal: #2cc4b3;
+    --signal-soft: rgb(44 196 179 / 14%);
+    --ok: #34c486;
+    --ok-soft: rgb(52 196 134 / 14%);
+    --bad: #ef6b5a;
+    --bad-soft: rgb(239 107 90 / 14%);
+    --warn: #e0a04a;
+    --warn-soft: rgb(224 160 74 / 14%);
+    --on-ink: #0b0b0c;
     --shadow-1: none;
     --shadow-2: none;
   }
@@ -80,8 +131,9 @@ h1,
 h2,
 h3 {
   margin: 0;
-  font-weight: 600;
-  line-height: 1.25;
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
 }
 
 p {
@@ -100,7 +152,8 @@ a:hover {
 code,
 .mono {
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: 12.5px;
+  letter-spacing: 0;
 }
 
 [hidden] {
@@ -143,8 +196,8 @@ code,
   font-variant-numeric: tabular-nums;
 }
 
-/* Buttons: one primary (ink) per region, the rest secondary. 15/600 on
-   every page; only the presenter's tabs and the text links are 13/500. */
+/* Buttons: the app's pills. One primary (ink) per region, the rest
+   outlined. 15/600 on every page; tabs and text links are 14/600. */
 
 button,
 .button {
@@ -155,15 +208,16 @@ button,
   gap: 8px;
   min-height: 44px;
   padding: 0 16px;
+  padding: 0 20px;
   font: inherit;
   font-weight: 600;
   color: var(--on-ink);
   background: var(--ink);
   border: 1px solid var(--ink);
-  border-radius: var(--r-md);
+  border-radius: var(--r-pill);
   cursor: pointer;
   text-decoration: none;
-  transition: opacity var(--ease), background var(--ease);
+  transition: opacity var(--ease-fast), background var(--ease-fast), transform var(--ease-fast);
   -webkit-tap-highlight-color: transparent;
 }
 
@@ -174,6 +228,11 @@ button,
 button:hover:not(:disabled),
 .button:hover {
   opacity: 0.88;
+}
+
+button:active:not(:disabled),
+.button:active {
+  transform: translateY(1px) scale(0.985);
 }
 
 button:disabled {
@@ -187,6 +246,18 @@ button:disabled {
   border-color: var(--line-strong);
 }
 
+/* No fill, no border: the app's quiet button. */
+.quiet {
+  color: var(--ink);
+  background: transparent;
+  border-color: transparent;
+}
+
+.quiet:hover:not(:disabled) {
+  opacity: 1;
+  background: var(--surface-2);
+}
+
 .secondary:hover:not(:disabled) {
   opacity: 1;
   background: var(--surface-2);
@@ -198,24 +269,25 @@ button:disabled {
 
 .chip {
   flex: none;
-  min-height: 32px;
-  padding: 0 12px;
-  font-size: 13px;
-  font-weight: 500;
+  min-height: 36px;
+  padding: 0 14px;
+  font-size: 14px;
+  font-weight: 600;
   color: var(--ink);
-  background: var(--surface-2);
-  border: 1px solid transparent;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
   border-radius: var(--r-pill);
 }
 
 .chip:hover:not(:disabled) {
   opacity: 1;
-  border-color: var(--line-strong);
+  background: var(--surface-2);
 }
 
 .chip[aria-pressed="true"] {
   color: var(--on-ink);
   background: var(--ink);
+  border-color: var(--ink);
 }
 
 input[type="range"] {
@@ -230,10 +302,10 @@ input[type="range"] {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 24px;
-  padding: 0 10px;
-  font-size: 13px;
-  font-weight: 500;
+  height: 26px;
+  padding: 0 11px;
+  font-size: 12.5px;
+  font-weight: 600;
   white-space: nowrap;
   color: var(--muted);
   background: var(--surface-2);
@@ -253,6 +325,18 @@ input[type="range"] {
 .pill.warn {
   color: var(--warn);
   background: var(--warn-soft);
+}
+
+.pill.signal {
+  color: var(--signal);
+  background: var(--signal-soft);
+}
+
+.pill .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
 }
 
 /* Cards */
@@ -284,11 +368,25 @@ input[type="range"] {
   background: currentColor;
 }
 
-/* Green is kept for verdicts. A finished step is ink: a plain check in a
-   timeline, an ink circle on a step card. */
+/* Green is kept for verdicts, drawn as the app's seal. A finished step is
+   ink: a plain check in a timeline. */
 .mark.ok {
-  color: var(--surface);
-  background: var(--ok);
+  position: relative;
+  color: #fff;
+}
+
+.mark.ok .seal {
+  position: absolute;
+  inset: -2px;
+  width: calc(100% + 4px);
+  height: calc(100% + 4px);
+  color: var(--ok);
+}
+
+.mark.ok > .icon {
+  position: relative;
+  width: 58%;
+  height: 58%;
 }
 
 .is-done .mark {
@@ -297,8 +395,13 @@ input[type="range"] {
 
 .mark.bad,
 .is-failed .mark {
-  color: var(--surface);
+  color: #fff;
   background: var(--bad);
+}
+
+.mark.bad > .icon {
+  width: 55%;
+  height: 55%;
 }
 
 .icon {
@@ -312,14 +415,15 @@ input[type="range"] {
   height: 100%;
 }
 
+/* The app's ring spinner: a faint ring with a teal arc. */
 .spinner {
   display: inline-block;
   width: 14px;
   height: 14px;
-  border: 1.5px solid var(--line-strong);
-  border-top-color: var(--ink);
+  border: 2px solid var(--line-strong);
+  border-top-color: var(--signal);
   border-radius: 50%;
-  animation: spin 0.8s linear infinite;
+  animation: spin 0.7s linear infinite;
 }
 
 @keyframes spin {
@@ -340,7 +444,7 @@ input[type="range"] {
   display: block;
   height: 100%;
   width: 0;
-  background: var(--ink);
+  background: var(--signal);
   transition: width var(--ease);
 }
 
@@ -463,11 +567,11 @@ details > summary::-webkit-details-marker {
   display: grid;
   gap: 4px;
   margin: 0 0 10px 28px;
-  padding: 10px 12px;
-  font-size: 13px;
+  padding: 12px 14px;
+  font-size: 13.5px;
   color: var(--ink-2);
   background: var(--surface-2);
-  border-radius: var(--r-sm);
+  border-radius: var(--r-md);
 }
 
 .row-more .mono {
@@ -485,11 +589,11 @@ details > summary::-webkit-details-marker {
   overflow-wrap: anywhere;
 }
 
-/* Map: monochrome tiles, ink cell. */
+/* Map: muted tiles, the cell in teal as the app draws it. */
 
 .map {
   height: 240px;
-  border-radius: var(--r-md);
+  border-radius: var(--r-lg);
   overflow: hidden;
   border: 1px solid var(--line);
   background: var(--surface-2);
@@ -497,12 +601,12 @@ details > summary::-webkit-details-marker {
 }
 
 .map .leaflet-tile-pane {
-  filter: grayscale(1) contrast(0.92) brightness(1.03);
+  filter: grayscale(0.85) contrast(0.88) brightness(1.04);
 }
 
 @media (prefers-color-scheme: dark) {
   .map .leaflet-tile-pane {
-    filter: grayscale(1) invert(1) brightness(0.82) contrast(0.9);
+    filter: grayscale(1) invert(1) brightness(0.78) contrast(0.88);
   }
 }
 
@@ -522,15 +626,16 @@ details > summary::-webkit-details-marker {
 }
 
 .cell-shape {
-  stroke: var(--ink);
-  stroke-width: 1.5px;
-  fill: var(--ink);
-  fill-opacity: 0.06;
+  stroke: var(--signal);
+  stroke-width: 2.5px;
+  stroke-linejoin: round;
+  fill: var(--signal-bright);
+  fill-opacity: 0.16;
 }
 
 .you-dot {
   stroke: var(--surface);
-  stroke-width: 2px;
+  stroke-width: 2.5px;
   fill: var(--ink);
   fill-opacity: 1;
 }
@@ -544,13 +649,8 @@ details > summary::-webkit-details-marker {
 }
 
 .verdict .mark {
-  width: 22px;
-  height: 22px;
-}
-
-.verdict .icon {
-  width: 14px;
-  height: 14px;
+  width: 26px;
+  height: 26px;
 }
 
 .verdict-block {
@@ -559,7 +659,7 @@ details > summary::-webkit-details-marker {
 }
 
 .verdict h2 {
-  font-size: 17px;
+  font-size: 20px;
 }
 
 /* The one action a capture without a verdict offers: Publish or Verify. */
@@ -602,7 +702,7 @@ details > summary::-webkit-details-marker {
 
 .facts dt {
   font-size: 13px;
-  font-weight: 500;
+  font-weight: 600;
   line-height: 21px;
   color: var(--muted);
 }
@@ -627,12 +727,64 @@ details > summary::-webkit-details-marker {
 
 .logo {
   flex: none;
-  width: 22px;
-  height: 22px;
-  color: var(--ink);
+  width: 28px;
+  height: 28px;
 }
 
 .brand h1 {
-  font-size: 17px;
-  letter-spacing: -0.01em;
+  font-size: 19px;
+  letter-spacing: -0.025em;
+}
+
+.viewfinder {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.vf-brackets,
+.vf-hexagon {
+  transform-origin: 50px 50px;
+  transition: transform var(--ease);
+}
+
+/* The mark while something runs, as in the app: the brackets breathe and the hexagon blinks. */
+.vf-loader {
+  display: inline-block;
+  flex: none;
+}
+
+.vf-loader .vf-brackets {
+  animation: breathe 1.4s ease-in-out infinite alternate;
+}
+
+.vf-loader .vf-hexagon {
+  animation: blink 1.2s ease-in-out infinite alternate;
+}
+
+@keyframes breathe {
+  from {
+    transform: scale(1);
+  }
+  to {
+    transform: scale(0.84);
+  }
+}
+
+@keyframes blink {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0.3;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vf-loader .vf-brackets,
+  .vf-loader .vf-hexagon,
+  .spinner {
+    animation-duration: 0s;
+  }
 }

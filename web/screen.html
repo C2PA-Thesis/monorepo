@@ -3,17 +3,19 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Provenance</title>
+    <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+    <title>Capture</title>
   </head>
   <body class="screen">
     <header class="bar">
       <div class="brand">
-        <svg class="logo" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5l8.2 4.75v9.5L12 21.5l-8.2-4.75v-9.5z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><circle cx="12" cy="12" r="2.4" fill="currentColor"/></svg>
-        <h1>Provenance</h1>
+        <span class="logo" id="logo"></span>
+        <h1>Capture</h1>
+        <span class="bar-note meta">on this laptop</span>
       </div>
       <nav class="tabs" role="tablist">
-        <button type="button" role="tab" id="tab-captures" aria-selected="true">Captures</button>
-        <button type="button" role="tab" id="tab-verify" aria-selected="false">Verify</button>
+        <button type="button" role="tab" id="tab-captures" aria-selected="true">Photos</button>
+        <button type="button" role="tab" id="tab-verify" aria-selected="false">Check a photo</button>
       </nav>
     </header>
     <div id="app" class="layout"></div>

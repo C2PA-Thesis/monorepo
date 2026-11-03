@@ -3,6 +3,7 @@
 
 import type { Check, Claim, Event as Progress } from "./api";
 import { area, cellShort, h, icon, rect, short, svg, time, when } from "./dom";
+import { seal } from "./mark";
 
 /// Average hexagon area in km² per resolution, from h3geo.org, "Tables of
 /// Cell Statistics Across Resolutions". A given cell can differ by a factor
@@ -38,9 +39,13 @@ export function resolutionText(resolution: number, km2?: number): string {
 
 export type Tone = "ok" | "bad" | "running" | "idle";
 
-/// The status mark: a filled check, a filled cross, a spinner or a faint dot.
+/// The status mark: the green seal, a filled cross, a spinner or a faint dot.
 export function mark(tone: Tone): HTMLElement {
-  if (tone === "ok") return h("span", { class: "mark ok" }, svg(icon.check));
+  if (tone === "ok") {
+    const element = h("span", { class: "mark ok" }, svg(icon.check));
+    element.insertAdjacentHTML("afterbegin", seal);
+    return element;
+  }
   if (tone === "bad") return h("span", { class: "mark bad" }, svg(icon.cross));
   return h("span", { class: "mark" }, tone === "running" ? h("span", { class: "spinner" }) : h("span", { class: "dot" }));
 }
@@ -49,9 +54,11 @@ export function accepted(action?: HTMLElement): HTMLElement {
   return h("div", { class: "verdict" }, mark("ok"), h("h2", {}, "Verified"), action ?? false);
 }
 
-/// The verdict's line before there is a verdict, so the verdict replaces it in place.
-export function pending(tone: "running" | "idle", title: string, action?: HTMLElement): HTMLElement {
-  return h("div", { class: "verdict is-pending" }, mark(tone), h("h2", {}, title), action ?? false);
+/// The verdict's line before there is a verdict, so the verdict replaces it
+/// in place. `below` sits under the line, such as a bar that shows work.
+export function pending(tone: "running" | "idle", title: string, action?: HTMLElement, below?: HTMLElement): HTMLElement {
+  const line = h("div", { class: "verdict is-pending" }, mark(tone), h("h2", {}, title), action ?? false);
+  return below ? h("div", { class: "verdict-block" }, line, below) : line;
 }
 
 /// "Rejected" and one short sentence. The server's own words sit behind the
