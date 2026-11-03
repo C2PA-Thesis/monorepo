@@ -19,7 +19,7 @@ struct SealScreen: View {
                 Problem(title: failure.title, message: failure.message)
             } else {
                 VStack(spacing: 28) {
-                    ApertureLoader(size: 88)
+                    ViewfinderLoader(size: 88)
                     Text("Certifying your photo").font(Typeface.headline).foregroundStyle(Theme.ink)
                 }
             }

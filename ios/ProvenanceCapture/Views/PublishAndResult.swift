@@ -12,7 +12,7 @@ struct PublishScreen: View {
                 Problem(title: failure.title, message: failure.message)
             } else {
                 VStack(spacing: 28) {
-                    ApertureLoader(size: 88)
+                    ViewfinderLoader(size: 88)
                     VStack(spacing: 8) {
                         Text("Publishing").font(Typeface.title).tight(26).foregroundStyle(Theme.ink)
                         Text(flow.laptopNotice ?? now)
@@ -80,15 +80,27 @@ struct PublishScreen: View {
     ]
 }
 
-/// A thin bar that fills as the work moves on.
+/// A thin bar that fills as the work moves on. A teal glint keeps running
+/// along it, so a long step never looks stuck.
 private struct ProgressLine: View {
     let value: Double
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         GeometryReader { geometry in
+            let width = geometry.size.width
             ZStack(alignment: .leading) {
                 Capsule().fill(Theme.line)
-                Capsule().fill(Theme.ink).frame(width: max(6, geometry.size.width * min(max(value, 0), 1)))
+                Capsule().fill(Theme.ink).frame(width: max(6, width * min(max(value, 0), 1)))
+                if !reduceMotion {
+                    TimelineView(.animation) { context in
+                        let phase = context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 1.5) / 1.5
+                        Capsule().fill(Theme.signalBright)
+                            .frame(width: width * 0.3)
+                            .offset(x: -width * 0.3 + width * 1.3 * phase)
+                    }
+                    .mask(Capsule())
+                }
             }
         }
         .frame(height: 4)

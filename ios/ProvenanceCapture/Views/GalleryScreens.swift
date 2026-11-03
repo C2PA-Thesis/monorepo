@@ -212,7 +212,7 @@ private struct CheckScreen: View {
             case .running:
                 Spacer()
                 VStack(spacing: 28) {
-                    ApertureLoader(size: 88)
+                    ViewfinderLoader(size: 88)
                     Text("Checking this photo").font(Typeface.sans(20, .bold, relativeTo: .title3)).foregroundStyle(Theme.ink)
                 }
                 Spacer()

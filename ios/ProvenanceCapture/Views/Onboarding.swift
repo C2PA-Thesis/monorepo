@@ -104,7 +104,7 @@ struct CameraAccessScreen: View {
             title: "Allow camera",
             subtitle: "Photos you take here are certified the moment you shoot."
         ) {
-            ShutterArt()
+            FocusArt()
         } actions: {
             Button("Allow camera") { Task { await flow.allowCamera() } }.buttonStyle(.primary)
             Color.clear.frame(height: 44)

@@ -28,9 +28,6 @@ enum Theme {
     /// Over the part of the photo that stays private.
     static let shade = Color.black.opacity(0.7)
 
-    /// The proof seal's conic gradient.
-    static let iris: [Color] = [0x7BE0D3, 0x4AA8FF, 0x8B7BFF, 0xD77BE0, 0xFFCF7B, 0x7BE0A3, 0x7BE0D3].map(Color.init(rgb:))
-
     enum Radius {
         static let xs: CGFloat = 8
         static let sm: CGFloat = 12

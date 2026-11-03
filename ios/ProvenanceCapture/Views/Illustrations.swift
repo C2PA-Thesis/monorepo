@@ -181,19 +181,19 @@ struct LocationArt: View {
     }
 }
 
-/// The mark, opening and closing like a shutter.
-struct ShutterArt: View {
-    @State private var open = false
+/// The mark, its corners closing in like a camera finding focus.
+struct FocusArt: View {
+    @State private var focused = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        ApertureMark(opening: open ? 0.56 : 0.14, rotation: open ? 0 : -.pi / 4)
+        ViewfinderMark(corners: focused ? 0.82 : 1, glow: focused ? 1 : 0.35)
             .frame(width: 168, height: 168)
             .onAppear {
                 if reduceMotion {
-                    open = true
+                    focused = true
                 } else {
-                    withAnimation(.easeInOut(duration: 1.4).repeatForever(autoreverses: true)) { open = true }
+                    withAnimation(.easeInOut(duration: 1.4).repeatForever(autoreverses: true)) { focused = true }
                 }
             }
             .accessibilityHidden(true)

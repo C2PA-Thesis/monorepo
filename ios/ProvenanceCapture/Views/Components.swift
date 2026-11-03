@@ -284,35 +284,37 @@ enum AreaWords {
     ]
 }
 
-/// The app's mark: a camera aperture whose six blades leave a hexagon open,
-/// the shape of the area a photo shares.
-struct ApertureMark: View, Animatable {
-    /// The hexagon's size against the lens, 0 closed to 1 wide open.
-    var opening: Double = 0.5
-    var rotation: Double = 0
+/// The app's mark: a viewfinder's four corners around the hexagon a photo
+/// shares. Same drawing as web/src/mark.ts, in a 100 by 100 box.
+struct ViewfinderMark: View, Animatable {
+    /// The corners' size, 1 at rest and smaller as they close in.
+    var corners: Double = 1
+    /// The hexagon's opacity.
+    var glow: Double = 1
 
     nonisolated var animatableData: AnimatablePair<Double, Double> {
-        get { AnimatablePair(opening, rotation) }
+        get { AnimatablePair(corners, glow) }
         set {
-            opening = newValue.first
-            rotation = newValue.second
+            corners = newValue.first
+            glow = newValue.second
         }
     }
 
     var body: some View {
         Canvas { context, size in
-            let blades = Aperture.blades(in: CGRect(origin: .zero, size: size), opening: opening, rotation: rotation)
-            let radius = min(size.width, size.height) / 2
-            for (index, blade) in blades.enumerated() {
-                let colors = [Theme.iris[index], Theme.iris[index + 1]]
-                context.fill(
-                    blade.path,
-                    with: .linearGradient(Gradient(colors: colors), startPoint: blade.from, endPoint: blade.to))
-            }
-            // Thin gaps between the blades, cut through to whatever is behind.
-            context.blendMode = .destinationOut
-            for blade in blades {
-                context.stroke(blade.path, with: .color(.black), style: StrokeStyle(lineWidth: radius * 0.05, lineJoin: .round))
+            let side = min(size.width, size.height)
+            context.translateBy(x: (size.width - side) / 2, y: (size.height - side) / 2)
+            context.scaleBy(x: side / 100, y: side / 100)
+            var brackets = context
+            brackets.translateBy(x: 50, y: 50)
+            brackets.scaleBy(x: corners, y: corners)
+            brackets.translateBy(x: -50, y: -50)
+            brackets.stroke(Viewfinder.brackets, with: .color(Theme.ink), style: StrokeStyle(lineWidth: 8.5, lineCap: .round, lineJoin: .round))
+            // One layer, so the fill and the stroke fade together without a darker seam.
+            context.opacity = glow
+            context.drawLayer { layer in
+                layer.fill(Viewfinder.hexagon, with: .color(Theme.signal))
+                layer.stroke(Viewfinder.hexagon, with: .color(Theme.signal), style: StrokeStyle(lineWidth: 5, lineJoin: .round))
             }
         }
         .aspectRatio(1, contentMode: .fit)
@@ -320,15 +322,17 @@ struct ApertureMark: View, Animatable {
     }
 }
 
-/// The mark turning slowly while something runs.
-struct ApertureLoader: View {
+/// The mark while something runs: the corners breathe and the hexagon blinks.
+struct ViewfinderLoader: View {
     var size: CGFloat = 96
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         TimelineView(.animation(paused: reduceMotion)) { context in
-            let time = context.date.timeIntervalSinceReferenceDate
-            ApertureMark(opening: 0.4 + 0.1 * sin(time * 1.6), rotation: reduceMotion ? 0 : time * 0.5)
+            let time = reduceMotion ? 0 : context.date.timeIntervalSinceReferenceDate
+            ViewfinderMark(
+                corners: 0.92 + 0.08 * cos(2 * .pi * time / 2.8),
+                glow: 0.65 + 0.35 * cos(2 * .pi * time / 2.4))
         }
         .frame(width: size, height: size)
         .accessibilityElement()
@@ -336,50 +340,22 @@ struct ApertureLoader: View {
     }
 }
 
-enum Aperture {
-    struct Blade {
-        let path: Path
-        let from: CGPoint
-        let to: CGPoint
-    }
+enum Viewfinder {
+    /// Four corners, each 18 long on both sides with a radius of 6.
+    static let brackets: Path = {
+        var path = Path()
+        for (x, y, dx, dy) in [(14.0, 14.0, 1.0, 1.0), (86, 14, -1, 1), (86, 86, -1, -1), (14, 86, 1, -1)] {
+            path.move(to: CGPoint(x: x, y: y + 18 * dy))
+            path.addArc(tangent1End: CGPoint(x: x, y: y), tangent2End: CGPoint(x: x + 18 * dx, y: y), radius: 6)
+            path.addLine(to: CGPoint(x: x + 18 * dx, y: y))
+        }
+        return path
+    }()
 
-    /// Six blades around a hexagon. Each blade runs from one hexagon edge out
-    /// to the lens along the extensions of that edge and the one before it.
-    static func blades(in rect: CGRect, opening: Double, rotation: Double) -> [Blade] {
-        let center = CGPoint(x: rect.midX, y: rect.midY)
-        let lens = min(rect.width, rect.height) / 2
-        let inner = lens * min(max(opening, 0.05), 0.95)
-        let corners = (0..<6).map { index in
-            let angle = rotation - .pi / 2 + Double(index) * .pi / 3
-            return CGPoint(x: center.x + inner * cos(angle), y: center.y + inner * sin(angle))
-        }
-        // Where the edge from corner k to k+1, carried on past k+1, meets the lens.
-        let exits = (0..<6).map { index in
-            let a = corners[index]
-            let b = corners[(index + 1) % 6]
-            let length = hypot(b.x - a.x, b.y - a.y)
-            let d = CGPoint(x: (b.x - a.x) / length, y: (b.y - a.y) / length)
-            let p = CGPoint(x: b.x - center.x, y: b.y - center.y)
-            let dot = p.x * d.x + p.y * d.y
-            let t = -dot + (dot * dot - (p.x * p.x + p.y * p.y - lens * lens)).squareRoot()
-            return CGPoint(x: b.x + t * d.x, y: b.y + t * d.y)
-        }
-        return (0..<6).map { index in
-            let previous = exits[(index + 5) % 6]
-            let exit = exits[index]
-            var path = Path()
-            path.move(to: corners[index])
-            path.addLine(to: corners[(index + 1) % 6])
-            path.addLine(to: exit)
-            var start = atan2(exit.y - center.y, exit.x - center.x)
-            let end = atan2(previous.y - center.y, previous.x - center.x)
-            if start < end { start += 2 * .pi }
-            for step in 1...24 {
-                let angle = start + (end - start) * Double(step) / 24
-                path.addLine(to: CGPoint(x: center.x + lens * cos(angle), y: center.y + lens * sin(angle)))
-            }
-            path.closeSubpath()
-            return Blade(path: path, from: previous, to: exit)
-        }
-    }
+    static let hexagon: Path = {
+        var path = Path()
+        path.addLines([(50, 30), (67.3, 40), (67.3, 60), (50, 70), (32.7, 60), (32.7, 40)].map { CGPoint(x: $0.0, y: $0.1) })
+        path.closeSubpath()
+        return path
+    }()
 }
