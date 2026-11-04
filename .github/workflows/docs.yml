@@ -1,0 +1,49 @@
+name: docs
+
+on:
+  push:
+    paths: &paths
+      - 'docs/**'
+      - '.github/workflows/docs.yml'
+  pull_request:
+    paths: *paths
+  workflow_dispatch:
+
+jobs:
+  security-analysis:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      # The writing rules ban em dashes; in LaTeX "---" also renders as one.
+      - name: Refuse em dashes
+        run: |
+          if grep -rnI $'\xe2\x80\x94' docs || grep -rn -- '---' docs --include='*.tex'; then
+            exit 1
+          fi
+
+      # The PDF is committed so readers can open it on GitHub. Its metadata holds
+      # the MD5 of the source it was built from.
+      - name: Check the committed PDF matches its source
+        working-directory: docs/security
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq poppler-utils > /dev/null
+          built=$(pdfinfo security-analysis.pdf | sed -n 's/^Keywords: *source-md5://p')
+          source=$(md5sum security-analysis.tex | cut -d ' ' -f 1)
+          if [ "${built,,}" != "$source" ]; then
+            echo "security-analysis.pdf was built from another version of the source; rebuild it with latexmk -pdf"
+            exit 1
+          fi
+
+      - name: Build the PDF
+        uses: xu-cheng/latex-action@v3
+        with:
+          working_directory: docs/security
+          root_file: security-analysis.tex
+          args: -pdf -interaction=nonstopmode -halt-on-error
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: security-analysis
+          path: docs/security/security-analysis.pdf
