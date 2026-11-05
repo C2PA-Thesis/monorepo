@@ -1,0 +1,81 @@
+name: deploy
+
+on:
+  push:
+    # Written out twice: actionlint 1.7.7 reads no YAML anchors.
+    paths:
+      - 'deploy/**'
+      - '.github/workflows/deploy.yml'
+      - '.github/workflows/build-release.yml'
+      - '.github/workflows/release.yml'
+  pull_request:
+    paths:
+      - 'deploy/**'
+      - '.github/workflows/deploy.yml'
+      - '.github/workflows/build-release.yml'
+      - '.github/workflows/release.yml'
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Lint the CloudFormation templates
+        run: |
+          pip install cfn-lint==1.59.0
+          cfn-lint deploy/*.yml
+
+      - name: Lint the scripts
+        run: shellcheck -x deploy/*.sh
+
+      - name: Lint the workflows
+        run: |
+          bash <(curl -sSfL https://raw.githubusercontent.com/rhysd/actionlint/v1.7.7/scripts/download-actionlint.bash) 1.7.7
+          ./actionlint .github/workflows/deploy.yml .github/workflows/build-release.yml .github/workflows/release.yml
+
+  build:
+    uses: ./.github/workflows/build-release.yml
+
+  # The runner stands in for the instance: release.sh sets up a fresh host,
+  # then refuses a release that cannot serve and keeps the one that works.
+  activate:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release
+
+      - name: Unpack a release and a copy whose server cannot start
+        run: |
+          releases=/opt/provenance/releases
+          sudo mkdir -p "$releases/good" "$releases/broken"
+          sudo tar -xzf release.tgz -C "$releases/good"
+          sudo tar -xzf release.tgz -C "$releases/broken"
+          # shellcheck disable=SC2016 # $3 and $@ belong to the stub.
+          printf '#!/bin/sh\n[ "$3" = setup ] && exec %s/good/bin/provenance "$@"\nexit 1\n' "$releases" |
+            sudo tee "$releases/broken/bin/provenance" >/dev/null
+
+      - name: Activate the release on a fresh host
+        run: sudo /opt/provenance/releases/good/deploy/release.sh
+
+      - name: Refuse the broken release and keep the good one serving
+        run: |
+          if sudo /opt/provenance/releases/broken/deploy/release.sh; then
+            echo "the broken release was activated"
+            exit 1
+          fi
+          test "$(readlink /opt/provenance/current)" = /opt/provenance/releases/good
+          for _ in $(seq 30); do
+            code=$(curl -sk -o /dev/null -w '%{http_code}' https://127.0.0.1:8792/api/devices/none || true)
+            [ "$code" = 400 ] && exit 0
+            sleep 2
+          done
+          echo "the good release is not serving after the rollback"
+          exit 1

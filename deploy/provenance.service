@@ -1,0 +1,19 @@
+[Unit]
+Description=provenance serve
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=provenance
+WorkingDirectory=/var/lib/provenance
+ExecStart=/opt/provenance/current/deploy/serve.sh
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/provenance
+
+[Install]
+WantedBy=multi-user.target

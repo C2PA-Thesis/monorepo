@@ -88,6 +88,7 @@ flowchart LR
 | `web` | The capture page a phone's browser opens, and the presenter page the laptop shows |
 | `c2pa` | The C2P-19 custom assertion round trip with `c2patool` |
 | `scripts` | `setup.sh` once, then `demo.sh phone` or `demo.sh` |
+| `deploy` | The dev and prod servers on EC2: `dev` deploys to dev and `main` to prod. See [deploy/README.md](deploy/README.md) |
 
 ### Code from other repositories
 

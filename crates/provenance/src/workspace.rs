@@ -94,16 +94,34 @@ impl Workspace {
         })
     }
 
-    /// Prepares everything the demo needs from the repository at `source`.
+    /// Prepares everything the demo needs from the repository at `source`,
+    /// or with a `location_proof` built elsewhere, where there is no Go.
     /// Steps whose output already exists are skipped.
-    pub fn setup(&self, source: &Path, on: &mut dyn FnMut(&str, Step)) -> Result<()> {
-        step(on, "build location-proof", false, || {
-            run(Command::new("go")
-                .args(["build", "-o"])
-                .arg(self.home.join("bin/location-proof"))
-                .arg(".")
-                .current_dir(source.join("location-proof")))
-        })?;
+    pub fn setup(
+        &self,
+        source: &Path,
+        location_proof: Option<&Path>,
+        on: &mut dyn FnMut(&str, Step),
+    ) -> Result<()> {
+        let binary = self.home.join("bin/location-proof");
+        match location_proof {
+            Some(prebuilt) => step(on, "install location-proof", false, || {
+                fs::create_dir_all(self.home.join("bin"))?;
+                // Copy, then rename, so a running serve never sees half a binary.
+                let partial = self.home.join("bin/location-proof.partial");
+                fs::copy(prebuilt, &partial)
+                    .with_context(|| format!("copying {}", prebuilt.display()))?;
+                fs::rename(&partial, &binary)?;
+                Ok(())
+            })?,
+            None => step(on, "build location-proof", false, || {
+                run(Command::new("go")
+                    .args(["build", "-o"])
+                    .arg(&binary)
+                    .arg(".")
+                    .current_dir(source.join("location-proof")))
+            })?,
+        }
 
         for (file, sample) in [
             ("c2pa/es256_certs.pem", "es256_certs.pem"),

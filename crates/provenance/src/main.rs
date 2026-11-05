@@ -49,7 +49,11 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     /// Build location-proof, create proof parameters, a device key and the app's TLS key, download samples.
-    Setup,
+    Setup {
+        /// Install this location-proof binary instead of building it with Go.
+        #[arg(long, value_name = "BIN")]
+        location_proof: Option<PathBuf>,
+    },
     /// Capture a photo with the laptop's device key, publish its left half with both proofs, and verify it.
     Demo {
         /// Photo to capture. Defaults to the C2PA SDK sample.
@@ -168,10 +172,12 @@ fn main() -> ExitCode {
 fn run(cli: Cli, ui: &Ui) -> Result<ExitCode> {
     let workspace = Workspace::new(&cli.home);
     match cli.command {
-        Command::Setup => {
+        Command::Setup { location_proof } => {
             ui.header("setup", &[("home", shown(&cli.home))]);
             let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-            workspace.setup(&source, &mut |name, step| ui.setup_step(name, step))?;
+            workspace.setup(&source, location_proof.as_deref(), &mut |name, step| {
+                ui.setup_step(name, step)
+            })?;
             ui.line(format!(
                 "\n{} ready. Next: {}",
                 style("✓").green(),
