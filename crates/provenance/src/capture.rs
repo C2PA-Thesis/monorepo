@@ -145,6 +145,14 @@ impl Capture {
         Ok(())
     }
 
+    /// The public part of a capture directory, without decoding the original.
+    pub fn read_public(dir: &Path) -> Result<(Receipt, Summary)> {
+        Ok((
+            read_json(&dir.join(RECEIPT))?,
+            read_json(&dir.join(SUMMARY))?,
+        ))
+    }
+
     pub fn read(dir: &Path) -> Result<Self> {
         Ok(Self {
             original: image::read_png(&dir.join(ORIGINAL))?,

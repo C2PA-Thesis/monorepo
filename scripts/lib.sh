@@ -17,4 +17,9 @@ if ! command -v cargo >/dev/null 2>&1; then
 fi
 
 say() { printf '\n==> %s\n' "$*"; }
+open_url() {
+  if command -v open >/dev/null 2>&1; then open "$1"
+  elif command -v xdg-open >/dev/null 2>&1; then xdg-open "$1" >/dev/null 2>&1
+  fi
+}
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }

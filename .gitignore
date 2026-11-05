@@ -5,3 +5,4 @@ out/
 captures/
 web/dist/
 web/public/fingerprint.wasm
+.DS_Store

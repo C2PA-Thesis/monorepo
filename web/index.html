@@ -2,50 +2,155 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Capture</title>
-    <link rel="stylesheet" href="/src/style.css" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#2f6fde" />
+    <title>Private location capture</title>
   </head>
-  <body>
-    <main>
-      <h1>Capture</h1>
+  <body class="phone">
+    <header class="top">
+      <div class="brand">
+        <svg class="logo" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5l8.2 4.75v9.5L12 21.5l-8.2-4.75v-9.5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><circle cx="12" cy="12" r="2.6" fill="currentColor"/></svg>
+        <div>
+          <h1>Private location capture</h1>
+          <p class="muted small">Publish part of a photo and the area it was taken in, with proofs</p>
+        </div>
+      </div>
+    </header>
 
-      <section id="pair">
-        <h2>Device</h2>
-        <p id="device-status">Creating the device key…</p>
-        <form id="pair-form" hidden>
-          <input id="pair-code" inputmode="numeric" pattern="[0-9]{6}" placeholder="pairing code" required />
-          <button type="submit">Pair</button>
-        </form>
-      </section>
-
-      <section id="capture">
-        <h2>Photo</h2>
-        <label class="button">
-          Take a photo
-          <input id="photo" type="file" accept="image/*" capture="environment" hidden />
-        </label>
-        <p id="gps">Waiting for a GPS fix…</p>
-        <div id="framing" hidden>
-          <div id="stage">
-            <canvas id="preview" width="1024" height="512"></canvas>
-            <div id="crop-box"></div>
+    <main class="steps">
+      <section class="step card" id="step-pair" data-state="active">
+        <div class="step-head">
+          <span class="step-num">1</span>
+          <div>
+            <h2>Pair this phone</h2>
+            <p class="step-summary" id="pair-summary"></p>
           </div>
-          <p id="crop">Crop: 512x512 at (0, 0). Drag on the photo to change it.</p>
-          <label>Frame <input id="frame" type="range" min="0" max="1" step="0.001" value="0.5" /></label>
-          <label>Resolution <span id="resolution-value">7</span>
-            <input id="resolution" type="range" min="0" max="15" step="1" value="7" />
-          </label>
-          <p id="cell">Cell: …</p>
-          <button id="submit" type="button">Sign and upload</button>
+        </div>
+        <div class="step-body">
+          <p id="pair-status" class="muted">Creating this phone's signing key…</p>
+          <form id="pair-form" class="pair-form" hidden>
+            <input id="pair-code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" placeholder="000000" required aria-label="Pairing code" />
+            <button type="submit">Pair</button>
+          </form>
+          <p class="hint">The laptop shows a QR code and a six-digit code. Scanning the QR pairs automatically. Pairing tells the laptop to trust this phone's key, which never leaves the browser.</p>
         </div>
       </section>
 
-      <section id="result" hidden>
-        <h2>Result</h2>
-        <pre id="log"></pre>
+      <section class="step card" id="step-photo" data-state="locked">
+        <div class="step-head">
+          <span class="step-num">2</span>
+          <div>
+            <h2>Take a photo</h2>
+            <p class="step-summary" id="photo-summary"></p>
+          </div>
+        </div>
+        <div class="step-body">
+          <div class="gps" id="gps" data-state="waiting">
+            <span class="gps-dot"></span>
+            <span id="gps-text">Waiting for a GPS fix…</span>
+          </div>
+          <p id="gps-help" class="hint" hidden></p>
+          <label class="button button-wide" id="photo-button">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h3l1.5-2h7L17 8h3v11H4z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><circle cx="12" cy="13" r="3.5" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+            <span>Open the camera</span>
+            <input id="photo" type="file" accept="image/*" capture="environment" hidden />
+          </label>
+          <p class="hint">The coordinate and the time are read when the photo reaches this page.</p>
+        </div>
       </section>
+
+      <section class="step card" id="step-frame" data-state="locked">
+        <div class="step-head">
+          <span class="step-num">3</span>
+          <div>
+            <h2>Choose what to publish</h2>
+            <p class="step-summary" id="frame-summary"></p>
+          </div>
+        </div>
+        <div class="step-body">
+          <div id="stage" class="stage">
+            <canvas id="preview" width="1024" height="512"></canvas>
+            <div id="crop-box" class="crop-box"><span class="tag public">published</span></div>
+          </div>
+          <label id="frame-control" class="control">
+            <span>Slide to frame the photo at 2:1</span>
+            <input id="frame" type="range" min="0" max="1" step="0.001" value="0.5" />
+          </label>
+          <p class="legend">
+            <span><span class="swatch public"></span>Inside the box is published.</span>
+            <span><span class="swatch private"></span>The rest stays private.</span>
+          </p>
+          <div class="presets" id="presets"></div>
+          <p class="hint">Drag inside the box to move it, or anywhere else to draw a new one. <span id="crop-text" class="mono"></span></p>
+        </div>
+      </section>
+
+      <section class="step card" id="step-region" data-state="locked">
+        <div class="step-head">
+          <span class="step-num">4</span>
+          <div>
+            <h2>Choose how precisely to reveal the place</h2>
+            <p class="step-summary" id="region-summary"></p>
+          </div>
+        </div>
+        <div class="step-body">
+          <div id="map-slot"></div>
+          <label class="control">
+            <span class="control-row"><span>Area size</span><strong id="resolution-text"></strong></span>
+            <input id="resolution" type="range" min="0" max="15" step="1" value="7" />
+            <span class="control-row muted small"><span>Larger, more private</span><span>Smaller, more precise</span></span>
+          </label>
+          <p id="cell-text" class="hint"></p>
+          <p id="accuracy-warning" class="hint warning" hidden></p>
+        </div>
+      </section>
+
+      <section class="step card" id="step-send" data-state="locked">
+        <div class="step-head">
+          <span class="step-num">5</span>
+          <div>
+            <h2>Sign and send</h2>
+            <p class="step-summary" id="send-summary"></p>
+          </div>
+        </div>
+        <div class="step-body">
+          <div class="split">
+            <div>
+              <span class="tag public">Published</span>
+              <ul id="published-list" class="plain"></ul>
+            </div>
+            <div>
+              <span class="tag private">Never published</span>
+              <ul class="plain">
+                <li>The rest of the frame</li>
+                <li>Your exact coordinate</li>
+                <li>The random salt that seals it</li>
+              </ul>
+            </div>
+          </div>
+          <p class="hint">The laptop receives the private parts too, because it builds the proofs. It checks them and keeps them to itself.</p>
+          <button id="submit" class="button-wide" type="button">Sign and send to the laptop</button>
+          <ol id="local-steps" class="local-steps" hidden></ol>
+        </div>
+      </section>
+
+      <section class="step card" id="step-laptop" data-state="locked">
+        <div class="step-head">
+          <span class="step-num">6</span>
+          <div>
+            <h2>The laptop proves and verifies</h2>
+            <p class="step-summary" id="laptop-summary"></p>
+          </div>
+        </div>
+        <div class="step-body" id="laptop-body"></div>
+      </section>
+
+      <section class="card result" id="result" hidden></section>
     </main>
+
+    <footer class="foot muted small">
+      Research prototype. The location proof holds for an honest prover only.
+    </footer>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
