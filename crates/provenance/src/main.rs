@@ -85,6 +85,10 @@ enum Command {
         /// Serve only on 127.0.0.1, without the app's TLS listener.
         #[arg(long)]
         no_tls: bool,
+        /// Another https address for the app's QR code, tried first, such as a
+        /// public IP no interface carries. Repeatable.
+        #[arg(long = "app-url", value_name = "URL", conflicts_with = "no_tls")]
+        app_urls: Vec<String>,
         /// Where uploaded captures land, one directory each.
         #[arg(long, default_value = "captures")]
         captures: PathBuf,
@@ -231,6 +235,7 @@ fn run(cli: Cli, ui: &Ui) -> Result<ExitCode> {
             port,
             tls_port,
             no_tls,
+            app_urls: extra_app_urls,
             captures,
             web,
             public_url,
@@ -243,11 +248,10 @@ fn run(cli: Cli, ui: &Ui) -> Result<ExitCode> {
             let mut server = Server::new(workspace, captures.clone())
                 .public_url(public_url)
                 .on_change(serve_listener(ui.json));
-            let app_urls: Vec<String> = tls
-                .iter()
-                .flat_map(|tls| &tls.addresses)
-                .map(|address| format!("https://{address}:{tls_port}"))
-                .collect();
+            let app_urls = match &tls {
+                Some(tls) => serve::app_urls(&tls.addresses, tls_port, &extra_app_urls)?,
+                None => Vec::new(),
+            };
             if let Some(tls) = &tls {
                 server = server.lan(Lan {
                     urls: app_urls.clone(),
