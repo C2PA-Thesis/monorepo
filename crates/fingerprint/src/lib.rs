@@ -94,7 +94,7 @@ impl Fingerprint {
 
 /// Row `i` of A is the ChaCha8 stream seeded with `i`, so both sides rebuild
 /// A instead of storing its 128 x 2^19 entries.
-fn matrix_row(row: usize) -> ChaCha8Rng {
+pub fn matrix_row(row: usize) -> ChaCha8Rng {
     ChaCha8Rng::seed_from_u64(row as u64)
 }
 
@@ -105,7 +105,8 @@ fn hash_row(pixels: &[u8], row: usize) -> F {
     })
 }
 
-fn hash_channel(pixels: &[u8]) -> Vec<F> {
+/// One channel's hash, `A · pixels`.
+pub fn hash_channel(pixels: &[u8]) -> Vec<F> {
     parallel_map(HASH_ROWS, |row| hash_row(pixels, row))
 }
 

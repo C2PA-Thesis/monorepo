@@ -98,7 +98,7 @@ cargo install --path crates/provenance
 provenance setup                   # build location-proof, create parameters and keys, fetch samples
 provenance demo                    # capture, prove, publish out/signed.png, verify it
 provenance verify out/signed.png   # run the reader checks on any file
-provenance attack                  # forge tampered copies; each must be rejected
+provenance attack                  # forge tampered copies and check each outcome
 provenance inspect out/signed.png  # print the assertion
 provenance publish --capture DIR   # prove and publish any capture directory
 provenance serve                   # the API a phone captures through
@@ -210,18 +210,28 @@ the device key id, capture time, fingerprint digest, envelope and cell in full.
 ## Attacks
 
 `provenance attack` writes each forgery as a freshly C2PA-signed PNG, so the
-rejection has to come from the checks above. The attacker holds the device key
-and a second genuine capture: the same photo mirrored, taken at Tokyo Station.
+outcome has to come from the checks above. The attacker holds the device key,
+the photographer's secrets and a second genuine capture: the same photo
+mirrored, taken at Tokyo Station.
 
-| Attack | Tampering | Rejected by |
+| Attack | Tampering | Outcome |
 | --- | --- | --- |
-| `signature` | flip one bit of the device signature | device receipt |
-| `fingerprint` | swap two fingerprint values | device receipt |
-| `resigned-fingerprint` | swap two fingerprint values and re-sign with the device key | crop proof |
-| `pixel` | change one published pixel | crop proof |
-| `region` | claim the other capture's cell for this location proof | location proof |
-| `cross-photo-location` | attach the other capture's location proof and cell | location proof |
-| `cross-photo-receipt` | attach the other capture's receipt, location proof and cell | crop proof |
+| `signature` | flip one bit of the device signature | rejected by the device receipt |
+| `fingerprint` | swap two fingerprint values | rejected by the device receipt |
+| `resigned-fingerprint` | swap two fingerprint values and re-sign with the device key | rejected by the crop proof |
+| `pixel` | change one published pixel | rejected by the crop proof |
+| `region` | claim the other capture's cell for this location proof | rejected by the location proof |
+| `cross-photo-location` | attach the other capture's location proof and cell | rejected by the location proof |
+| `cross-photo-receipt` | attach the other capture's receipt, location proof and cell | rejected by the crop proof |
+| `signed-elsewhere` | sign this photo at Tokyo with the device key and prove that cell | accepted: the device is trusted |
+| `fine-cell` | publish the honest coordinate in a resolution-13 cell (about 44 m²) | accepted: nothing bounds the resolution |
+
+The two accepted cases mark what the pipeline trusts rather than checks. The
+attacks on the proofs themselves are tests, described in
+`docs/security/security-analysis.tex`. Two of them run end to end on the demo's
+file (`crates/provenance/tests/forged_crops.rs`): a third party replaces the
+published crop, re-signs the manifest with the sample key, and the reader
+accepts it.
 
 The prover side of a wrong cell is covered in `location-proof/main_test.go`:
 the honest prover refuses a cell that does not contain the coordinate.
@@ -252,8 +262,9 @@ the honest prover refuses a cell that does not contain the coordinate.
   states the consequence: "The trigonometric hint outputs are not constrained
   back to Lat/Lng; callers must not treat this PoC circuit as malicious-prover
   sound until that upstream limitation is fixed" (`loc2index32/circuit.go` at
-  `cc8f1c7`). An attack that overrides the hint is written but has not been
-  run, so the exploit itself is unverified.
+  `cc8f1c7`). `TestAttackForgedHintsProveAnotherCell` in
+  `location-proof/attack_test.go` runs the attack with the honest proving key:
+  the verifier accepts a Buenos Aires envelope for a cell in Tokyo.
 - **The original image is not hidden.** The fingerprint is deterministic, so
   anyone holding a candidate original can test it, and the PST proof carries
   unmasked evaluations of the original's channel polynomials (see
