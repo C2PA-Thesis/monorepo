@@ -2,7 +2,7 @@ use std::{fs, path::Path};
 
 use anyhow::{ensure, Context, Result};
 use c2pa::{create_signer, Builder, Reader, SigningAlg, ValidationState};
-use crop_proof::Rect;
+use crop_proof::{Rect, Turn};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -10,11 +10,12 @@ use crate::receipt::Receipt;
 
 /// Label of the custom assertion carrying the receipt and both proofs.
 pub const LABEL: &str = "edu.utdt.td8.zkloc";
-/// 5 since the original can be any size up to 2^19 pixels and the crop
-/// proof hashes its whole statement into the transcript, so a version 4
-/// image proof does not verify. Version 4 added the trigonometric hints to
-/// the envelope.
-pub const VERSION: u32 = 5;
+/// 6 adds the turn. A version 5 file has none and still verifies, since the
+/// crop proof hashes no turn into its statement when there is none. Version 5
+/// allowed any original up to 2^19 pixels and bound the crop proof to its
+/// whole statement; version 4 added the trigonometric hints to the envelope.
+pub const VERSION: u32 = 6;
+const NO_TURN_VERSION: u32 = 5;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -25,6 +26,9 @@ pub struct Assertion {
     pub cell: String,
     /// The rectangle of the original the crop proof claims these pixels are.
     pub crop: Rect,
+    /// Quarter turns clockwise applied after the crop. Absent before version 6.
+    #[serde(default)]
+    pub turn: Turn,
     /// Base64 BN254 Groth16 proof from location-proof.
     pub location_proof: String,
     /// Base64 HyperVerITAS PST proof from crop-proof.
@@ -36,6 +40,7 @@ impl Assertion {
         receipt: Receipt,
         cell: String,
         crop: Rect,
+        turn: Turn,
         location_proof: String,
         image_proof: String,
     ) -> Self {
@@ -44,6 +49,7 @@ impl Assertion {
             receipt,
             cell,
             crop,
+            turn,
             location_proof,
             image_proof,
         }
@@ -73,10 +79,7 @@ impl Editor {
             "claim_generator_info": [{"name": "provenance", "version": env!("CARGO_PKG_VERSION")}],
             "assertions": [{
                 "label": "c2pa.actions",
-                "data": {"actions": [
-                    {"action": "c2pa.created", "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/digitalCapture"},
-                    {"action": "c2pa.cropped"},
-                ]},
+                "data": {"actions": actions(assertion.turn)},
             }],
         });
         let mut builder =
@@ -95,6 +98,19 @@ impl Editor {
         builder.sign_file(signer.as_ref(), image, output)?;
         Ok(())
     }
+}
+
+/// The C2PA actions that describe the edit, for readers that do not know
+/// this assertion.
+fn actions(turn: Turn) -> Vec<serde_json::Value> {
+    let mut actions = vec![
+        json!({"action": "c2pa.created", "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/digitalCapture"}),
+        json!({"action": "c2pa.cropped"}),
+    ];
+    if turn != Turn::NONE {
+        actions.push(json!({"action": "c2pa.orientation"}));
+    }
+    actions
 }
 
 /// The assertion in a signed file, once C2PA validation has passed.
@@ -118,8 +134,9 @@ pub fn read(signed: &Path) -> Result<Assertion> {
     ensure!(count == 1, "expected one {LABEL} assertion, found {count}");
     let assertion: Assertion = manifest.find_assertion(LABEL)?;
     ensure!(
-        assertion.version == VERSION,
-        "the {LABEL} assertion is version {}, and this reader only reads version {VERSION} (full-frame originals and crop proofs bound to their statement)",
+        assertion.version == VERSION
+            || (assertion.version == NO_TURN_VERSION && assertion.turn == Turn::NONE),
+        "the {LABEL} assertion is version {}, and this reader only reads versions {NO_TURN_VERSION} and {VERSION} (full-frame originals and crop proofs bound to their statement)",
         assertion.version
     );
     Ok(assertion)

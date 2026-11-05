@@ -112,7 +112,7 @@ export function facts(
     h(
       "dl",
       { class: "facts" },
-      row("Published", rect(claim.crop)),
+      row("Published", rect(claim.crop, claim.turn)),
       row(
         "Cell",
         h("span", { title: claim.cell }, h("span", { class: "mono" }, cellShort(claim.cell)), km2 === undefined ? "" : ` · ${area(km2)}`),

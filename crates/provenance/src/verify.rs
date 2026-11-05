@@ -5,13 +5,14 @@ use std::{path::Path, time::Instant};
 
 use anyhow::{ensure, Context, Result};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
-use crop_proof::{Rect, VerifierParams};
+use crop_proof::{Rect, Turn, VerifierParams};
 use serde::Serialize;
 
 use crate::{
     image,
     location::{check_cell, LocationTool},
     manifest::{self, LABEL},
+    publish::describe_edit,
     receipt::{short, TrustedKeys},
 };
 
@@ -97,6 +98,8 @@ pub struct Claim {
     pub envelope: String,
     pub cell: String,
     pub crop: Rect,
+    #[serde(skip_serializing_if = "crate::capture::is_no_turn")]
+    pub turn: Turn,
 }
 
 #[derive(Debug, Default, Serialize)]
@@ -209,7 +212,7 @@ impl Verifier {
                 Check::Image,
                 format!(
                     "verifying that the published pixels are the {} of the original with fingerprint {}",
-                    assertion.crop,
+                    describe_edit(assertion.crop, assertion.turn),
                     short(&fingerprint)
                 ),
                 &|| {
@@ -221,6 +224,7 @@ impl Verifier {
                         &self.crop_params,
                         &published,
                         assertion.crop,
+                        assertion.turn,
                         &receipt.fingerprint,
                         &proof,
                     )
@@ -268,6 +272,7 @@ impl Verifier {
             envelope: receipt.envelope.clone(),
             cell: assertion.cell.clone(),
             crop: assertion.crop,
+            turn: assertion.turn,
         });
         verdict
     }

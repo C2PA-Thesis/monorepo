@@ -103,6 +103,7 @@ final class CaptureFlow {
 
     // Review
     var crop = CropRect.whole(CaptureFlow.noOriginal)
+    var turn = Turn.zero
     /// The photo step is done and the area step shows.
     var photoChosen = false
     var resolution = Verdict.defaultResolution {
@@ -483,6 +484,7 @@ final class CaptureFlow {
         preview = original.image
         originalSize = original.size
         crop = .whole(original.size)
+        turn = .zero
     }
 
     /// Drops the current photo and everything still running for it.
@@ -505,6 +507,7 @@ final class CaptureFlow {
         sealFailure = nil
         capturing = false
         crop = .whole(originalSize)
+        turn = .zero
         photoChosen = false
         region = nil
         area = nil
@@ -602,6 +605,7 @@ final class CaptureFlow {
         sending = true
         sendSteps = [.prove: .running]
         let crop = crop
+        let turn = turn
         let fix = shot.fix
         let native = Native.library
         var step = SendStep.prove
@@ -616,7 +620,7 @@ final class CaptureFlow {
             let accepted = try await sendRun(step) {
                 let upload = CaptureUpload(
                     originalPng: try sealed.original.png().base64EncodedString(), receipt: sealed.receipt, cell: region.cell,
-                    resolution: region.resolution, crop: crop, accuracyMeters: fix.accuracy, locationProof: proof.proof,
+                    resolution: region.resolution, crop: crop, turn: turn, accuracyMeters: fix.accuracy, locationProof: proof.proof,
                     location: .init(simulated: fix.simulated, accessory: fix.accessory))
                 return try await api.upload(upload)
             }

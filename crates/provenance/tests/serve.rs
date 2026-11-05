@@ -83,6 +83,7 @@ fn upload_of(capture: &Capture) -> Upload {
         cell: capture.summary.cell.clone(),
         resolution: capture.summary.resolution,
         crop: capture.summary.crop,
+        turn: capture.summary.turn,
         accuracy_meters: Some(5.0),
     }
 }
@@ -282,7 +283,7 @@ async fn publishes_an_upload_and_serves_only_public_files_through_the_tunnel() {
     );
     let router = Arc::clone(&server).router(None);
 
-    let capture = Capture::simulate(
+    let mut capture = Capture::simulate(
         &workspace.location_tool(),
         &workspace.device_key().unwrap(),
         image::load_photo(&workspace.sample_photo()).unwrap(),
@@ -296,6 +297,8 @@ async fn publishes_an_upload_and_serves_only_public_files_through_the_tunnel() {
         },
     )
     .unwrap();
+    // Published turned, so the server proves a turned crop end to end.
+    capture.summary.turn = crop_proof::Turn::new(1).unwrap();
     let (status, body) = post(
         &router,
         "/api/captures",
@@ -309,6 +312,7 @@ async fn publishes_an_upload_and_serves_only_public_files_through_the_tunnel() {
     let body = published(&router, &id).await;
     assert_eq!(body["phase"], "accepted", "{body}");
     assert_eq!(body["claim"]["cell"], DEMO_PLACE.cell);
+    assert_eq!(body["claim"]["turn"], 1, "{body}");
     let events: Vec<&str> = body["events"]
         .as_array()
         .unwrap()
@@ -806,6 +810,7 @@ async fn publishes_a_location_proof_made_on_the_phone_without_its_secrets() {
         cell: DEMO_PLACE.cell.to_string(),
         resolution: 7,
         crop: capture.summary.crop,
+        turn: capture.summary.turn,
         accuracy_meters: Some(4.0),
         location_proof: PhoneProof::Proof(proof.proof.clone()),
         location: Some(LocationSource {
@@ -1019,6 +1024,7 @@ async fn refuses_resolutions_outside_four_to_nine() {
         cell: fine.clone(),
         resolution: 10,
         crop: capture.summary.crop,
+        turn: capture.summary.turn,
         accuracy_meters: None,
         location_proof: PhoneProof::Proof(proof.proof.clone()),
         location: None,

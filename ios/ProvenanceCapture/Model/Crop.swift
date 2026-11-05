@@ -49,6 +49,62 @@ struct CropRect: Codable, Equatable, Hashable, Sendable {
     var text: String { "\(width)×\(height) at (\(x), \(y))" }
 }
 
+/// Quarter turns clockwise applied to the cropped pixels, 0 to 3, as `Turn`
+/// in crates/crop-proof. The crop stays in the original's coordinates.
+struct Turn: Codable, Equatable, Hashable, Sendable {
+    static let zero = Turn(quarters: 0)
+
+    /// Always 0 to 3.
+    let quarters: Int
+
+    /// Any count, taken modulo four turns.
+    init(quarters: Int) {
+        self.quarters = (quarters % 4 + 4) % 4
+    }
+
+    var next: Turn { Turn(quarters: quarters + 1) }
+    var previous: Turn { Turn(quarters: quarters + 3) }
+    var degrees: Int { quarters * 90 }
+
+    /// The size of a `width` x `height` image after the turn.
+    func size(width: Int, height: Int) -> (width: Int, height: Int) {
+        quarters % 2 == 0 ? (width, height) : (height, width)
+    }
+
+    /// The pixel of a `width` x `height` image that lands at (u, v) after the
+    /// turn, as `Turn::source` in crates/crop-proof.
+    func source(u: Int, v: Int, width: Int, height: Int) -> (x: Int, y: Int) {
+        switch quarters {
+        case 1: (v, height - 1 - u)
+        case 2: (width - 1 - u, height - 1 - v)
+        case 3: (width - 1 - v, u)
+        default: (u, v)
+        }
+    }
+
+    // A bare number on the wire; the server refuses anything outside 0...3.
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let quarters = try container.decode(Int.self)
+        guard (0...3).contains(quarters) else {
+            throw DecodingError.dataCorruptedError(in: container, debugDescription: "a turn is 0 to 3 quarter turns, not \(quarters)")
+        }
+        self.init(quarters: quarters)
+    }
+
+    func encode(to encoder: any Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(quarters)
+    }
+}
+
+extension CropRect {
+    /// The published size: the rectangle's, with the sides swapped by an odd turn.
+    func size(turned turn: Turn) -> (width: Int, height: Int) {
+        turn.size(width: width, height: height)
+    }
+}
+
 /// A handle on the crop box: four corners and four edges.
 enum CropHandle: CaseIterable, Sendable {
     case topLeft, topRight, bottomLeft, bottomRight, top, bottom, left, right

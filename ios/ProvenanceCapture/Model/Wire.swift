@@ -110,12 +110,14 @@ struct CaptureUpload: Encodable, Sendable {
     let cell: String
     let resolution: Int
     let crop: CropRect
+    /// Applied by the laptop after the crop.
+    var turn = Turn.zero
     let accuracyMeters: Double?
     let locationProof: String
     let location: Source
 
     enum CodingKeys: String, CodingKey {
-        case receipt, cell, resolution, crop, location
+        case receipt, cell, resolution, crop, turn, location
         case originalPng = "original_png"
         case accuracyMeters = "accuracy_meters"
         case locationProof = "location_proof"
@@ -128,6 +130,8 @@ struct CaptureUpload: Encodable, Sendable {
         try container.encode(cell, forKey: .cell)
         try container.encode(resolution, forKey: .resolution)
         try container.encode(crop, forKey: .crop)
+        // Left out when there is no turn, so a crop alone still uploads to a laptop that predates turns.
+        if turn != .zero { try container.encode(turn, forKey: .turn) }
         // The server wants an explicit null, not a missing key.
         try container.encode(accuracyMeters, forKey: .accuracyMeters)
         try container.encode(locationProof, forKey: .locationProof)

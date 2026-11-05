@@ -1,3 +1,4 @@
+import SwiftUI
 import XCTest
 
 @testable import ProvenanceCapture
@@ -114,5 +115,132 @@ final class CropTests: XCTestCase {
         // The laptop fingerprints the PNG's pixels, so they must be the buffer's.
         let again = try OriginalImage.render(decoded)
         XCTAssertEqual(again.rgbx, original.rgbx)
+    }
+
+    func testTurnCyclesThroughFourQuarters() {
+        XCTAssertEqual([Turn.zero, .zero.next, .zero.next.next, .zero.next.next.next].map(\.quarters), [0, 1, 2, 3])
+        XCTAssertEqual(Turn.zero.next.next.next.next, .zero)
+        XCTAssertEqual(Turn.zero.previous, Turn(quarters: 3))
+        XCTAssertEqual(Turn(quarters: 2).previous.next, Turn(quarters: 2))
+        XCTAssertEqual(Turn(quarters: -1), Turn(quarters: 3))
+        XCTAssertEqual(Turn(quarters: 5), Turn(quarters: 1))
+        XCTAssertEqual(Turn(quarters: 3).degrees, 270)
+    }
+
+    func testOddTurnsSwapTheSides() {
+        let crop = CropRect(x: 10, y: 20, width: 300, height: 200)
+        for quarters in 0..<4 {
+            let size = crop.size(turned: Turn(quarters: quarters))
+            if quarters % 2 == 0 {
+                XCTAssertEqual([size.width, size.height], [300, 200], "\(quarters)")
+            } else {
+                XCTAssertEqual([size.width, size.height], [200, 300], "\(quarters)")
+            }
+        }
+    }
+
+    /// Turn::source in crates/crop-proof on a 3x2 image, whose pixel (x, y) is numbered y * 3 + x.
+    func testSourceMatchesTheRustSide() {
+        let expected: [Int: [Int]] = [
+            0: [0, 1, 2, 3, 4, 5],
+            1: [3, 0, 4, 1, 5, 2],
+            2: [5, 4, 3, 2, 1, 0],
+            3: [2, 5, 1, 4, 0, 3],
+        ]
+        for quarters in 0..<4 {
+            let turn = Turn(quarters: quarters)
+            let size = turn.size(width: 3, height: 2)
+            var order: [Int] = []
+            for v in 0..<size.height {
+                for u in 0..<size.width {
+                    let from = turn.source(u: u, v: v, width: 3, height: 2)
+                    order.append(from.y * 3 + from.x)
+                }
+            }
+            XCTAssertEqual(order, expected[quarters], "\(quarters)")
+        }
+    }
+
+    /// The preview draws the turn the laptop applies: every pixel lands where Turn::source says.
+    @MainActor
+    func testPreviewOrientationDrawsTheTurn() throws {
+        // Six colours that stay apart after any colour conversion.
+        let colors: [[UInt8]] = [[255, 0, 0], [0, 255, 0], [0, 0, 255], [0, 255, 255], [255, 0, 255], [255, 255, 0]]
+        let source = try XCTUnwrap(Self.image(width: 3, height: 2, pixels: colors))
+        for quarters in 0..<4 {
+            let turn = Turn(quarters: quarters)
+            let renderer = ImageRenderer(content: Image(decorative: source, scale: 1, orientation: turn.orientation))
+            renderer.scale = 1
+            let drawn = try XCTUnwrap(renderer.cgImage)
+            let size = turn.size(width: 3, height: 2)
+            XCTAssertEqual([drawn.width, drawn.height], [size.width, size.height], "\(quarters)")
+            let pixels = try XCTUnwrap(Self.pixels(drawn))
+            for v in 0..<size.height {
+                for u in 0..<size.width {
+                    let from = turn.source(u: u, v: v, width: 3, height: 2)
+                    XCTAssertEqual(pixels[v * size.width + u], colors[from.y * 3 + from.x], "turn \(quarters) at (\(u), \(v))")
+                }
+            }
+        }
+    }
+
+    func testUploadSendsTheTurnOnlyWhenThereIsOne() throws {
+        let receipt = Receipt(
+            fingerprint: Fingerprint(algorithm: "a", size: .init(width: 1, height: 1), r: [], g: [], b: []),
+            envelope: "0x01", capturedAt: "t", device: "d", signature: "s")
+        func encoded(_ turn: Turn) throws -> [String: Any] {
+            let upload = CaptureUpload(
+                originalPng: "png", receipt: receipt, cell: "87", resolution: 7, crop: CropRect(x: 0, y: 0, width: 512, height: 256),
+                turn: turn, accuracyMeters: nil, locationProof: "proof", location: .init(simulated: true, accessory: false))
+            return try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(upload)) as? [String: Any])
+        }
+        XCTAssertNil(try encoded(.zero)["turn"])
+        for quarters in 1..<4 {
+            let value = try XCTUnwrap(try encoded(Turn(quarters: quarters))["turn"] as? NSNumber)
+            XCTAssertEqual(value.intValue, quarters)
+            // A JSON number, not a string or a boolean.
+            XCTAssertFalse(CFGetTypeID(value) == CFBooleanGetTypeID())
+        }
+        // The crop stays the rectangle in the original.
+        let crop = try XCTUnwrap(try encoded(Turn(quarters: 1))["crop"] as? [String: Int])
+        XCTAssertEqual(crop, ["x": 0, "y": 0, "width": 512, "height": 256])
+    }
+
+    func testTurnDecodesOnlyZeroToThree() throws {
+        for quarters in 0..<4 {
+            XCTAssertEqual(try JSONDecoder().decode(Turn.self, from: Data("\(quarters)".utf8)), Turn(quarters: quarters))
+        }
+        for bad in ["4", "-1", "\"1\"", "1.5"] {
+            XCTAssertThrowsError(try JSONDecoder().decode(Turn.self, from: Data(bad.utf8)), bad)
+        }
+    }
+
+    /// An sRGB RGBA image from RGB triples, row by row.
+    private static func image(width: Int, height: Int, pixels: [[UInt8]]) -> CGImage? {
+        let bytes: [UInt8] = pixels.flatMap { $0 + [UInt8(255)] }
+        guard let provider = CGDataProvider(data: Data(bytes) as CFData) else { return nil }
+        return CGImage(
+            width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: width * 4,
+            space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipLast.rawValue),
+            provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent)
+    }
+
+    /// RGB triples, each channel rounded to 0 or 255.
+    private static func pixels(_ image: CGImage) -> [[UInt8]]? {
+        var bytes = [UInt8](repeating: 0, count: image.width * image.height * 4)
+        let drawn = bytes.withUnsafeMutableBytes { buffer -> Bool in
+            guard
+                let context = CGContext(
+                    data: buffer.baseAddress, width: image.width, height: image.height, bitsPerComponent: 8, bytesPerRow: image.width * 4,
+                    space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)
+            else { return false }
+            context.interpolationQuality = .none
+            context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+            return true
+        }
+        guard drawn else { return nil }
+        return stride(from: 0, to: bytes.count, by: 4).map { index in
+            bytes[index..<index + 3].map { $0 >= 128 ? 255 : 0 }
+        }
     }
 }

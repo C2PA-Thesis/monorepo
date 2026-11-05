@@ -2,7 +2,7 @@ use std::{fs, path::Path};
 
 use anyhow::{ensure, Context, Result};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
-use crop_proof::{Rect, RgbImage};
+use crop_proof::{Rect, RgbImage, Turn};
 use serde::Serialize;
 
 use crate::{
@@ -113,6 +113,18 @@ pub const ATTACKS: &[Attack] = &[
         needs_other_capture: false,
         tamper: |evidence, _| {
             evidence.assertion.crop.x += 1;
+            Ok(())
+        },
+    },
+    Attack {
+        name: "turn",
+        summary: "turn the published pixels half a turn and claim that turn",
+        expected: Expected::Rejected(Check::Image),
+        needs_other_capture: false,
+        tamper: |evidence, _| {
+            let half = Turn::new(2)?;
+            evidence.pixels = half.apply(&evidence.pixels)?;
+            evidence.assertion.turn = half;
             Ok(())
         },
     },
@@ -302,6 +314,7 @@ fn other_capture(workspace: &Workspace, run: &Path, device: &DeviceKey) -> Resul
         capture.receipt,
         OTHER_PLACE.cell.to_string(),
         crop,
+        Turn::NONE,
         proof.proof,
         String::new(),
     ))

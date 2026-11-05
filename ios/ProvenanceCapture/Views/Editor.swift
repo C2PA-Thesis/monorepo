@@ -1,22 +1,30 @@
 import SwiftUI
 
 /// The photo editor: the picture, the current tool's options under it, and
-/// the tools in a bar at the bottom. Only crop is proved today, so the other
-/// tools are shown as coming soon.
+/// the tools in a bar at the bottom. The laptop proves the crop and the turn
+/// after it, so blur and greyscale are shown as coming soon.
 struct CropEditor: View {
     let image: CGImage?
     let size: OriginalSize
     @Binding var crop: CropRect
+    @Binding var turn: Turn
     @State private var draft: CropRect
+    @State private var draftTurn: Turn
+    /// Degrees on screen, not wrapped at 360 so the picture always spins the way it was turned.
+    @State private var angle: Double
     @State private var tool = Tool.crop
     @State private var aspect = Aspect.free
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    init(image: CGImage?, size: OriginalSize, crop: Binding<CropRect>) {
+    init(image: CGImage?, size: OriginalSize, crop: Binding<CropRect>, turn: Binding<Turn>) {
         self.image = image
         self.size = size
         _crop = crop
+        _turn = turn
         _draft = State(initialValue: crop.wrappedValue)
+        _draftTurn = State(initialValue: turn.wrappedValue)
+        _angle = State(initialValue: Double(turn.wrappedValue.degrees))
     }
 
     enum Tool: CaseIterable, Identifiable {
@@ -42,7 +50,7 @@ struct CropEditor: View {
             }
         }
 
-        var ready: Bool { self == .crop }
+        var ready: Bool { self == .crop || self == .rotate }
     }
 
     enum Aspect: CaseIterable, Identifiable {
@@ -74,8 +82,14 @@ struct CropEditor: View {
         VStack(spacing: 0) {
             topBar
             Spacer(minLength: 16)
-            CropCanvas(image: image, size: size, crop: $draft, ratio: aspect.ratio, editable: tool == .crop)
-                .padding(.horizontal, 20)
+            Group {
+                if tool == .rotate {
+                    TurnCanvas(image: image, crop: draft, turn: draftTurn, angle: angle)
+                } else {
+                    CropCanvas(image: image, size: size, crop: $draft, ratio: aspect.ratio, editable: tool == .crop)
+                }
+            }
+            .padding(.horizontal, 20)
             Spacer(minLength: 16)
             options
                 .frame(height: 52)
@@ -84,7 +98,11 @@ struct CropEditor: View {
         }
         .background(Color.black.ignoresSafeArea())
         .preferredColorScheme(.dark)
-        .onAppear { draft = crop }
+        .onAppear {
+            draft = crop
+            draftTurn = turn
+            angle = Double(turn.degrees)
+        }
     }
 
     private var topBar: some View {
@@ -94,15 +112,19 @@ struct CropEditor: View {
                 Spacer()
                 Button("Done") {
                     crop = draft
+                    turn = draftTurn
                     dismiss()
                 }
                 .font(Typeface.sans(16, .bold, relativeTo: .headline))
             }
-            if draft != .whole(size) {
+            if draft != .whole(size) || draftTurn != .zero {
                 Button("Reset") {
                     withAnimation(Theme.ease) {
                         draft = .whole(size)
                         aspect = .free
+                        draftTurn = .zero
+                        // The nearest whole turn, so the picture does not spin back through every turn.
+                        angle = (angle / 360).rounded() * 360
                     }
                 }
                 .font(Typeface.sans(14, .semibold, relativeTo: .subheadline))
@@ -117,7 +139,18 @@ struct CropEditor: View {
     }
 
     @ViewBuilder private var options: some View {
-        if tool == .crop {
+        if tool == .rotate {
+            HStack(spacing: 8) {
+                TurnButton(icon: "rotate.left", label: "Turn left") { turnBy(-1) }
+                Text("\(draftTurn.degrees)°")
+                    .font(Typeface.sans(15, .medium, relativeTo: .subheadline))
+                    .monospacedDigit()
+                    .foregroundStyle(.white.opacity(0.6))
+                    .frame(minWidth: 56)
+                    .accessibilityLabel(draftTurn == .zero ? "Not turned" : "Turned \(draftTurn.degrees) degrees clockwise")
+                TurnButton(icon: "rotate.right", label: "Turn right") { turnBy(1) }
+            }
+        } else if tool == .crop {
             HStack(spacing: 8) {
                 ForEach(Aspect.allCases) { option in
                     Chip(title: option.title, selected: aspect == option, dark: true) {
@@ -135,6 +168,13 @@ struct CropEditor: View {
                 .padding(.horizontal, 16)
                 .frame(minHeight: 36)
                 .background(.white.opacity(0.1), in: Capsule())
+        }
+    }
+
+    private func turnBy(_ quarters: Int) {
+        withAnimation(reduceMotion ? nil : Theme.ease) {
+            draftTurn = Turn(quarters: draftTurn.quarters + quarters)
+            angle += Double(quarters) * 90
         }
     }
 
@@ -262,6 +302,51 @@ private struct CropCanvas: View {
                     ?? from.resized(handle, dx: dx, dy: dy, in: size)
             }
             .onEnded { _ in start = nil }
+    }
+}
+
+/// The published part alone, turned. The rectangle stays where it is in the
+/// original; the turn only changes how its pixels are laid out.
+private struct TurnCanvas: View {
+    let image: CGImage?
+    let crop: CropRect
+    let turn: Turn
+    let angle: Double
+
+    var body: some View {
+        GeometryReader { geometry in
+            let shown = crop.size(turned: turn)
+            let scale = min(geometry.size.width / Double(shown.width), geometry.size.height / Double(shown.height))
+            // Drawn unturned and rotated on screen, so a turn animates; at rest it matches PublishedImage with the turn.
+            PublishedImage(image: image, crop: crop, maxHeight: .infinity)
+                .frame(width: Double(crop.width) * scale, height: Double(crop.height) * scale)
+                .rotationEffect(.degrees(angle))
+                .frame(width: geometry.size.width, height: geometry.size.height)
+        }
+        .accessibilityElement()
+        .accessibilityLabel(turn == .zero ? "The photo, not turned" : "The photo, turned \(turn.degrees) degrees clockwise")
+    }
+}
+
+/// An icon button in the style of a dark Chip.
+private struct TurnButton: View {
+    let icon: String
+    let label: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 16, weight: .semibold))
+                .frame(width: 52, height: 36)
+                .foregroundStyle(.white)
+                .background(.white.opacity(0.12), in: Capsule())
+                .overlay(Capsule().strokeBorder(.white.opacity(0.18)))
+                .padding(.vertical, 4)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
     }
 }
 

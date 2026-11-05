@@ -13,7 +13,8 @@
 //! bound, the fingerprint `A x = h` has solutions with huge entries, and any
 //! published crop can be proven against an honest fingerprint.
 //!
-//! Only built with the `attack-hooks` feature. The honest prover is untouched.
+//! Both forgers work on crops without a turn. Only built with the
+//! `attack-hooks` feature. The honest prover is untouched.
 
 use std::sync::Arc;
 
@@ -36,7 +37,7 @@ use crate::{
     iop::{self, challenge, check, image_poly, poly, OpeningPoints, Poly, RangeCheck, IRREDUCIBLE},
     lattice,
     wire::{self, CropProof, Sumcheck},
-    Fingerprint, Pcs, ProverParams, Rect, RgbImage, Size, F, NUM_VARS,
+    Fingerprint, Pcs, ProverParams, Rect, RgbImage, Size, Turn, F, NUM_VARS,
 };
 
 /// The crop proof's attack tests use a 1024x512 original, which fills the
@@ -80,7 +81,7 @@ pub fn substitute_crop(
         "the published image must be {crop}"
     );
     ensure!(target.size() == crop, "the target must be {crop}");
-    let challenges = hooks::crop_challenges(fingerprint, rect, published, proof)?;
+    let challenges = hooks::crop_challenges(fingerprint, rect, Turn::NONE, published, proof)?;
     let mut channels = Vec::with_capacity(3);
     for (honest, target) in published.channels().iter().zip(target.channels()) {
         let fitted = (0..ATTEMPTS)
@@ -181,7 +182,7 @@ pub fn forge_crop_proof(
     let channels: [Vec<F>; 3] = channels.try_into().expect("three channels");
     // The forger proves for the image it publishes, so the statement is the
     // honest one for that image.
-    let statement = crop::statement(rect, size, &hashes, target);
+    let statement = crop::statement(rect, Turn::NONE, size, &hashes, target);
     wire::encode(&prove_forged(
         &params.pcs,
         size,
@@ -285,9 +286,9 @@ fn prove_forged(
     for channel in &channels {
         ranges.push(forged_range(channel, pcs, &mut transcript)?);
     }
-    let crop_challenges = crop::crop_challenges(&mut transcript, rect)?;
+    let crop_challenges = crop::crop_challenges(&mut transcript, rect, Turn::NONE)?;
     let crop = iop::prove_products(
-        &image_poly(iop::crop_weights(size, rect, &crop_challenges)),
+        &image_poly(iop::crop_weights(size, rect, Turn::NONE, &crop_challenges)),
         &channels,
         &mut transcript,
     )?;

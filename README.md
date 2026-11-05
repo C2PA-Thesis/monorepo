@@ -1,7 +1,8 @@
 # C2PA private location attestation
 
 Research prototype for thesis P27. A reader checks that a published photo is
-a stated rectangle of an original signed by a trusted device, and that the
+a stated rectangle of an original signed by a trusted device, turned by a
+stated multiple of 90 degrees, and that the
 location the device sealed with it maps to a stated H3 cell. The original
 pixels and the exact coordinate are not published.
 
@@ -56,7 +57,8 @@ receipt:
   the zk-Location fork.
 
 The published PNG carries the receipt, a HyperVerITAS PST proof that its
-pixels are the claimed rectangle of the fingerprinted original, and a ZKLP
+pixels are the claimed rectangle of the fingerprinted original, turned as
+claimed, and a ZKLP
 Groth16 [6] proof that the hints sealed in the envelope map to the claimed
 cell. The coordinate sealed with them lies in that cell if the device computed
 the hints from it (see [Known limits](#known-limits)). The two proofs run on
@@ -231,7 +233,9 @@ signed fail the device receipt check on this laptop.
 
 `provenance demo --photo PATH --at LAT,LON --cell CELL` uses another photo and
 simulated coordinate; nothing reads GPS from the photo. The demo publishes the
-left half; a phone capture publishes the rectangle drawn on the phone. `--json` prints one
+left half, and `--turn 1` to `--turn 3` turn it clockwise by quarter turns;
+a phone capture publishes the rectangle drawn on the phone, turned as chosen
+there. `--json` prints one
 JSON object per line. Setup writes about 220 MB to `.provenance`, or to
 `PROVENANCE_HOME`.
 
@@ -358,9 +362,9 @@ rejection.
 
 | Check | Rejects the file when | Exit status |
 | --- | --- | --- |
-| C2PA manifest | c2pa-rs reports it neither Valid nor Trusted, it lacks exactly one `edu.utdt.td8.zkloc` assertion, or the assertion is not version 5 | 10 |
+| C2PA manifest | c2pa-rs reports it neither Valid nor Trusted, it lacks exactly one `edu.utdt.td8.zkloc` assertion, or the assertion is not version 5 or 6 | 10 |
 | Device receipt | the receipt is not signed by a trusted device key | 11 |
-| Crop proof | the file's pixels are not the claimed rectangle of the image the receipt fingerprints | 12 |
+| Crop proof | the file's pixels are not the claimed rectangle, turned as claimed, of the image the receipt fingerprints | 12 |
 | Location proof | the claimed cell's resolution is outside 4 to 9, or the proof does not verify for the receipt's envelope and the claimed cell | 13 |
 
 A demo run on a 4032x3024 photo, whose original is 836x627:
@@ -407,6 +411,7 @@ mirrored, taken at Tokyo Station.
 | `resigned-fingerprint` | swap two fingerprint values and re-sign with the device key | rejected by the crop proof |
 | `pixel` | change one published pixel | rejected by the crop proof |
 | `rectangle` | claim the same pixels are one column to the right | rejected by the crop proof |
+| `turn` | turn the published pixels half a turn and claim that turn | rejected by the crop proof |
 | `region` | claim the other capture's cell for this location proof | rejected by the location proof |
 | `cross-photo-location` | attach the other capture's location proof and cell | rejected by the location proof |
 | `cross-photo-receipt` | attach the other capture's receipt, location proof and cell | rejected by the crop proof |
@@ -430,10 +435,13 @@ the coordinate gives. The circuit side of forged hints is covered in the fork
 
 ## Assertion
 
-`edu.utdt.td8.zkloc`, version 5. Version 5 lets the original be any size up
-to 2^19 pixels and makes the crop proof hash its whole statement into the
+`edu.utdt.td8.zkloc`, version 6. Version 6 adds `turn`. With no turn the crop
+proof hashes the same statement as in version 5, so the reader also accepts
+version 5 files, which have no turn. Version 5 lets the original be any size
+up to 2^19 pixels and makes the crop proof hash its whole statement into the
 transcript, so a version 4 image proof does not verify. Version 4 changed what
-the envelope commits to. The reader refuses other versions.
+the envelope commits to. The reader refuses other versions. A turned file also
+lists the `c2pa.orientation` action, next to `c2pa.cropped`.
 
 | Field | Contents |
 | --- | --- |
@@ -443,7 +451,8 @@ the envelope commits to. The reader refuses other versions.
 | `receipt.device` | SHA-256 of the device public key in SubjectPublicKeyInfo DER |
 | `receipt.signature` | Base64 DER ECDSA P-256 over the compact JSON of the four fields above |
 | `cell` | H3 cell the location proof claims |
-| `crop` | The rectangle of the original the crop proof claims, as `x`, `y`, `width`, `height` in pixels from the top-left. The proof transcript starts from a hash of the original's size, this rectangle, the fingerprint and the published pixels |
+| `crop` | The rectangle of the original the crop proof claims, as `x`, `y`, `width`, `height` in pixels from the top-left. The proof transcript starts from a hash of the original's size, this rectangle, the turn, the fingerprint and the published pixels |
+| `turn` | Quarter turns clockwise applied after the crop, 0 to 3. A turn only reorders pixels, so the crop proof checks it with the same selection as the rectangle, at no extra cost. Absent in version 5, and read as 0 |
 | `location_proof` | Base64 Groth16 proof |
 | `image_proof` | Base64 PST proof |
 
@@ -545,7 +554,8 @@ the envelope commits to. The reader refuses other versions.
   app capture directory holds `location_proof.json` and no `secrets.json`.
   The capture page still sends both. A crop proof on the phone was not tried.
 - **One edit, at reduced resolution.** Only a rectangular crop of the
-  original, and the original is the camera frame scaled down to at most 2^19
+  original, optionally turned by a multiple of 90 degrees. Turns by other
+  angles, blur and grayscale are not proved. The original is the camera frame scaled down to at most 2^19
   pixels. The full-resolution photo is not signed or proved. Every original
   shares one set of proof parameters, so smaller originals cost the same as
   the largest; the prover's time and memory grow with the pixel count, and

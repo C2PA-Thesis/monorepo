@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use anyhow::{bail, Result};
-use crop_proof::Rect;
+use crop_proof::{Rect, Turn};
 
 use crate::{
     capture::{Capture, Coordinate},
@@ -50,20 +50,21 @@ pub const STAGES: [Stage; 6] = [
 ];
 
 /// Captures `photo` at `coordinate` with the laptop's device key, publishes
-/// its left half with both proofs as `out/signed.png`, and verifies it. The
-/// capture files in `out` are private to the photographer.
+/// its left half turned by `turn` with both proofs as `out/signed.png`, and
+/// verifies it. The capture files in `out` are private to the photographer.
 pub fn run(
     workspace: &Workspace,
     photo: &Path,
     coordinate: Coordinate,
     cell: &str,
+    turn: Turn,
     out: &Path,
     on: &mut dyn FnMut(Event),
 ) -> Result<()> {
     let capture = stage(on, Stage::Capture, || {
         let original = image::load_photo(photo)?;
         let crop = Rect::left_half(original.size());
-        let capture = Capture::simulate(
+        let mut capture = Capture::simulate(
             &workspace.location_tool(),
             &workspace.device_key()?,
             original,
@@ -71,6 +72,7 @@ pub fn run(
             cell,
             crop,
         )?;
+        capture.summary.turn = turn;
         capture.write(out)?;
         let detail = format!(
             "fingerprint and envelope signed by device {}",

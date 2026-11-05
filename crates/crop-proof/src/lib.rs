@@ -1,10 +1,10 @@
 //! HyperVerITAS PST proof that a published image is a rectangle of a
-//! fingerprinted original.
+//! fingerprinted original, turned by a multiple of 90 degrees.
 //!
 //! Extracted from HyperVerITAS (<https://github.com/C2PA-Thesis/HyperVerITAS>
 //! at 798554f, MIT, see LICENSE). The original has any size up to 2^19
 //! pixels, taken from its signed fingerprint; the rectangle is a public input
-//! of the proof. The fingerprint itself lives in the `fingerprint` crate,
+//! of the proof, and so is the turn. The fingerprint itself lives in the `fingerprint` crate,
 //! shared with the capture device.
 
 use std::fmt;
@@ -99,7 +99,95 @@ impl fmt::Display for Rect {
     }
 }
 
-/// The only edit this crate proves.
+/// Quarter turns clockwise applied after the crop, 0 to 3. A turn only
+/// reorders pixels, so it is proved by the same selection as the crop.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(try_from = "u8", into = "u8")]
+pub struct Turn(u8);
+
+impl Turn {
+    pub const NONE: Turn = Turn(0);
+
+    pub fn new(quarters: u8) -> Result<Turn> {
+        ensure!(
+            quarters < 4,
+            "a turn is 0 to 3 quarter turns, not {quarters}"
+        );
+        Ok(Turn(quarters))
+    }
+
+    pub fn quarters(self) -> u8 {
+        self.0
+    }
+
+    pub fn degrees(self) -> u16 {
+        u16::from(self.0) * 90
+    }
+
+    /// The size of a `size` image after the turn.
+    pub fn size(self, size: Size) -> Size {
+        if self.0.is_multiple_of(2) {
+            size
+        } else {
+            Size {
+                width: size.height,
+                height: size.width,
+            }
+        }
+    }
+
+    /// The pixel of a `size` image that lands on (u, v) after the turn.
+    pub(crate) fn source(self, size: Size, u: usize, v: usize) -> (usize, usize) {
+        let (w, h) = (size.width, size.height);
+        match self.0 {
+            0 => (u, v),
+            1 => (v, h - 1 - u),
+            2 => (w - 1 - u, h - 1 - v),
+            _ => (w - 1 - v, u),
+        }
+    }
+
+    pub fn apply(self, image: &RgbImage) -> Result<RgbImage> {
+        let size = image.size();
+        let turned = self.size(size);
+        let channels = image.channels().each_ref().map(|channel| {
+            (0..turned.height)
+                .flat_map(|v| (0..turned.width).map(move |u| (u, v)))
+                .map(|(u, v)| {
+                    let (x, y) = self.source(size, u, v);
+                    channel[y * size.width + x]
+                })
+                .collect()
+        });
+        RgbImage::new(turned, channels)
+    }
+}
+
+impl TryFrom<u8> for Turn {
+    type Error = anyhow::Error;
+
+    fn try_from(quarters: u8) -> Result<Turn> {
+        Turn::new(quarters)
+    }
+}
+
+impl From<Turn> for u8 {
+    fn from(turn: Turn) -> u8 {
+        turn.0
+    }
+}
+
+impl fmt::Display for Turn {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} degrees clockwise", self.degrees())
+    }
+}
+
+/// The edit this crate proves: the `rect` of the original, then `turn`.
+pub fn edit(original: &RgbImage, rect: Rect, turn: Turn) -> Result<RgbImage> {
+    turn.apply(&crop(original, rect)?)
+}
+
 pub fn crop(original: &RgbImage, rect: Rect) -> Result<RgbImage> {
     let size = original.size();
     size.check()?;
@@ -214,5 +302,52 @@ mod tests {
                 at(102, 51)
             ]
         );
+    }
+
+    #[test]
+    fn turns_rotate_clockwise() {
+        // 3x2, values 0..6 in reading order:
+        // 0 1 2
+        // 3 4 5
+        let size = Size {
+            width: 3,
+            height: 2,
+        };
+        let image = RgbImage::new(size, std::array::from_fn(|_| (0..6).collect())).unwrap();
+        let expected: [(Size, [u8; 6]); 4] = [
+            (size, [0, 1, 2, 3, 4, 5]),
+            (
+                Size {
+                    width: 2,
+                    height: 3,
+                },
+                [3, 0, 4, 1, 5, 2],
+            ),
+            (size, [5, 4, 3, 2, 1, 0]),
+            (
+                Size {
+                    width: 2,
+                    height: 3,
+                },
+                [2, 5, 1, 4, 0, 3],
+            ),
+        ];
+        for (quarters, (turned_size, pixels)) in expected.into_iter().enumerate() {
+            let turn = Turn::new(quarters as u8).unwrap();
+            let turned = turn.apply(&image).unwrap();
+            assert_eq!(turned.size(), turned_size, "{turn}");
+            assert_eq!(turned.channels()[0], pixels.to_vec(), "{turn}");
+        }
+    }
+
+    #[test]
+    fn turns_past_three_quarters_are_refused() {
+        assert!(Turn::new(4).is_err());
+        assert!(serde_json::from_str::<Turn>("4").is_err());
+        assert_eq!(
+            serde_json::from_str::<Turn>("3").unwrap(),
+            Turn::new(3).unwrap()
+        );
+        assert_eq!(serde_json::to_string(&Turn::new(1).unwrap()).unwrap(), "1");
     }
 }

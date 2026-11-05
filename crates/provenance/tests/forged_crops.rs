@@ -14,7 +14,7 @@ use std::{
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use crop_proof::{
     forge::{forge_crop_proof, substitute_crop},
-    ProverParams, RgbImage, Size,
+    ProverParams, RgbImage, Size, Turn,
 };
 use provenance::{
     image,
@@ -81,6 +81,11 @@ fn assert_accepted(verdict: &Verdict) {
 fn demo() -> (Assertion, RgbImage) {
     let signed = repository().join("out/signed.png");
     let assertion = manifest::read(&signed).expect("run `provenance demo` first");
+    assert_eq!(
+        assertion.turn,
+        Turn::NONE,
+        "the forgers handle crops without a turn"
+    );
     (assertion, image::read_png(&signed).unwrap())
 }
 

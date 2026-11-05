@@ -19,18 +19,21 @@ use subroutines::{
 use transcript::IOPTranscript;
 
 use crate::{
-    crop,
+    edit,
     iop::{self, challenge, check, image_poly, poly, Opening, OpeningPoints, Poly},
     wire::{self, BatchOpening, CropProof, Sumcheck},
-    Fingerprint, Pcs, ProverParams, Rect, RgbImage, Size, VerifierParams, F, NUM_VARS, PROTOCOL,
+    Fingerprint, Pcs, ProverParams, Rect, RgbImage, Size, Turn, VerifierParams, F, NUM_VARS,
+    PROTOCOL,
 };
 
-/// Proves that `published` is the `rect` of `original`, whose fingerprint is public.
+/// Proves that `published` is the `rect` of `original` turned by `turn`,
+/// where the fingerprint of `original` is public.
 pub fn prove(
     params: &ProverParams,
     original: &RgbImage,
     published: &RgbImage,
     rect: Rect,
+    turn: Turn,
     fingerprint: &Fingerprint,
 ) -> Result<Vec<u8>> {
     ensure!(
@@ -38,19 +41,26 @@ pub fn prove(
         "the fingerprint does not match the original image"
     );
     ensure!(
-        crop(original, rect)? == *published,
-        "the published image is not the {rect} of the original"
+        edit(original, rect, turn)? == *published,
+        "the published image is not the {rect} of the original turned {turn}"
     );
-    let statement = statement(rect, fingerprint.size, &fingerprint.elements()?, published);
-    wire::encode(&prove_core(&params.pcs, original, rect, &statement)?)
+    let statement = statement(
+        rect,
+        turn,
+        fingerprint.size,
+        &fingerprint.elements()?,
+        published,
+    );
+    wire::encode(&prove_core(&params.pcs, original, rect, turn, &statement)?)
 }
 
 /// Checks a crop proof against the published pixels, the claimed rectangle
-/// and the public fingerprint.
+/// and turn, and the public fingerprint.
 pub fn verify(
     params: &VerifierParams,
     published: &RgbImage,
     rect: Rect,
+    turn: Turn,
     fingerprint: &Fingerprint,
     proof: &[u8],
 ) -> Result<()> {
@@ -59,11 +69,10 @@ pub fn verify(
     let hashes = fingerprint.elements()?;
     rect.check(original)?;
     ensure!(
-        published.size() == rect.size(),
-        "the published image is {}, but the claimed crop is {rect}",
+        published.size() == turn.size(rect.size()),
+        "the published image is {}, but the claimed crop is {rect} turned {turn}",
         published.size()
     );
-    let statement = statement(rect, original, &hashes, published);
     let proof = wire::decode(proof)?;
     // A malformed proof can reach assertions inside the arkworks and hyperplonk verifiers.
     catch_unwind(AssertUnwindSafe(|| {
@@ -71,9 +80,9 @@ pub fn verify(
             &params.pcs,
             published,
             rect,
+            turn,
             original,
             &hashes,
-            &statement,
             &proof,
         )
     }))
@@ -81,11 +90,12 @@ pub fn verify(
 }
 
 /// Everything the proof is about: the original's size, the rectangle, the
-/// fingerprint and the published pixels. Hashed into the transcript before
-/// anything else, so every challenge depends on the whole statement and a
-/// proof cannot be replayed against another fingerprint, size or image.
+/// turn, the fingerprint and the published pixels. Hashed into the transcript
+/// before anything else, so every challenge depends on the whole statement and
+/// a proof cannot be replayed against another fingerprint, size or image.
 pub(crate) fn statement(
     rect: Rect,
+    turn: Turn,
     original: Size,
     hashes: &[Vec<F>; 3],
     published: &RgbImage,
@@ -96,6 +106,7 @@ pub(crate) fn statement(
         hasher.update((value as u64).to_le_bytes());
     }
     hasher.update(rect.bytes());
+    hasher.update(turn_bytes(turn));
     for element in hashes.iter().flatten() {
         hasher.update(element.into_bigint().to_bytes_be());
     }
@@ -130,6 +141,7 @@ fn prove_core(
     pcs: &MultilinearProverParam<Bls12_381>,
     original: &RgbImage,
     rect: Rect,
+    turn: Turn,
     statement: &[u8; 32],
 ) -> Result<CropProof> {
     let size = original.size();
@@ -152,9 +164,9 @@ fn prove_core(
     for (channel, pixels) in channels.iter().zip(original.channels()) {
         ranges.push(iop::prove_range(channel, pixels, pcs, &mut transcript)?);
     }
-    let crop_challenges = crop_challenges(&mut transcript, rect)?;
+    let crop_challenges = crop_challenges(&mut transcript, rect, turn)?;
     let crop = iop::prove_products(
-        &image_poly(iop::crop_weights(size, rect, &crop_challenges)),
+        &image_poly(iop::crop_weights(size, rect, turn, &crop_challenges)),
         &channels,
         &mut transcript,
     )?;
@@ -214,13 +226,13 @@ fn prove_core(
 #[cfg(feature = "attack-hooks")]
 pub(crate) fn replay_crop_challenges(
     rect: Rect,
+    turn: Turn,
     original: Size,
     hashes: &[Vec<F>; 3],
     published: &RgbImage,
     proof: &CropProof,
 ) -> Result<Vec<F>> {
-    let statement = statement(rect, original, hashes, published);
-    Ok(verify_prefix(rect, original, hashes, &statement, proof)?.crop_challenges)
+    Ok(verify_prefix(rect, turn, original, hashes, published, proof)?.crop_challenges)
 }
 
 /// Commits to one channel exactly as `prove_core` does, for the linkage test.
@@ -269,17 +281,37 @@ fn evaluate(polynomial: &Poly, point: &[F]) -> Result<F> {
         .ok_or_else(|| anyhow!("evaluation point has {} coordinates", point.len()))
 }
 
-/// One challenge per published pixel, after binding the rectangle so a proof
-/// cannot be presented for another one.
-pub(crate) fn crop_challenges(transcript: &mut IOPTranscript<F>, rect: Rect) -> Result<Vec<F>> {
+/// One challenge per published pixel, after binding the rectangle and the
+/// turn so a proof cannot be presented for another edit.
+pub(crate) fn crop_challenges(
+    transcript: &mut IOPTranscript<F>,
+    rect: Rect,
+    turn: Turn,
+) -> Result<Vec<F>> {
     check(
         transcript.append_message(b"crop", &rect.bytes()),
         "appending the crop to the transcript",
     )?;
+    if turn != Turn::NONE {
+        check(
+            transcript.append_message(b"turn", &turn_bytes(turn)),
+            "appending the turn to the transcript",
+        )?;
+    }
     check(
         transcript.get_and_append_challenge_vectors(b"frievald", rect.size().pixels()),
         "deriving crop challenges",
     )
+}
+
+/// Empty for no turn, so a proof made before turns existed still verifies.
+/// Otherwise a tag and the quarters; the rest of the statement has a length
+/// fixed by the rectangle, so the two encodings cannot collide.
+fn turn_bytes(turn: Turn) -> Vec<u8> {
+    match turn.quarters() {
+        0 => Vec::new(),
+        quarters => [b"turn".as_slice(), &[quarters]].concat(),
+    }
 }
 
 fn aux_info(num_variables: usize) -> VPAuxInfo<F> {
@@ -297,7 +329,7 @@ struct RangeClaim {
     expected: F,
 }
 
-/// What the verifier derives before it reads the published pixels. Shared with
+/// What the verifier derives up to the crop challenges. Shared with
 /// `hooks::crop_challenges` so the challenges have one source.
 struct VerifyPrefix {
     transcript: IOPTranscript<F>,
@@ -309,13 +341,14 @@ struct VerifyPrefix {
 
 fn verify_prefix(
     rect: Rect,
+    turn: Turn,
     original: Size,
     hashes: &[Vec<F>; 3],
-    statement: &[u8; 32],
+    published: &RgbImage,
     proof: &CropProof,
 ) -> Result<VerifyPrefix> {
     let commitments = &proof.commitments;
-    let mut transcript = new_transcript(statement)?;
+    let mut transcript = new_transcript(&statement(rect, turn, original, hashes, published))?;
     for commitment in &commitments[..3] {
         append(&mut transcript, b"img(x)", commitment)?;
     }
@@ -356,7 +389,7 @@ fn verify_prefix(
 
     // The statement opened the transcript, so these challenges depend on the
     // published pixels and cannot be fixed before choosing them.
-    let crop_challenges = crop_challenges(&mut transcript, rect)?;
+    let crop_challenges = crop_challenges(&mut transcript, rect, turn)?;
     Ok(VerifyPrefix {
         transcript,
         combined_rows,
@@ -370,9 +403,9 @@ fn verify_core(
     pcs: &MultilinearVerifierParam<Bls12_381>,
     published: &RgbImage,
     rect: Rect,
+    turn: Turn,
     original: Size,
     hashes: &[Vec<F>; 3],
-    statement: &[u8; 32],
     proof: &CropProof,
 ) -> Result<()> {
     let commitments = &proof.commitments;
@@ -382,7 +415,7 @@ fn verify_core(
         hash_claims,
         range_claims,
         crop_challenges,
-    } = verify_prefix(rect, original, hashes, statement, proof)?;
+    } = verify_prefix(rect, turn, original, hashes, published, proof)?;
     let mut crop_claims = Vec::with_capacity(3);
     for (sumcheck, pixels) in proof.crop.iter().zip(published.channels()) {
         let claimed = crop_challenges
@@ -470,7 +503,7 @@ fn verify_core(
             "fingerprint check for channel {channel} rejected"
         );
     }
-    let crop_weights = image_poly(iop::crop_weights(original, rect, &crop_challenges));
+    let crop_weights = image_poly(iop::crop_weights(original, rect, turn, &crop_challenges));
     for (channel, claim) in crop_claims.iter().enumerate() {
         ensure!(
             claim.expected == evaluate(&crop_weights, &claim.point)? * image[2 + 3 * channel],
@@ -676,6 +709,31 @@ mod tests {
     use rand::SeedableRng;
 
     use super::*;
+
+    #[test]
+    fn no_turn_leaves_the_statement_as_before_turns() {
+        assert!(turn_bytes(Turn::NONE).is_empty());
+        let size = Size {
+            width: 2,
+            height: 2,
+        };
+        let rect = Rect {
+            x: 0,
+            y: 0,
+            width: 2,
+            height: 2,
+        };
+        let image = RgbImage::new(size, std::array::from_fn(|_| vec![0; 4])).unwrap();
+        let hashes: [Vec<F>; 3] = std::array::from_fn(|_| vec![F::one()]);
+        let statements: Vec<_> = (0..4)
+            .map(|q| statement(rect, Turn::new(q).unwrap(), size, &hashes, &image))
+            .collect();
+        for (i, a) in statements.iter().enumerate() {
+            for b in &statements[i + 1..] {
+                assert_ne!(a, b);
+            }
+        }
+    }
 
     #[test]
     fn sumcheck_with_a_false_claim_is_rejected() {

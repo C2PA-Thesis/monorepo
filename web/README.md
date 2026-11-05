@@ -6,7 +6,7 @@ Two pages, served by `provenance serve --web web/dist`.
   takes the photo, reads the GPS fix, computes the fingerprint, the
   trigonometric hints and the envelope itself, signs the receipt with a key
   that never leaves the browser, and uploads the capture with the coordinate,
-  the salt and the hints. The laptop then makes both proofs. The page follows
+  the salt, the hints, the crop rectangle and the turn. The laptop then makes both proofs. The page follows
   it as it proves, signs and verifies, and ends on the verified file.
 - **Presenter page** (`screen.html`, at `/screen`). What the laptop shows. A
   large QR code that pairs the iOS app and a smaller one that opens the
@@ -55,6 +55,7 @@ proxies `/api` to a local `provenance serve`.
 | Device key | `src/key.ts` | Non-extractable P-256 key in IndexedDB, created once. Its id is the SHA-256 of the SPKI DER, as the receipt names it. Pairing sends the public key in PEM with the code the laptop printed |
 | Photo | `src/camera.ts` | The native camera through a file input. The whole photo, scaled down in a canvas to at most 2^19 pixels with its aspect ratio kept (`fit` in `src/fingerprint.ts`, the same as `Size::fit` in `crates/fingerprint`). The pixels and the PNG come from the same canvas |
 | Crop | `src/crop.ts` | The rectangle of that original to publish, drawn or moved by dragging on the preview, or picked from presets. Default the left half. Recorded with the capture; publishing applies and proves it |
+| Turn | `src/crop.ts` | Quarter turns clockwise applied to the cropped pixels, 0 to 3, cycled by the Rotate chip. The preview shows the whole frame turned, and the presets name halves of that turned frame, but the rectangle sent stays in the original's pixels. Sent as `turn` with the upload; publishing turns the crop and the crop proof covers the turn. For 90 and 270 degrees the published image is the rectangle's height by its width |
 | GPS | `src/main.ts` | Watched from page load; the fix and the phone clock are sampled when the photo reaches the page, a few seconds after the shutter |
 | Cell | `src/api.ts`, `src/map.ts` | Asked from `POST /api/cell` for the chosen resolution, and drawn on an OpenStreetMap base map from `GET /api/cells/{cell}`. The page never maps coordinates itself |
 | Fingerprint | `src/fingerprint.ts` | `crates/fingerprint` built for wasm, 128 rows split across web workers. 12.8 s on an iPhone with four workers |
@@ -69,7 +70,9 @@ proxies `/api` to a local `provenance serve`.
 npm test
 ```
 
-The hints and the envelope against nine vectors from `location-proof hints`
+The turn helpers against the pixel mapping of `Turn::source` in
+`crates/crop-proof` (the box on the turned preview holds the pixels that
+cropping then turning gives), the hints and the envelope against nine vectors from `location-proof hints`
 and `location-proof commit` (including the poles and the antimeridian), a
 changed hint giving another envelope, the receipt bytes against the Rust field
 order, DER encoding, and the wasm fingerprint of the built-in test image

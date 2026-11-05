@@ -1,6 +1,6 @@
 // The calls `provenance serve` answers. See crates/provenance/src/serve.rs.
 
-import type { Rect } from "./crop";
+import type { Rect, Turn } from "./crop";
 import type { Receipt } from "./receipt";
 
 export interface Secrets {
@@ -31,6 +31,8 @@ export interface Upload {
   cell: string;
   resolution: number;
   crop: Rect;
+  /// Quarter turns clockwise after the crop. The server reads a missing one as none.
+  turn: Turn;
   accuracy_meters: number | null;
 }
 
@@ -67,6 +69,8 @@ export interface Claim {
   envelope: string;
   cell: string;
   crop: Rect;
+  /// Absent when there is no turn.
+  turn?: Turn;
 }
 
 export interface Status {
@@ -82,6 +86,8 @@ export interface Status {
     cell: string;
     resolution: number;
     crop: Rect;
+    /// Absent when there is no turn.
+    turn?: Turn;
     accuracy_meters: number | null;
     /// What the app's location service said about its fix. Absent for the capture page.
     location?: { simulated: boolean; accessory: boolean };

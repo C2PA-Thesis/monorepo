@@ -177,22 +177,36 @@ struct AreaMap: View {
     }
 }
 
-/// Only the part of the original that gets published.
+/// Only the part of the original that gets published, turned as it will be.
 struct PublishedImage: View {
     let image: CGImage?
     let crop: CropRect
+    var turn = Turn.zero
     var maxHeight: CGFloat = 420
 
     var body: some View {
-        FitBox(ratio: CGFloat(crop.width) / CGFloat(crop.height), maxHeight: maxHeight) {
+        let shown = crop.size(turned: turn)
+        FitBox(ratio: CGFloat(shown.width) / CGFloat(shown.height), maxHeight: maxHeight) {
             // The image is the original, so the crop is already in its pixels.
             if let image, let part = image.cropping(to: CGRect(x: crop.x, y: crop.y, width: crop.width, height: crop.height)) {
-                Image(decorative: part, scale: 1).resizable().interpolation(.medium)
+                Image(decorative: part, scale: 1, orientation: turn.orientation).resizable().interpolation(.medium)
             } else {
                 Theme.surface2
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.md))
+    }
+}
+
+extension Turn {
+    /// The orientation that draws unturned pixels turned clockwise by this turn.
+    var orientation: Image.Orientation {
+        switch quarters {
+        case 1: .right
+        case 2: .down
+        case 3: .left
+        default: .up
+        }
     }
 }
 

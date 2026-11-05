@@ -13,12 +13,16 @@ the envelope and signs the receipt with the original's size. Then two
 screens: the photo, with Edit and Publish, and "Were you around here?" with
 the cell drawn on a map and the size of the area. Edit opens an editor with a
 tool bar at the bottom. Crop works by hand: drag a corner or an edge, drag
-inside to move, or pick Free, Square, 4:3 or 16:9. Rotate, blur and greyscale
-show as coming soon, because the crop is the only edit the laptop can prove
-today. "Yes, publish" makes the location proof on the phone, uploads, and
-follows the laptop while it proves the crop and runs the reader checks. Edits
-after the shutter cannot change what was signed: the crop and
-the cell are proved against the sealed original and envelope.
+inside to move, or pick Free, Square, 4:3 or 16:9. The rectangle is always in
+the original's coordinates. Rotate turns the cropped part a quarter turn
+clockwise or counterclockwise and shows it turned; the app sends the number
+of quarter turns, and the laptop turns the cropped pixels itself. Blur and
+greyscale show as coming soon, because the crop and a turn after it are the
+only edits the laptop can prove today. "Yes, publish" makes the location
+proof on the phone, uploads, and follows the laptop while it proves the crop
+and runs the reader checks. Edits after the shutter cannot change what was
+signed: the crop, its turn and the cell are proved against the sealed
+original and envelope.
 
 Every verified photo is kept on the phone (Application Support/Verified, the
 signed PNG as the laptop returned it) and listed in a gallery behind the
@@ -248,7 +252,8 @@ If `/api/v2/pairing` answers 404, the Simulator falls back to
 The envelope commits to the coordinate, the salt and the eight trigonometric
 hints, which `zkloc_hints` computes on the phone with the same Go code as
 `location-proof hints`. The app sends no secrets: `POST /api/v2/captures`
-carries the original, the receipt, the cell, the crop, the proof and the
+carries the original, the receipt, the cell, the crop, the turn (`turn`,
+quarter turns clockwise, left out when there is none), the proof and the
 location source, and the laptop verifies the proof against the receipt's
 envelope before it stores the capture.
 
@@ -276,6 +281,11 @@ lists them.
   every crop they make fits the original, the timestamp format, the pairing
   payload checks, the upload JSON, the hints in the secrets JSON, the
   timeline rules.
+- A turn cycles through 0 to 3 quarter turns and swaps the sides when odd,
+  `Turn.source` gives the pixels `Turn::source` in `crates/crop-proof` gives
+  on a 3x2 image, the preview draws each pixel of a turned image where
+  `Turn.source` puts it, and the upload carries `turn` as a number only when
+  it is not zero.
 - Rendering the sample photo (1024x683) gives an opaque 886x591 bitmap whose
   PNG decodes back to the same bytes.
 - `NativeTests` run the linked libraries through `NativeBridge`: the Rust
@@ -304,3 +314,5 @@ runner.
   end run above; CI skips it. On the laptop, `location-proof prove` peaked at
   a 75 MB memory footprint and took 0.33 s (`/usr/bin/time -l`, 2026-10-30).
 - The end to end flow on a device. In the Simulator it ran on 2026-10-30.
+- A turned capture end to end against the laptop: the unit tests check the
+  upload JSON, not that the laptop accepts and proves it.
