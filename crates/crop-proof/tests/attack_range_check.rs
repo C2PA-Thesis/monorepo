@@ -6,8 +6,8 @@ use ark_bls12_381::Fr as F;
 use ark_ff::UniformRand;
 use crop_proof::{
     crop,
-    forge::{forge_crop_proof, solve, sorted_vector_for_product, CROP, RECT},
-    setup_with_rng, verify, Fingerprint, ProverParams, RgbImage, VerifierParams, ORIGINAL,
+    forge::{forge_crop_proof, solve, sorted_vector_for_product, CROP, ORIGINAL, RECT},
+    setup_with_rng, verify, Fingerprint, ProverParams, RgbImage, VerifierParams,
 };
 use rand::{RngCore, SeedableRng};
 
@@ -48,7 +48,7 @@ fn forged_crop_of_another_picture_is_accepted() {
         std::array::from_fn(|_| vec![128; ORIGINAL.pixels()]),
     )
     .unwrap();
-    let forged = forge_crop_proof(&prover, &fingerprint, &gray, &target).unwrap();
+    let forged = forge_crop_proof(&prover, &fingerprint, RECT, &gray, &target).unwrap();
 
     verify(&verifier, &target, RECT, &fingerprint, &forged)
         .expect("the verifier accepts the gradient as a crop of the signed original");

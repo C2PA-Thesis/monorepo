@@ -10,6 +10,7 @@ final class Camera: NSObject, @unchecked Sendable {
     private let photoOutput = AVCapturePhotoOutput()
     private let metadataOutput = AVCaptureMetadataOutput()
     private var configured = false
+    private var input: AVCaptureDeviceInput?
     private var rotation: AVCaptureDevice.RotationCoordinator?
     private var pending: CheckedContinuation<Data, any Error>?
     private var onCode: (@MainActor @Sendable (String) -> Void)?
@@ -38,6 +39,19 @@ final class Camera: NSObject, @unchecked Sendable {
                     self.onCode = onCode
                     if !self.session.isRunning { self.session.startRunning() }
                     continuation.resume()
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+
+    /// Switches between the back and the front camera and returns the one now in use.
+    func flip() async throws -> AVCaptureDevice.Position {
+        try await withCheckedThrowingContinuation { continuation in
+            queue.async {
+                do {
+                    continuation.resume(returning: try self.switchCamera())
                 } catch {
                     continuation.resume(throwing: error)
                 }
@@ -90,6 +104,7 @@ final class Camera: NSObject, @unchecked Sendable {
             throw CaptureError("this device has no back camera")
         }
         let input = try AVCaptureDeviceInput(device: device)
+        self.input = input
         session.beginConfiguration()
         defer { session.commitConfiguration() }
         session.sessionPreset = mode == .photo ? .photo : .high
@@ -105,10 +120,33 @@ final class Camera: NSObject, @unchecked Sendable {
         default:
             // Leaves the session empty, so the next start begins again from the input.
             session.removeInput(input)
+            self.input = nil
             throw CaptureError(mode == .photo ? "the camera cannot take photos" : "the camera cannot read QR codes")
         }
         rotation = AVCaptureDevice.RotationCoordinator(device: device, previewLayer: nil)
         configured = true
+    }
+
+    private func switchCamera() throws -> AVCaptureDevice.Position {
+        guard configured, let current = input, pending == nil else {
+            throw CaptureError("the camera cannot switch right now")
+        }
+        let position: AVCaptureDevice.Position = current.device.position == .front ? .back : .front
+        guard let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: position) else {
+            throw CaptureError(position == .front ? "this device has no front camera" : "this device has no back camera")
+        }
+        let next = try AVCaptureDeviceInput(device: device)
+        session.beginConfiguration()
+        defer { session.commitConfiguration() }
+        session.removeInput(current)
+        guard session.canAddInput(next) else {
+            session.addInput(current)
+            throw CaptureError("the camera is busy")
+        }
+        session.addInput(next)
+        input = next
+        rotation = AVCaptureDevice.RotationCoordinator(device: device, previewLayer: nil)
+        return position
     }
 }
 
@@ -141,7 +179,7 @@ extension Camera: AVCaptureMetadataOutputObjectsDelegate {
 /// The live camera image.
 struct CameraPreview: UIViewRepresentable {
     let session: AVCaptureSession
-    /// Aspect fit shows the whole photo, so a guide drawn over it matches what is kept.
+    /// Aspect fit shows the whole frame, all of which the photo keeps.
     var gravity = AVLayerVideoGravity.resizeAspectFill
 
     final class PreviewView: UIView {

@@ -185,20 +185,14 @@ struct PublishedImage: View {
 
     var body: some View {
         FitBox(ratio: CGFloat(crop.width) / CGFloat(crop.height), maxHeight: maxHeight) {
-            if let image, let part = image.cropping(to: rect(in: image)) {
+            // The image is the original, so the crop is already in its pixels.
+            if let image, let part = image.cropping(to: CGRect(x: crop.x, y: crop.y, width: crop.width, height: crop.height)) {
                 Image(decorative: part, scale: 1).resizable().interpolation(.medium)
             } else {
                 Theme.surface2
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.md))
-    }
-
-    private func rect(in image: CGImage) -> CGRect {
-        let scale = Double(image.width) / Double(Original.width)
-        return CGRect(
-            x: Double(crop.x) * scale, y: Double(crop.y) * scale,
-            width: Double(crop.width) * scale, height: Double(crop.height) * scale)
     }
 }
 
@@ -220,22 +214,23 @@ private struct FitBox: Layout {
     }
 }
 
-/// The 2:1 original with the private part shaded, for the editor.
+/// The original with the private part shaded, for the editor.
 struct CropPreview: View {
     let image: CGImage?
+    let size: OriginalSize
     let crop: CropRect
     var shade = true
 
     var body: some View {
         GeometryReader { geometry in
-            let scale = geometry.size.width / Double(Original.width)
+            let scale = geometry.size.width / Double(size.width)
             ZStack(alignment: .topLeading) {
                 if let image {
                     Image(decorative: image, scale: 1).resizable().interpolation(.medium)
                 } else {
                     Rectangle().fill(Theme.surface2)
                 }
-                if shade, !crop.isWhole {
+                if shade, !crop.isWhole(in: size) {
                     Theme.shade.mask {
                         Rectangle().overlay(alignment: .topLeading) {
                             Rectangle()
@@ -251,7 +246,7 @@ struct CropPreview: View {
                 }
             }
         }
-        .aspectRatio(2, contentMode: .fit)
+        .aspectRatio(Double(size.width) / Double(size.height), contentMode: .fit)
         .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.md))
     }
 }

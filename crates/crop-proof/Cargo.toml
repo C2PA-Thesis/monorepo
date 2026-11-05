@@ -1,6 +1,6 @@
 [package]
 name = "crop-proof"
-description = "HyperVerITAS PST proof that a published image is the left half of a fingerprinted original"
+description = "HyperVerITAS PST proof that a published image is a rectangle of a fingerprinted original"
 version = "0.1.0"
 license = "MIT"
 edition.workspace = true

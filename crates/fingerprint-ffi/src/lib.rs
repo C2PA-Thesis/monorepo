@@ -10,7 +10,7 @@ use std::ffi::{c_char, CStr};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::slice;
 
-use fingerprint::{ELEMENT_BYTES, HASH_ROWS, ORIGINAL};
+use fingerprint::{ELEMENT_BYTES, HASH_ROWS, MAX_PIXELS};
 
 pub const FINGERPRINT_OK: i32 = 0;
 pub const FINGERPRINT_ERROR_NULL: i32 = 1;
@@ -23,6 +23,13 @@ pub const FINGERPRINT_BYTES: usize = 3 * HASH_ROWS * ELEMENT_BYTES;
 
 static ALGORITHM: &CStr = c"hyperveritas-ajtai-chacha8-v1";
 
+/// Planes may hold any number of pixels from 1 to `MAX_PIXELS`. The size is
+/// not an argument: the hash depends only on the pixel sequence, and the
+/// caller signs the size next to it.
+fn bad_length(len: usize) -> bool {
+    len == 0 || len > MAX_PIXELS
+}
+
 fn guarded(body: impl FnOnce()) -> i32 {
     catch_unwind(AssertUnwindSafe(body)).map_or(FINGERPRINT_ERROR_INTERNAL, |()| FINGERPRINT_OK)
 }
@@ -33,8 +40,8 @@ pub extern "C" fn fingerprint_algorithm() -> *const c_char {
     ALGORITHM.as_ptr()
 }
 
-/// Writes the fingerprint of a 1024x512 image, given as three planes of
-/// `len` bytes in row-major order, to `out`. Uses every core and blocks
+/// Writes the fingerprint of an image given as three planes of `len` bytes
+/// in row-major order, to `out`. Uses every core and blocks
 /// until done.
 ///
 /// # Safety
@@ -51,7 +58,7 @@ pub unsafe extern "C" fn fingerprint_rgb(
     if r.is_null() || g.is_null() || b.is_null() || out.is_null() {
         return FINGERPRINT_ERROR_NULL;
     }
-    if len != ORIGINAL.pixels() {
+    if bad_length(len) {
         return FINGERPRINT_ERROR_LENGTH;
     }
     let channels = [r, g, b].map(|plane| slice::from_raw_parts(plane, len));
@@ -76,7 +83,7 @@ pub unsafe extern "C" fn fingerprint_hash_rows(
     if pixels.is_null() || out.is_null() {
         return FINGERPRINT_ERROR_NULL;
     }
-    if len != ORIGINAL.pixels() {
+    if bad_length(len) {
         return FINGERPRINT_ERROR_LENGTH;
     }
     if row_start > row_end || row_end > HASH_ROWS {
@@ -87,8 +94,9 @@ pub unsafe extern "C" fn fingerprint_hash_rows(
     guarded(|| fingerprint::hash_rows_into(pixels, row_start..row_end, out))
 }
 
-/// Fills three planes of `len` bytes with the deterministic test image, whose
-/// fingerprint digest is pinned, so the app can check its build at runtime.
+/// Fills three planes of `len` bytes with the deterministic test image, so
+/// the app can check its build at runtime. The digest is pinned for
+/// `MAX_PIXELS` bytes (the 1024x512 test image).
 ///
 /// # Safety
 /// `r`, `g` and `b` must point to `len` writable bytes each, and no two of
@@ -103,14 +111,13 @@ pub unsafe extern "C" fn fingerprint_test_image(
     if r.is_null() || g.is_null() || b.is_null() {
         return FINGERPRINT_ERROR_NULL;
     }
-    if len != ORIGINAL.pixels() {
+    if bad_length(len) {
         return FINGERPRINT_ERROR_LENGTH;
     }
     let planes = [r, g, b].map(|plane| slice::from_raw_parts_mut(plane, len));
     guarded(|| {
-        let image = fingerprint::test_image();
-        for (plane, channel) in planes.into_iter().zip(image.channels()) {
-            plane.copy_from_slice(channel);
+        for (channel, plane) in planes.into_iter().enumerate() {
+            plane.copy_from_slice(&fingerprint::test_channel(channel, len));
         }
     })
 }

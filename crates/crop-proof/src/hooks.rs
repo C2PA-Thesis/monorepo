@@ -4,15 +4,20 @@
 
 use anyhow::Result;
 
-use crate::{crop, wire, Fingerprint, ProverParams, Rect, F};
+use crate::{crop, wire, Fingerprint, ProverParams, Rect, RgbImage, F};
 
-/// The crop challenges the verifier will draw for this proof and rectangle. A
-/// third party can recompute them because neither the published image nor the
-/// fingerprint is absorbed into the transcript before the draw.
-pub fn crop_challenges(fingerprint: &Fingerprint, rect: Rect, proof: &[u8]) -> Result<Vec<F>> {
+/// The crop challenges the verifier draws for this proof, rectangle and
+/// published image. The statement opens the transcript, so another published
+/// image gets other challenges.
+pub fn crop_challenges(
+    fingerprint: &Fingerprint,
+    rect: Rect,
+    published: &RgbImage,
+    proof: &[u8],
+) -> Result<Vec<F>> {
     let hashes = fingerprint.elements()?;
     let proof = wire::decode(proof)?;
-    crop::replay_crop_challenges(rect, &hashes, &proof)
+    crop::replay_crop_challenges(rect, fingerprint.size, &hashes, published, &proof)
 }
 
 /// The proof's first three commitments (the original image's channels), as

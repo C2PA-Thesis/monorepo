@@ -53,7 +53,7 @@ proxies `/api` to a local `provenance serve`.
 | Step | Where | Notes |
 | --- | --- | --- |
 | Device key | `src/key.ts` | Non-extractable P-256 key in IndexedDB, created once. Its id is the SHA-256 of the SPKI DER, as the receipt names it. Pairing sends the public key in PEM with the code the laptop printed |
-| Photo | `src/camera.ts` | The native camera through a file input. A 2:1 window the photographer slides, default centered, resized to 1024x512 in a canvas. The pixels and the PNG come from the same canvas |
+| Photo | `src/camera.ts` | The native camera through a file input. The whole photo, scaled down in a canvas to at most 2^19 pixels with its aspect ratio kept (`fit` in `src/fingerprint.ts`, the same as `Size::fit` in `crates/fingerprint`). The pixels and the PNG come from the same canvas |
 | Crop | `src/crop.ts` | The rectangle of that original to publish, drawn or moved by dragging on the preview, or picked from presets. Default the left half. Recorded with the capture; publishing applies and proves it |
 | GPS | `src/main.ts` | Watched from page load; the fix and the phone clock are sampled when the photo reaches the page, a few seconds after the shutter |
 | Cell | `src/api.ts`, `src/map.ts` | Asked from `POST /api/cell` for the chosen resolution, and drawn on an OpenStreetMap base map from `GET /api/cells/{cell}`. The page never maps coordinates itself |
@@ -99,5 +99,3 @@ must have run first. The `web` workflow runs all of it.
   at the shutter.
 - The map tiles come from tile.openstreetmap.org, so the phone and the
   laptop fetch tiles around the cell from it.
-- The frame slider moves the window along one axis. A photo already at 2:1
-  has nothing to slide, so the slider is hidden.

@@ -1,13 +1,12 @@
 /// <reference lib="webworker" />
 // One wasm instance per worker; each hashes a range of rows of every channel.
 
-const PIXELS = 1024 * 512;
 const ELEMENT_BYTES = 32;
 
 interface Exports {
   memory: WebAssembly.Memory;
   alloc(len: number): number;
-  hash_rows(pixels: number, rowStart: number, rowEnd: number, out: number): void;
+  hash_rows(pixels: number, len: number, rowStart: number, rowEnd: number, out: number): void;
 }
 
 export interface HashRequest {
@@ -34,10 +33,10 @@ self.onmessage = async (event: MessageEvent<{ wasm: ArrayBuffer } | HashRequest>
 };
 
 function hash(wasm: Exports, pixels: Uint8Array, rowStart: number, rowEnd: number): Uint8Array {
-  const input = wasm.alloc(PIXELS);
-  new Uint8Array(wasm.memory.buffer, input, PIXELS).set(pixels);
+  const input = wasm.alloc(pixels.length);
+  new Uint8Array(wasm.memory.buffer, input, pixels.length).set(pixels);
   const size = (rowEnd - rowStart) * ELEMENT_BYTES;
   const output = wasm.alloc(size);
-  wasm.hash_rows(input, rowStart, rowEnd, output);
+  wasm.hash_rows(input, pixels.length, rowStart, rowEnd, output);
   return new Uint8Array(wasm.memory.buffer, output, size).slice();
 }

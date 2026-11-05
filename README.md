@@ -48,7 +48,9 @@ At capture the device computes two public values and signs them together in a
 receipt:
 
 - the **fingerprint**, the lattice (Ajtai) hash of the original pixels over the
-  BLS12-381 scalar field, as in [2] and [3];
+  BLS12-381 scalar field, as in [2] and [3], with the original's width and
+  height. The original is the whole camera frame, scaled down to at most 2^19
+  pixels with its aspect ratio kept (836x627 for a 12 MP 4:3 photo);
 - the **envelope**, a MiMC [7] commitment over BN254 to the coordinate, a
   fresh salt and the eight trigonometric hints the location circuit uses, from
   the zk-Location fork.
@@ -206,14 +208,14 @@ provenance demo
   cell      87c2e3020ffffff
   out       out
 
-  ✓ 1/6 capture           1.4s  fingerprint and envelope signed by device 23db…cba8
-  ✓ 2/6 crop              0.0s  kept 512x512 at (0, 0)
-  ✓ 3/6 location proof    0.9s  Groth16 proof for cell 87c2e3020ffffff, 196 bytes
-  ✓ 4/6 crop proof       19.8s  HyperVerITAS PST proof, 36 KB
-  ✓ 5/6 publish           0.0s  200 KB, C2PA-signed
-  ✓ 6/6 verify            0.9s  all reader checks passed
+  ✓ 1/6 capture           1.4s  fingerprint and envelope signed by device 4dd6…cc04
+  ✓ 2/6 crop              0.0s  kept 443x591 at (0, 0)
+  ✓ 3/6 location proof    0.8s  Groth16 proof for cell 87c2e3020ffffff, 196 bytes
+  ✓ 4/6 crop proof       32.9s  HyperVerITAS PST proof, 36 KB
+  ✓ 5/6 publish           0.0s  212 KB, C2PA-signed
+  ✓ 6/6 verify            2.5s  all reader checks passed
 
-✓ published out/signed.png in 23s
+✓ published out/signed.png in 38s
   next  provenance verify out/signed.png
         provenance attack --run out
 
@@ -353,26 +355,25 @@ rejection.
 
 | Check | Rejects the file when | Exit status |
 | --- | --- | --- |
-| C2PA manifest | c2pa-rs reports it neither Valid nor Trusted, it lacks exactly one `edu.utdt.td8.zkloc` assertion, or the assertion is not version 4 | 10 |
+| C2PA manifest | c2pa-rs reports it neither Valid nor Trusted, it lacks exactly one `edu.utdt.td8.zkloc` assertion, or the assertion is not version 5 | 10 |
 | Device receipt | the receipt is not signed by a trusted device key | 11 |
 | Crop proof | the file's pixels are not the claimed rectangle of the image the receipt fingerprints | 12 |
 | Location proof | the claimed cell's resolution is outside 4 to 9, or the proof does not verify for the receipt's envelope and the claimed cell | 13 |
 
-A file captured in the Simulator with the app, whose location proof was made
-on the phone:
+A demo run on a 4032x3024 photo, whose original is 836x627:
 
 ```text
 provenance verify
-  file      captures/20261030T234422Z-6d730fc2/signed.png
+  file      out/signed.png
 
   ✓ C2PA manifest      0.0s  reading the C2PA manifest and validating its claim signature → valid, with one edu.utdt.td8.zkloc assertion
-  ✓ device receipt     0.0s  checking the device signature over fingerprint 6d73…e536 and envelope 0x2b24…a7fb → signed by trusted device 1e94…a847 at 2026-10-30T23:44:22Z
-  ✓ crop proof         1.0s  verifying that the published pixels are the 512x512 at (256, 0) of the original with fingerprint 6d73…e536 → proof accepted
-  ✓ location proof     2.5s  verifying that the hints sealed in envelope 0x2b24…a7fb map to cell 87c2e3020ffffff → proof accepted
+  ✓ device receipt     0.0s  checking the device signature over fingerprint 4df3…6170 and envelope 0x2589…15b3 → signed by trusted device 4dd6…cc04 at 2026-11-02T19:34:41Z
+  ✓ crop proof         1.6s  verifying that the published pixels are the 418x627 at (0, 0) of the original with fingerprint 4df3…6170 → proof accepted
+  ✓ location proof     0.1s  verifying that the hints sealed in envelope 0x2589…15b3 map to cell 87c2e3020ffffff → proof accepted
 
 ✓ accepted
-  these pixels are the 512x512 at (256, 0) of an original that device 1e94…a847 signed,
-  together with an envelope whose sealed hints map to cell 87c2e3020ffffff, at 2026-10-30T23:44:22Z (device time)
+  these pixels are the 418x627 at (0, 0) of an original that device 4dd6…cc04 signed,
+  together with an envelope whose sealed hints map to cell 87c2e3020ffffff, at 2026-11-02T19:34:41Z (device time)
   The sealed coordinate lies in that cell if the signing device computed the hints from it; see Known limits in the README.
 ```
 
@@ -381,7 +382,7 @@ checks after it show as not run. `--json` prints one object per check event,
 then the verdict. A file from before this version stops at the first check:
 
 ```text
-  ✗ C2PA manifest      0.0s  reading the C2PA manifest and validating its claim signature → the edu.utdt.td8.zkloc assertion is version 3, and this reader only reads version 4 (envelopes that also commit to the trigonometric hints)
+  ✗ C2PA manifest      0.0s  reading the C2PA manifest and validating its claim signature → the edu.utdt.td8.zkloc assertion is version 4, and this reader only reads version 5 (full-frame originals and crop proofs bound to their statement)
 ```
 
 Short identifiers show the first and last four hex digits. The fingerprint's is
@@ -413,8 +414,10 @@ The accepted case marks what the pipeline trusts rather than checks. The
 attacks on the proofs themselves are tests, described in
 `docs/security/security-analysis.tex`. Two of them run end to end on the demo's
 file (`crates/provenance/tests/forged_crops.rs`): a third party replaces the
-published crop, re-signs the manifest with the sample key, and the reader
-accepts it.
+published crop and re-signs the manifest with the sample key. With the honest
+crop proof (A2) the reader rejects it at the crop proof, since the proof's
+challenges now depend on the published pixels. With a forged crop proof (A3)
+the reader accepts it.
 
 The prover side of a wrong cell is covered in `location-proof/main_test.go`:
 the honest prover refuses a cell that does not contain the coordinate, and
@@ -424,19 +427,20 @@ the coordinate gives. The circuit side of forged hints is covered in the fork
 
 ## Assertion
 
-`edu.utdt.td8.zkloc`, version 4. Version 4 changed what the envelope commits
-to, so a version 3 envelope does not verify against the current circuit, and
-the reader refuses other versions.
+`edu.utdt.td8.zkloc`, version 5. Version 5 lets the original be any size up
+to 2^19 pixels and makes the crop proof hash its whole statement into the
+transcript, so a version 4 image proof does not verify. Version 4 changed what
+the envelope commits to. The reader refuses other versions.
 
 | Field | Contents |
 | --- | --- |
-| `receipt.fingerprint` | 128 BLS12-381 scalars per RGB channel, and the original's size |
+| `receipt.fingerprint` | 128 BLS12-381 scalars per RGB channel, and the original's size, at most 2^19 pixels. The crop proof takes the size from here |
 | `receipt.envelope` | BN254 scalar: MiMC over the latitude and longitude bits, the salt and the eight hint bit patterns, in that order |
 | `receipt.captured_at` | RFC 3339 time asserted by the device |
 | `receipt.device` | SHA-256 of the device public key in SubjectPublicKeyInfo DER |
 | `receipt.signature` | Base64 DER ECDSA P-256 over the compact JSON of the four fields above |
 | `cell` | H3 cell the location proof claims |
-| `crop` | The rectangle of the original the crop proof claims, as `x`, `y`, `width`, `height` in pixels from the top-left. It is bound into the proof transcript |
+| `crop` | The rectangle of the original the crop proof claims, as `x`, `y`, `width`, `height` in pixels from the top-left. The proof transcript starts from a hash of the original's size, this rectangle, the fingerprint and the published pixels |
 | `location_proof` | Base64 Groth16 proof |
 | `image_proof` | Base64 PST proof |
 
@@ -529,7 +533,7 @@ the reader refuses other versions.
   includes.
 - **The crop proof, and so the original, stays on the laptop.** [3] reports a
   prover peak memory of 6.4 GB for HyperVerITAS PST on a full-system crop of
-  a 2^19-pixel image (Table 3), the size of the 1024x512 original. On
+  a 2^19-pixel image (Table 3), the largest original this project takes. On
   2026-10-30, `/usr/bin/time -l` on the laptop measured a peak memory
   footprint of 5.9 GB for the crop proof, and 75 MB and 0.33 s for
   `location-proof prove`. The app therefore proves the location on the phone
@@ -537,7 +541,12 @@ the reader refuses other versions.
   original, but receives neither the coordinate nor the salt from the app: an
   app capture directory holds `location_proof.json` and no `secrets.json`.
   The capture page still sends both. A crop proof on the phone was not tried.
-- **One edit.** Only a rectangular crop of a 1024x512 original.
+- **One edit, at reduced resolution.** Only a rectangular crop of the
+  original, and the original is the camera frame scaled down to at most 2^19
+  pixels. The full-resolution photo is not signed or proved. Every original
+  shares one set of proof parameters, so smaller originals cost the same as
+  the largest; the prover's time and memory grow with the pixel count, and
+  the parameters only go up to 2^19.
 
 ## Measurements
 

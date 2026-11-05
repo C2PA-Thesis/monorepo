@@ -41,7 +41,7 @@ use axum::{
     Json, Router,
 };
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
-use crop_proof::{Fingerprint, Rect, RgbImage};
+use crop_proof::{Fingerprint, Rect, RgbImage, Size};
 use p256::ecdsa::{signature::Verifier as _, Signature};
 use rand::{rngs::OsRng, Rng, RngCore};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -197,7 +197,7 @@ pub struct CellRequest {
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Upload {
-    /// Base64 PNG of the 1024x512 original the device fingerprinted.
+    /// Base64 PNG of the original the device fingerprinted, up to 2^19 pixels.
     pub original_png: String,
     pub secrets: Secrets,
     pub receipt: Receipt,
@@ -213,7 +213,7 @@ pub struct Upload {
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProofUpload {
-    /// Base64 PNG of the 1024x512 original the device fingerprinted.
+    /// Base64 PNG of the original the device fingerprinted, up to 2^19 pixels.
     pub original_png: String,
     pub receipt: Receipt,
     pub cell: String,
@@ -277,6 +277,8 @@ pub struct Status {
     /// What kind of key that is, when known.
     pub device_kind: Option<DeviceKind>,
     pub captured_at: String,
+    /// The original's size, from the signed fingerprint.
+    pub original: Size,
     pub capture: Summary,
     /// Publish stages, then reader checks, each as `--json` prints it.
     pub events: Vec<Value>,
@@ -552,7 +554,7 @@ impl Server {
             tool.commit(&upload.secrets)? == upload.receipt.envelope,
             "the envelope does not match the secrets"
         );
-        upload.crop.check()?;
+        upload.crop.check(original.size())?;
         let region = tool.cell(upload.secrets.coordinate(), upload.resolution)?;
         ensure!(
             region.cell == upload.cell,
@@ -582,7 +584,7 @@ impl Server {
     fn accept_proof(self: &Arc<Self>, upload: ProofUpload) -> Result<Accepted> {
         let original = self.signed_original(&upload.original_png, &upload.receipt)?;
         check_resolution(upload.resolution)?;
-        upload.crop.check()?;
+        upload.crop.check(original.size())?;
         let tool = self.workspace.location_tool();
         let region = tool.region(&upload.cell)?;
         ensure!(
@@ -663,6 +665,7 @@ impl Server {
             device_kind: self.device_kind(&receipt.device, capture.source),
             device: receipt.device,
             captured_at: receipt.captured_at,
+            original: receipt.fingerprint.size,
             capture,
             events: Vec::new(),
             error: None,

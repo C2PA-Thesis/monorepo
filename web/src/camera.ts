@@ -1,39 +1,31 @@
-// From the photo the camera hands back to the 1024x512 original the device
-// commits to: a 2:1 window the photographer positions, then a resize.
+// From the photo the camera hands back to the original the device commits
+// to: the whole frame, scaled down to at most 2^19 pixels.
 
-import { HEIGHT, WIDTH, type Channels } from "./fingerprint";
+import { fit, type Channels, type Size } from "./fingerprint";
 
 export interface Framing {
   canvas: HTMLCanvasElement;
-  /// Whether the photo is longer than 2:1 along some axis, so there is a window to slide.
-  slidable: boolean;
-  /// Redraws with the window at `position`, 0 to 1 along the photo's longer axis.
-  frame(position: number): void;
+  /// The original's size, which the device signs with the fingerprint.
+  size: Size;
   /// The pixels as the fingerprint takes them, and the lossless PNG of the same bytes.
   original(): Promise<{ channels: Channels; png: Blob }>;
 }
 
 export async function framing(file: File, canvas: HTMLCanvasElement): Promise<Framing> {
   const photo = await load(file);
+  const size = fit(photo.naturalWidth, photo.naturalHeight);
+  canvas.width = size.width;
+  canvas.height = size.height;
   // Opaque, so the PNG and the pixel buffer describe the same bytes.
   const context = canvas.getContext("2d", { alpha: false, willReadFrequently: true });
   if (!context) throw new Error("no canvas");
-
-  const wide = photo.width / photo.height >= WIDTH / HEIGHT;
-  const window = wide
-    ? { width: (photo.height * WIDTH) / HEIGHT, height: photo.height }
-    : { width: photo.width, height: (photo.width * HEIGHT) / WIDTH };
-  const frame = (position: number) => {
-    const x = wide ? (photo.width - window.width) * position : 0;
-    const y = wide ? 0 : (photo.height - window.height) * position;
-    context.drawImage(photo, x, y, window.width, window.height, 0, 0, WIDTH, HEIGHT);
-  };
-  frame(0.5);
+  context.imageSmoothingQuality = "high";
+  context.drawImage(photo, 0, 0, size.width, size.height);
 
   const original = async () => {
-    const rgba = context.getImageData(0, 0, WIDTH, HEIGHT).data;
+    const rgba = context.getImageData(0, 0, size.width, size.height).data;
     const channels = [0, 1, 2].map((offset) => {
-      const channel = new Uint8Array(WIDTH * HEIGHT);
+      const channel = new Uint8Array(size.width * size.height);
       for (let i = 0; i < channel.length; i++) channel[i] = rgba[i * 4 + offset]!;
       return channel;
     }) as Channels;
@@ -42,8 +34,7 @@ export async function framing(file: File, canvas: HTMLCanvasElement): Promise<Fr
     );
     return { channels, png };
   };
-  const slidable = wide ? photo.width - window.width > 1 : photo.height - window.height > 1;
-  return { canvas, slidable, frame, original };
+  return { canvas, size, original };
 }
 
 /// An <img> honors the EXIF orientation, so a portrait photo comes in upright.

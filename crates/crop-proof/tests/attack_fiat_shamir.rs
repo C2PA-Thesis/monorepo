@@ -1,6 +1,7 @@
-//! Security analysis, attack A2. Passes while the crop challenges are drawn
-//! before the published image and the fingerprint are absorbed. The fix must
-//! make `fiat_shamir_substituted_crop_is_accepted` fail.
+//! Security analysis, attack A2. The forger fits another image to the crop
+//! challenges of the honest proof. Since the transcript starts from a hash of
+//! the statement, published pixels included, every challenge the verifier
+//! draws for that image changes, and the proof's first sumcheck already fails.
 
 mod support;
 
@@ -12,7 +13,7 @@ use support::honest;
 
 #[test]
 #[ignore = "proves over 2^19 pixels; run with --release --features attack-hooks -- --ignored"]
-fn fiat_shamir_substituted_crop_is_accepted() {
+fn fiat_shamir_substituted_crop_is_rejected() {
     let h = honest::build(7);
     verify(&h.verifier, &h.crop, RECT, &h.fingerprint, &h.proof).unwrap();
 
@@ -26,17 +27,10 @@ fn fiat_shamir_substituted_crop_is_accepted() {
             .collect()
     });
     let target = RgbImage::new(CROP, gradient).unwrap();
-    let forged = substitute_crop(&h.fingerprint, &h.proof, &h.crop, &target).unwrap();
+    let forged = substitute_crop(&h.fingerprint, RECT, &h.proof, &h.crop, &target).unwrap();
+    assert_ne!(forged, h.crop);
 
-    let differing: usize = forged
-        .channels()
-        .iter()
-        .zip(h.crop.channels())
-        .map(|(a, b)| a.iter().zip(b).filter(|(x, y)| x != y).count())
-        .sum();
-    println!("{differing} of {} values differ", 3 * CROP.pixels());
-    assert!(differing > 700_000, "only {differing} values differ");
-
-    verify(&h.verifier, &forged, RECT, &h.fingerprint, &h.proof)
-        .expect("the verifier accepts another image with the honest proof");
+    let error = verify(&h.verifier, &forged, RECT, &h.fingerprint, &h.proof)
+        .expect_err("the verifier accepted another image with the honest proof");
+    println!("rejected: {error:#}");
 }

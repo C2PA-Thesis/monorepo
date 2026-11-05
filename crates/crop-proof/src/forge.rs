@@ -1,8 +1,10 @@
 //! Security analysis: forgers for attacks A2 and A3.
 //!
-//! A2 (`substitute_crop`): the crop challenges are drawn before the published
-//! image is absorbed, so anyone can replay them from the public proof and find
-//! another image with the same claim.
+//! A2 (`substitute_crop`): the crop challenges were drawn before the published
+//! image was absorbed, so anyone could replay them from the public proof and
+//! find another image with the same claim. The transcript now starts from a
+//! hash of the statement, published pixels included, so the substituted image
+//! meets other challenges and the verifier rejects it.
 //!
 //! A3 (`forge_crop_proof`): a dishonest prover for the range-check bug.
 //! The range check draws its challenges `offset` and `mix` before the sorted
@@ -31,14 +33,21 @@ use transcript::IOPTranscript;
 use crate::{
     crop::{self, append, new_transcript, open},
     hooks,
-    iop::{self, challenge, check, poly, OpeningPoints, Poly, RangeCheck, IRREDUCIBLE},
+    iop::{self, challenge, check, image_poly, poly, OpeningPoints, Poly, RangeCheck, IRREDUCIBLE},
     lattice,
     wire::{self, CropProof, Sumcheck},
-    Fingerprint, Pcs, ProverParams, Rect, RgbImage, Size, F, NUM_VARS, ORIGINAL,
+    Fingerprint, Pcs, ProverParams, Rect, RgbImage, Size, F, NUM_VARS,
 };
 
-/// The forgeries target the rectangle the demo publishes.
-pub const RECT: Rect = Rect::LEFT_HALF;
+/// The crop proof's attack tests use a 1024x512 original, which fills the
+/// parameters exactly, and publish its left half.
+pub const ORIGINAL: Size = fingerprint::TEST_SIZE;
+pub const RECT: Rect = Rect {
+    x: 0,
+    y: 0,
+    width: ORIGINAL.width / 2,
+    height: ORIGINAL.height,
+};
 pub const CROP: Size = Size {
     width: RECT.width,
     height: RECT.height,
@@ -54,21 +63,24 @@ fn corrective_pixels(attempt: usize) -> Vec<usize> {
 /// the corrective pixels gives a new lattice and usually a shorter solution.
 const ATTEMPTS: usize = 8;
 
-/// Returns `target` with a few pixels per channel adjusted so that `verify`
-/// accepts it with the honest `proof` and `fingerprint`, unchanged. Needs only
-/// what a file publishes: the honest crop, the fingerprint and the proof.
+/// Returns `target` with a few pixels per channel adjusted so that its crop
+/// claim equals the honest one under the challenges the verifier draws for
+/// the honest crop. Needs only what a file publishes: the honest crop, the
+/// rectangle, the fingerprint and the proof.
 pub fn substitute_crop(
     fingerprint: &Fingerprint,
+    rect: Rect,
     proof: &[u8],
     published: &RgbImage,
     target: &RgbImage,
 ) -> Result<RgbImage> {
+    let crop = rect.size();
     ensure!(
-        published.size() == CROP,
-        "the published image must be {CROP}"
+        published.size() == crop,
+        "the published image must be {crop}"
     );
-    ensure!(target.size() == CROP, "the target must be {CROP}");
-    let challenges = hooks::crop_challenges(fingerprint, RECT, proof)?;
+    ensure!(target.size() == crop, "the target must be {crop}");
+    let challenges = hooks::crop_challenges(fingerprint, rect, published, proof)?;
     let mut channels = Vec::with_capacity(3);
     for (honest, target) in published.channels().iter().zip(target.channels()) {
         let fitted = (0..ATTEMPTS)
@@ -78,7 +90,7 @@ pub fn substitute_crop(
             .with_context(|| format!("no correction within 0..=255 in {ATTEMPTS} attempts"))?;
         channels.push(fitted);
     }
-    RgbImage::new(CROP, channels.try_into().expect("three channels"))
+    RgbImage::new(crop, channels.try_into().expect("three channels"))
 }
 
 /// `target` with the corrective pixels of `attempt` set so that its claim
@@ -126,41 +138,74 @@ fn to_bigint(value: &F) -> BigInt {
 }
 
 /// Original pixels the forger solves for, so that `A x = h` holds exactly.
-/// They sit in the right half, which the published crop never shows.
-fn free_pixels() -> impl Iterator<Item = usize> {
-    (0..HASH_ROWS).map(|k| CROP.width + k)
+/// They sit outside the rectangle, which is all the published crop shows.
+fn free_pixels(original: Size, rect: Rect) -> Result<Vec<usize>> {
+    let inside = |x: usize, y: usize| {
+        (rect.x..rect.x + rect.width).contains(&x) && (rect.y..rect.y + rect.height).contains(&y)
+    };
+    let free: Vec<usize> = (0..original.pixels())
+        .filter(|&i| !inside(i % original.width, i / original.width))
+        .take(HASH_ROWS)
+        .collect();
+    ensure!(
+        free.len() == HASH_ROWS,
+        "the crop leaves fewer than {HASH_ROWS} pixels of the original"
+    );
+    Ok(free)
 }
 
-/// Builds a crop proof that `target` is the left half of the original behind
-/// `fingerprint`, without knowing that original. `base` only fills the right
-/// half; any image of the right size works, so the published fingerprint is
-/// all the forger needs.
+/// Builds a crop proof that `target` is the `rect` of the original behind
+/// `fingerprint`, without knowing that original. `base` only fills the pixels
+/// outside `rect`; any image of the fingerprint's size works, so the published
+/// fingerprint is all the forger needs.
 pub fn forge_crop_proof(
     params: &ProverParams,
     fingerprint: &Fingerprint,
+    rect: Rect,
     base: &RgbImage,
     target: &RgbImage,
 ) -> Result<Vec<u8>> {
-    ensure!(base.size() == ORIGINAL, "the base must be {ORIGINAL}");
-    ensure!(target.size() == CROP, "the target must be {CROP}");
+    let size = fingerprint.size;
+    rect.check(size)?;
+    ensure!(base.size() == size, "the base must be {size}");
+    ensure!(
+        target.size() == rect.size(),
+        "the target must be {}",
+        rect.size()
+    );
     let hashes = fingerprint.elements()?;
     let mut channels = Vec::with_capacity(3);
     for ((base, target), hash) in base.channels().iter().zip(target.channels()).zip(&hashes) {
-        channels.push(forged_channel(base, target, hash)?);
+        channels.push(forged_channel(size, rect, base, target, hash)?);
     }
     let channels: [Vec<F>; 3] = channels.try_into().expect("three channels");
-    wire::encode(&prove_forged(&params.pcs, channels)?)
+    // The forger proves for the image it publishes, so the statement is the
+    // honest one for that image.
+    let statement = crop::statement(rect, size, &hashes, target);
+    wire::encode(&prove_forged(
+        &params.pcs,
+        size,
+        rect,
+        &statement,
+        channels,
+    )?)
 }
 
-/// Field values whose fingerprint is `hash` and whose left half is `target`.
-pub fn forged_channel(base: &[u8], target: &[u8], hash: &[F]) -> Result<Vec<F>> {
+/// Field values whose fingerprint is `hash` and whose `rect` is `target`.
+pub fn forged_channel(
+    original: Size,
+    rect: Rect,
+    base: &[u8],
+    target: &[u8],
+    hash: &[F],
+) -> Result<Vec<F>> {
     let mut pixels = base.to_vec();
-    for y in 0..CROP.height {
-        for x in 0..CROP.width {
-            pixels[y * ORIGINAL.width + x] = target[y * CROP.width + x];
+    for y in 0..rect.height {
+        for x in 0..rect.width {
+            pixels[(rect.y + y) * original.width + rect.x + x] = target[y * rect.width + x];
         }
     }
-    let free: Vec<usize> = free_pixels().collect();
+    let free = free_pixels(original, rect)?;
     for &i in &free {
         pixels[i] = 0;
     }
@@ -217,26 +262,32 @@ pub fn solve(mut matrix: Vec<Vec<F>>, mut rhs: Vec<F>) -> Result<Vec<F>> {
 }
 
 /// The honest prover's steps, except for the range check.
-fn prove_forged(pcs: &MultilinearProverParam<Bls12_381>, values: [Vec<F>; 3]) -> Result<CropProof> {
-    let channels: [Poly; 3] = values.map(poly);
+fn prove_forged(
+    pcs: &MultilinearProverParam<Bls12_381>,
+    size: Size,
+    rect: Rect,
+    statement: &[u8; 32],
+    values: [Vec<F>; 3],
+) -> Result<CropProof> {
+    let channels: [Poly; 3] = values.map(image_poly);
     let mut commitments = channels
         .iter()
         .map(|channel| check(Pcs::commit(pcs, channel), "committing to the image"))
         .collect::<Result<Vec<_>>>()?;
-    let mut transcript = new_transcript();
+    let mut transcript = new_transcript(statement)?;
     for commitment in &commitments {
         append(&mut transcript, b"img(x)", commitment)?;
     }
 
-    let (_, combined_rows) = iop::hash_weights(&mut transcript)?;
-    let hash = iop::prove_products(&poly(combined_rows), &channels, &mut transcript)?;
+    let (_, combined_rows) = iop::hash_weights(&mut transcript, size)?;
+    let hash = iop::prove_products(&image_poly(combined_rows), &channels, &mut transcript)?;
     let mut ranges = Vec::with_capacity(3);
     for channel in &channels {
         ranges.push(forged_range(channel, pcs, &mut transcript)?);
     }
-    let crop_challenges = crop::crop_challenges(&mut transcript, RECT)?;
+    let crop_challenges = crop::crop_challenges(&mut transcript, rect)?;
     let crop = iop::prove_products(
-        &poly(iop::crop_weights(RECT, &crop_challenges)),
+        &image_poly(iop::crop_weights(size, rect, &crop_challenges)),
         &channels,
         &mut transcript,
     )?;

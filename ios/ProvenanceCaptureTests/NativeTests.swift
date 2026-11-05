@@ -6,9 +6,11 @@ import XCTest
 /// The linked Rust and Go libraries, through the same bridge the capture uses,
 /// against vectors pinned on the host side.
 final class NativeTests: XCTestCase {
-    /// crates/fingerprint/src/lib.rs TEST_IMAGE_DIGEST: SHA-256 of the 384
-    /// elements of the test image's fingerprint, R then G then B, in binary.
+    /// crates/fingerprint/src/lib.rs: SHA-256 of the 384 elements of the test
+    /// image's fingerprint, R then G then B, in binary, at 1024x512
+    /// (FINGERPRINT_MAX_PIXELS) and at 836x627, the original of a 4:3 photo.
     private let testImageDigest = "cfa3ff823a6ac9e044bf3ba042bb7f7b5fc50ac696ad86e439d03acc273f5083"
+    private let fullFrameDigest = "32ae4e96e4679d0dad3e1b10dde31f46d18d15ac25606f73b0f4a014117ab375"
 
     /// location-proof/main_test.go: the UTDT demo coordinate, salt 1, its
     /// hints, envelope and resolution 7 cell.
@@ -26,15 +28,38 @@ final class NativeTests: XCTestCase {
         XCTAssertTrue(Native.zklocLinked, "ZKLoc.xcframework is not linked; run ios/scripts/build-go.sh")
     }
 
+    func testMaxPixelsMatchesTheHeader() {
+        XCTAssertEqual(Native.headerMaxPixels, OriginalSize.maxPixels)
+    }
+
     func testFingerprintOfTheTestImageMatchesThePinnedDigest() throws {
-        let planes = try Native.testImage()
-        let fingerprint = try Native.library.fingerprint(r: planes.r, g: planes.g, b: planes.b)
+        let size = OriginalSize(width: 1024, height: 512)
+        XCTAssertEqual(size.pixels, OriginalSize.maxPixels)
+        XCTAssertEqual(try digest(size), testImageDigest)
+    }
+
+    func testFingerprintOfTheFullFrameTestImageMatchesThePinnedDigest() throws {
+        XCTAssertEqual(try digest(OriginalSize(width: 836, height: 627)), fullFrameDigest)
+    }
+
+    func testFingerprintRefusesPlanesOfAnotherSize() throws {
+        let planes = try Native.testImage(OriginalSize(width: 836, height: 627))
+        XCTAssertThrowsError(
+            try Native.library.fingerprint(r: planes.r, g: planes.g, b: planes.b, size: OriginalSize(width: 1024, height: 512)))
+        XCTAssertThrowsError(
+            try Native.library.fingerprint(r: [], g: [], b: [], size: OriginalSize(width: 0, height: 0)))
+    }
+
+    private func digest(_ size: OriginalSize) throws -> String {
+        let planes = try Native.testImage(size)
+        let fingerprint = try Native.library.fingerprint(r: planes.r, g: planes.g, b: planes.b, size: size)
+        XCTAssertEqual(fingerprint.size, .init(width: size.width, height: size.height))
         XCTAssertEqual(fingerprint.r.count, Fingerprint.rows)
         let binary = (fingerprint.r + fingerprint.g + fingerprint.b).reduce(into: Data()) { data, element in
             data.append(Data(hex: String(element.dropFirst(2)))!)
         }
         XCTAssertEqual(binary.count, 3 * Fingerprint.rows * Fingerprint.elementBytes)
-        XCTAssertEqual(Data(SHA256.hash(data: binary)).hex, testImageDigest)
+        return Data(SHA256.hash(data: binary)).hex
     }
 
     func testHintsOfTheDemoCoordinateMatchGo() throws {

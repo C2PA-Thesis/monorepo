@@ -9,7 +9,7 @@ import { base64, framing, type Framing } from "./camera";
 import { cropSelector, PRESETS, type CropSelector, type Rect } from "./crop";
 import { $, area, cellShort, h, icon, rect, short, svg, when } from "./dom";
 import { envelope, freshSalt, hints } from "./envelope";
-import { fingerprint } from "./fingerprint";
+import { fingerprint, type Size } from "./fingerprint";
 import { loadOrCreateKey, type DeviceKey } from "./key";
 import { CellMap } from "./map";
 import { signReceipt, timestamp } from "./receipt";
@@ -45,7 +45,7 @@ async function main() {
   $("map-slot").append(map.element);
   $("presets").append(
     ...PRESETS.map((preset) =>
-      h("button", { type: "button", class: "chip", onclick: () => crop.set(preset.rect) }, preset.name),
+      h("button", { type: "button", class: "chip", onclick: () => crop.set(preset.rect(crop.size())) }, preset.name),
     ),
   );
   crop = cropSelector($("stage"), $("crop-box"), onCrop);
@@ -147,8 +147,7 @@ async function onPhoto(file: File) {
   $("photo-error").hidden = true;
   const position = await nextFix();
   shot = { framing: await framing(file, $<HTMLCanvasElement>("preview")), capturedAt, fix: position };
-  $("frame").hidden = !shot.framing.slidable;
-  $<HTMLInputElement>("frame").value = "0.5";
+  crop.reset(shot.framing.size);
   $("result").hidden = true;
   step("photo", "done", `${when(capturedAt)} · ±${Math.round(position.coords.accuracy)} m`);
   for (const name of ["frame", "region", "send"] as const) step(name, "active");
@@ -162,11 +161,11 @@ async function onPhoto(file: File) {
 
 // 3. Crop
 
-function onCrop(chosen: Rect) {
+function onCrop(chosen: Rect, size: Size) {
   $("frame-summary").textContent = rect(chosen);
   for (const chip of $("presets").children) {
     const preset = PRESETS.find((each) => each.name === chip.textContent);
-    chip.setAttribute("aria-pressed", String(!!preset && sameRect(preset.rect, chosen)));
+    chip.setAttribute("aria-pressed", String(!!preset && sameRect(preset.rect(size), chosen)));
   }
 }
 
@@ -231,7 +230,7 @@ async function submit() {
     const { channels, png } = await shot.framing.original();
 
     local.start("Fingerprint");
-    const print = await fingerprint(channels, (done, total) => local.progress(done / total));
+    const print = await fingerprint(channels, shot.framing.size, (done, total) => local.progress(done / total));
     local.done();
     local.start("Seal position");
     const sealed = envelope(secrets.latitude, secrets.longitude, secrets.salt, secrets.hints);
@@ -448,8 +447,6 @@ function wireControls() {
       $<HTMLInputElement>("photo").click();
     }
   };
-  $<HTMLInputElement>("frame").oninput = (event) =>
-    shot?.framing.frame(Number((event.target as HTMLInputElement).value));
   let debounce: number | undefined;
   $<HTMLInputElement>("resolution").oninput = () => {
     $("resolution-text").textContent = verdict.resolutionText(Number($<HTMLInputElement>("resolution").value));

@@ -10,9 +10,11 @@ use crate::receipt::Receipt;
 
 /// Label of the custom assertion carrying the receipt and both proofs.
 pub const LABEL: &str = "edu.utdt.td8.zkloc";
-/// 4 since the envelope also commits to the trigonometric hints, so an
-/// envelope from version 3 does not verify against the current circuit.
-pub const VERSION: u32 = 4;
+/// 5 since the original can be any size up to 2^19 pixels and the crop
+/// proof hashes its whole statement into the transcript, so a version 4
+/// image proof does not verify. Version 4 added the trigonometric hints to
+/// the envelope.
+pub const VERSION: u32 = 5;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -117,7 +119,7 @@ pub fn read(signed: &Path) -> Result<Assertion> {
     let assertion: Assertion = manifest.find_assertion(LABEL)?;
     ensure!(
         assertion.version == VERSION,
-        "the {LABEL} assertion is version {}, and this reader only reads version {VERSION} (envelopes that also commit to the trigonometric hints)",
+        "the {LABEL} assertion is version {}, and this reader only reads version {VERSION} (full-frame originals and crop proofs bound to their statement)",
         assertion.version
     );
     Ok(assertion)

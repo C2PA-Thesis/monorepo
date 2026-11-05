@@ -1,8 +1,8 @@
 import PhotosUI
 import SwiftUI
 
-/// The home screen: the viewfinder with the 2:1 box that becomes the photo.
-/// The time is read when the shutter fires.
+/// The home screen: the viewfinder shows the whole frame, which becomes the
+/// photo. The time is read when the shutter fires.
 struct CameraHome: View {
     @Bindable var flow: CaptureFlow
     @State private var camera = Camera()
@@ -14,6 +14,7 @@ struct CameraHome: View {
     @State private var showConnection = false
     @State private var showGallery = false
     @State private var picked: PhotosPickerItem?
+    @State private var flipping = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -67,34 +68,15 @@ struct CameraHome: View {
         .frame(height: 60)
     }
 
-    /// A 3:4 preview, full width, with the 2:1 box across its middle.
+    /// A 3:4 preview, full width: the .photo preset's 4:3 frame held upright.
     private var viewfinder: some View {
         GeometryReader { geometry in
-            let width = geometry.size.width
-            let box = width / 2
             ZStack {
                 #if targetEnvironment(simulator)
                     SimulatorFeed()
                 #else
                     CameraPreview(session: camera.session, gravity: .resizeAspect)
                 #endif
-                // Everything outside the box is left out of the photo.
-                VStack(spacing: 0) {
-                    Color.black.opacity(0.55)
-                    Color.clear.frame(height: box)
-                    Color.black.opacity(0.55)
-                }
-                .allowsHitTesting(false)
-                Corners().stroke(.white, style: StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round))
-                    .frame(width: width - 24, height: box - 12)
-                    .allowsHitTesting(false)
-                VStack {
-                    Spacer()
-                    Text("Only what's inside the frame is kept")
-                        .font(Typeface.sans(13.5, .medium, relativeTo: .footnote))
-                        .foregroundStyle(.white.opacity(0.8))
-                        .padding(.bottom, (geometry.size.height - box) / 4 - 10)
-                }
                 if let cameraError {
                     VStack(spacing: 14) {
                         Text(cameraError).font(Typeface.callout).foregroundStyle(.white).multilineTextAlignment(.center)
@@ -104,7 +86,7 @@ struct CameraHome: View {
                 }
                 Color.white.opacity(flash ? 0.85 : 0).allowsHitTesting(false)
             }
-            .frame(width: width, height: geometry.size.height)
+            .frame(width: geometry.size.width, height: geometry.size.height)
         }
         .aspectRatio(3 / 4, contentMode: .fit)
         .clipped()
@@ -160,11 +142,32 @@ struct CameraHome: View {
             }
             .accessibilityLabel("Use a photo from the library")
         #else
-            Color.clear
+            Button(action: flip) {
+                Image(systemName: "arrow.triangle.2.circlepath.camera").font(.system(size: 18, weight: .medium))
+                    .frame(width: 48, height: 48)
+                    .background(.white.opacity(0.12), in: Circle())
+                    .foregroundStyle(.white)
+            }
+            .disabled(!canShoot)
+            .opacity(canShoot ? 1 : 0.4)
+            .accessibilityLabel("Switch camera")
         #endif
     }
 
-    private var canShoot: Bool { ready && !shooting }
+    private func flip() {
+        guard canShoot, !flipping else { return }
+        flipping = true
+        Task {
+            defer { flipping = false }
+            do {
+                _ = try await camera.flip()
+            } catch {
+                cameraError = describe(error)
+            }
+        }
+    }
+
+    private var canShoot: Bool { ready && !shooting && !flipping }
 
     private func shoot() {
         guard canShoot else { return }
@@ -234,26 +237,9 @@ private struct LocationChip: View {
     }
 }
 
-/// The four corners of the box.
-private struct Corners: Shape {
-    func path(in rect: CGRect) -> Path {
-        let arm: CGFloat = 22
-        var path = Path()
-        for (corner, dx, dy) in [
-            (CGPoint(x: rect.minX, y: rect.minY), 1.0, 1.0), (CGPoint(x: rect.maxX, y: rect.minY), -1.0, 1.0),
-            (CGPoint(x: rect.minX, y: rect.maxY), 1.0, -1.0), (CGPoint(x: rect.maxX, y: rect.maxY), -1.0, -1.0),
-        ] {
-            path.move(to: CGPoint(x: corner.x, y: corner.y + dy * arm))
-            path.addLine(to: corner)
-            path.addLine(to: CGPoint(x: corner.x + dx * arm, y: corner.y))
-        }
-        return path
-    }
-}
-
 #if targetEnvironment(simulator)
     /// The bundled sample photo in place of a camera feed. Fit, not fill, so
-    /// the box matches the part of it that gets sealed.
+    /// all of what gets sealed shows.
     private struct SimulatorFeed: View {
         var body: some View {
             if let url = Bundle.main.url(forResource: "sample", withExtension: "jpg"), let image = UIImage(contentsOfFile: url.path()) {

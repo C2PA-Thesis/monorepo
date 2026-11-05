@@ -20,30 +20,30 @@ static int fail(const char *what) {
 
 int main(int argc, char **argv) {
   int runs = argc > 1 ? atoi(argv[1]) : 1;
-  static uint8_t planes[3][FINGERPRINT_PIXELS], ours[3][FINGERPRINT_PIXELS];
+  static uint8_t planes[3][FINGERPRINT_MAX_PIXELS], ours[3][FINGERPRINT_MAX_PIXELS];
   static uint8_t out[FINGERPRINT_BYTES];
 
   /* The same formula as the Rust and TypeScript test image, written out
      again so the check does not only trust fingerprint_test_image. */
   for (size_t channel = 0; channel < 3; channel++)
-    for (size_t i = 0; i < FINGERPRINT_PIXELS; i++)
+    for (size_t i = 0; i < FINGERPRINT_MAX_PIXELS; i++)
       ours[channel][i] = (uint8_t)((i * 7 + channel * 13 + (i >> 9)) & 0xff);
-  if (fingerprint_test_image(planes[0], planes[1], planes[2], FINGERPRINT_PIXELS) != FINGERPRINT_OK)
+  if (fingerprint_test_image(planes[0], planes[1], planes[2], FINGERPRINT_MAX_PIXELS) != FINGERPRINT_OK)
     return fail("fingerprint_test_image failed");
   if (memcmp(planes, ours, sizeof planes) != 0)
     return fail("fingerprint_test_image differs from the formula");
 
-  if (fingerprint_rgb(planes[0], planes[1], planes[2], FINGERPRINT_PIXELS - 1, out) !=
+  if (fingerprint_rgb(planes[0], planes[1], planes[2], FINGERPRINT_MAX_PIXELS + 1, out) !=
       FINGERPRINT_ERROR_LENGTH)
-    return fail("a short plane was not rejected");
-  if (fingerprint_hash_rows(planes[0], FINGERPRINT_PIXELS, 0, FINGERPRINT_HASH_ROWS + 1, out) !=
+    return fail("a plane over the limit was not rejected");
+  if (fingerprint_hash_rows(planes[0], FINGERPRINT_MAX_PIXELS, 0, FINGERPRINT_HASH_ROWS + 1, out) !=
       FINGERPRINT_ERROR_ROWS)
     return fail("rows past the end were not rejected");
 
   for (int run = 0; run < runs; run++) {
     struct timespec start, end;
     clock_gettime(CLOCK_MONOTONIC, &start);
-    int status = fingerprint_rgb(planes[0], planes[1], planes[2], FINGERPRINT_PIXELS, out);
+    int status = fingerprint_rgb(planes[0], planes[1], planes[2], FINGERPRINT_MAX_PIXELS, out);
     clock_gettime(CLOCK_MONOTONIC, &end);
     if (status != FINGERPRINT_OK)
       return fail("fingerprint_rgb failed");
@@ -52,7 +52,7 @@ int main(int argc, char **argv) {
   }
 
   uint8_t rows[2 * FINGERPRINT_ELEMENT_BYTES];
-  if (fingerprint_hash_rows(planes[1], FINGERPRINT_PIXELS, 5, 7, rows) != FINGERPRINT_OK)
+  if (fingerprint_hash_rows(planes[1], FINGERPRINT_MAX_PIXELS, 5, 7, rows) != FINGERPRINT_OK)
     return fail("fingerprint_hash_rows failed");
   if (memcmp(rows, out + (FINGERPRINT_HASH_ROWS + 5) * FINGERPRINT_ELEMENT_BYTES, sizeof rows) != 0)
     return fail("fingerprint_hash_rows differs from fingerprint_rgb");

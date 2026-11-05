@@ -111,7 +111,7 @@ struct PhotoScreen: View {
             .padding(.bottom, 12)
         }
         .background(Theme.paper.ignoresSafeArea())
-        .fullScreenCover(isPresented: $cropping) { CropEditor(image: flow.preview, crop: $flow.crop) }
+        .fullScreenCover(isPresented: $cropping) { CropEditor(image: flow.preview, size: flow.originalSize, crop: $flow.crop) }
         .confirmationDialog("Discard this photo?", isPresented: $discarding, titleVisibility: .visible) {
             Button("Discard", role: .destructive) { flow.retake() }
         } message: {

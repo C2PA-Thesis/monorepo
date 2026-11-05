@@ -10,8 +10,8 @@ import Foundation
 /// Everything the app needs from the Rust fingerprint and the Go location
 /// circuit. The rest of the app only sees this protocol.
 protocol NativeLibrary: Sendable {
-    /// The fingerprint of the 1024x512 planes.
-    func fingerprint(r: [UInt8], g: [UInt8], b: [UInt8]) throws -> Fingerprint
+    /// The fingerprint of the original's planes, `size.pixels` bytes each.
+    func fingerprint(r: [UInt8], g: [UInt8], b: [UInt8], size: OriginalSize) throws -> Fingerprint
     /// The eight float32 trig hints the circuit takes for the coordinate.
     func hints(latitude: Double, longitude: Double) throws -> [UInt32]
     /// The MiMC envelope over the coordinate, salt and hints.
@@ -58,11 +58,20 @@ enum Native {
     }
 
     #if DEBUG
-        /// The deterministic image whose fingerprint digest crates/fingerprint pins,
-        /// so the tests can run the linked library on a known input.
-        static func testImage() throws -> (r: [UInt8], g: [UInt8], b: [UInt8]) {
+        /// FINGERPRINT_MAX_PIXELS, so the tests can check `OriginalSize.maxPixels` against it.
+        static var headerMaxPixels: Int? {
             #if canImport(FingerprintFFI)
-                var r = [UInt8](repeating: 0, count: Original.pixels)
+                Int(FINGERPRINT_MAX_PIXELS)
+            #else
+                nil
+            #endif
+        }
+
+        /// The deterministic image whose fingerprint digests crates/fingerprint pins,
+        /// so the tests can run the linked library on a known input.
+        static func testImage(_ size: OriginalSize) throws -> (r: [UInt8], g: [UInt8], b: [UInt8]) {
+            #if canImport(FingerprintFFI)
+                var r = [UInt8](repeating: 0, count: size.pixels)
                 var g = r
                 var b = r
                 let status = r.withUnsafeMutableBufferPointer { r in
@@ -83,9 +92,13 @@ enum Native {
 
 /// The XCFrameworks from ios/scripts/build-rust.sh and build-go.sh, when linked.
 private struct LinkedLibrary: NativeLibrary {
-    func fingerprint(r: [UInt8], g: [UInt8], b: [UInt8]) throws -> Fingerprint {
-        guard r.count == Original.pixels, g.count == Original.pixels, b.count == Original.pixels else {
-            throw CaptureError("the planes are not 1024×512")
+    func fingerprint(r: [UInt8], g: [UInt8], b: [UInt8], size: OriginalSize) throws -> Fingerprint {
+        let pixels = size.pixels
+        guard size.width > 0, size.height > 0, (1...OriginalSize.maxPixels).contains(pixels) else {
+            throw CaptureError("an original must have 1 to \(OriginalSize.maxPixels) pixels, not \(size.width)×\(size.height)")
+        }
+        guard r.count == pixels, g.count == pixels, b.count == pixels else {
+            throw CaptureError("the planes are not \(size.width)×\(size.height)")
         }
         #if canImport(FingerprintFFI)
             var out = [UInt8](repeating: 0, count: 3 * Fingerprint.rows * Fingerprint.elementBytes)
@@ -99,7 +112,7 @@ private struct LinkedLibrary: NativeLibrary {
                 }
             }
             guard status == 0 else { throw NativeError.failed("fingerprint_rgb", "status \(status)") }
-            return try Fingerprint(binary: Data(out))
+            return try Fingerprint(binary: Data(out), size: size)
         #else
             throw NativeError.notBuilt("Fingerprint.xcframework")
         #endif

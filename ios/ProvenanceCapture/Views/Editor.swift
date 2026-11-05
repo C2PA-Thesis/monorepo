@@ -5,11 +5,19 @@ import SwiftUI
 /// tools are shown as coming soon.
 struct CropEditor: View {
     let image: CGImage?
+    let size: OriginalSize
     @Binding var crop: CropRect
-    @State private var draft = CropRect.whole
+    @State private var draft: CropRect
     @State private var tool = Tool.crop
     @State private var aspect = Aspect.free
     @Environment(\.dismiss) private var dismiss
+
+    init(image: CGImage?, size: OriginalSize, crop: Binding<CropRect>) {
+        self.image = image
+        self.size = size
+        _crop = crop
+        _draft = State(initialValue: crop.wrappedValue)
+    }
 
     enum Tool: CaseIterable, Identifiable {
         case crop, rotate, blur, greyscale
@@ -66,7 +74,7 @@ struct CropEditor: View {
         VStack(spacing: 0) {
             topBar
             Spacer(minLength: 16)
-            CropCanvas(image: image, crop: $draft, ratio: aspect.ratio, editable: tool == .crop)
+            CropCanvas(image: image, size: size, crop: $draft, ratio: aspect.ratio, editable: tool == .crop)
                 .padding(.horizontal, 20)
             Spacer(minLength: 16)
             options
@@ -90,10 +98,10 @@ struct CropEditor: View {
                 }
                 .font(Typeface.sans(16, .bold, relativeTo: .headline))
             }
-            if draft != .whole {
+            if draft != .whole(size) {
                 Button("Reset") {
                     withAnimation(Theme.ease) {
-                        draft = .whole
+                        draft = .whole(size)
                         aspect = .free
                     }
                 }
@@ -115,7 +123,7 @@ struct CropEditor: View {
                     Chip(title: option.title, selected: aspect == option, dark: true) {
                         withAnimation(Theme.ease) {
                             aspect = option
-                            if let ratio = option.ratio { draft = .fit(ratio, around: draft) }
+                            if let ratio = option.ratio { draft = .fit(ratio, around: draft, in: size) }
                         }
                     }
                 }
@@ -175,6 +183,7 @@ struct CropEditor: View {
 /// inside to move. With a fixed shape only the corners resize.
 private struct CropCanvas: View {
     let image: CGImage?
+    let size: OriginalSize
     @Binding var crop: CropRect
     let ratio: Double?
     let editable: Bool
@@ -182,12 +191,12 @@ private struct CropCanvas: View {
 
     var body: some View {
         GeometryReader { geometry in
-            let scale = geometry.size.width / Double(Original.width)
+            let scale = geometry.size.width / Double(size.width)
             let box = CGRect(
                 x: Double(crop.x) * scale, y: Double(crop.y) * scale,
                 width: Double(crop.width) * scale, height: Double(crop.height) * scale)
             ZStack(alignment: .topLeading) {
-                CropPreview(image: image, crop: crop)
+                CropPreview(image: image, size: size, crop: crop)
                 Rectangle().strokeBorder(.white, lineWidth: 1.5)
                     .frame(width: box.width, height: box.height)
                     .offset(x: box.minX, y: box.minY)
@@ -212,9 +221,9 @@ private struct CropCanvas: View {
                 }
             }
         }
-        .aspectRatio(Double(Original.width) / Double(Original.height), contentMode: .fit)
+        .aspectRatio(Double(size.width) / Double(size.height), contentMode: .fit)
         .accessibilityElement()
-        .accessibilityLabel(crop.isWhole ? "Crop: the whole photo" : "Crop: part of the photo")
+        .accessibilityLabel(crop.isWhole(in: size) ? "Crop: the whole photo" : "Crop: part of the photo")
     }
 
     private func point(_ handle: CropHandle, _ box: CGRect) -> CGPoint {
@@ -237,7 +246,7 @@ private struct CropCanvas: View {
                 start = from
                 let dx = Int((value.translation.width / scale).rounded())
                 let dy = Int((value.translation.height / scale).rounded())
-                crop = from.moved(dx: dx, dy: dy)
+                crop = from.moved(dx: dx, dy: dy, in: size)
             }
             .onEnded { _ in start = nil }
     }
@@ -249,8 +258,8 @@ private struct CropCanvas: View {
                 start = from
                 let dx = Int((value.translation.width / scale).rounded())
                 let dy = Int((value.translation.height / scale).rounded())
-                crop = ratio.map { from.resized(corner: handle, dx: dx, dy: dy, ratio: $0) }
-                    ?? from.resized(handle, dx: dx, dy: dy)
+                crop = ratio.map { from.resized(corner: handle, dx: dx, dy: dy, ratio: $0, in: size) }
+                    ?? from.resized(handle, dx: dx, dy: dy, in: size)
             }
             .onEnded { _ in start = nil }
     }

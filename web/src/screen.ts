@@ -263,9 +263,10 @@ function buildDetail(status: api.Status) {
     steps: h("div", { class: "card pad" }, timeline.element),
   };
   const { crop } = status.capture;
+  const { width, height } = status.original;
   const overlay = h("div", {
     class: "overlay",
-    style: `left:${(crop.x / 1024) * 100}%;top:${(crop.y / 512) * 100}%;width:${(crop.width / 1024) * 100}%;height:${(crop.height / 512) * 100}%`,
+    style: `left:${(crop.x / width) * 100}%;top:${(crop.y / height) * 100}%;width:${(crop.width / width) * 100}%;height:${(crop.height / height) * 100}%`,
   });
   const original = h("div", { class: "frame" }, h("img", { src: api.originalUrl(status.id), alt: "The private original" }), overlay);
   detail.replaceChildren(
@@ -286,7 +287,7 @@ function buildDetail(status: api.Status) {
       parts.actions,
     ),
     board(
-      [figure("Original · private", original, 1024, 512), figure("Published", parts.published!, crop.width, crop.height)],
+      [figure("Original · private", original, width, height), figure("Published", parts.published!, crop.width, crop.height)],
       parts.steps!,
       h("div", { class: "card pad region" }, parts.verdict, map.element, parts.outcome),
     ),

@@ -26,7 +26,7 @@ struct Shot {
     let fix: Fix
 }
 
-/// Everything fixed at the shutter: the 1024x512 original, the sealed
+/// Everything fixed at the shutter: the original, the sealed
 /// position and the device's signature over the fingerprint and the envelope.
 struct Sealed: Sendable {
     let original: OriginalImage
@@ -89,8 +89,12 @@ final class CaptureFlow {
 
     // Capture and seal
     private(set) var shot: Shot?
-    /// The 2:1 original, shown as soon as it renders.
+    /// The original, shown as soon as it renders.
     private(set) var preview: CGImage?
+    /// The original's size, the space the crop is in. Set with the preview.
+    private(set) var originalSize = CaptureFlow.noOriginal
+    /// Stands in for the size until a photo renders; nothing shows it.
+    private static let noOriginal = OriginalSize(width: 1, height: 1)
     private(set) var sealed: Sealed?
     private(set) var sealSteps: [SealStep: RowState] = [:]
     private(set) var sealFailure: Failure?
@@ -98,7 +102,7 @@ final class CaptureFlow {
     private(set) var capturing = false
 
     // Review
-    var crop = CropRect.whole
+    var crop = CropRect.whole(CaptureFlow.noOriginal)
     /// The photo step is done and the area step shows.
     var photoChosen = false
     var resolution = Verdict.defaultResolution {
@@ -387,7 +391,7 @@ final class CaptureFlow {
         sealTask = Task { await seal(data, at: time, fix: injected, mine: mine) }
     }
 
-    /// Fixes everything a later edit cannot change: the fix, the 2:1 original,
+    /// Fixes everything a later edit cannot change: the fix, the original,
     /// its fingerprint, the sealed position and the signature over both.
     private func seal(_ data: Data, at time: Date, fix injected: Fix?, mine: Int) async {
         let capturedAt = Timestamp.rfc3339(time)
@@ -399,9 +403,9 @@ final class CaptureFlow {
         var step = SealStep.locate
         do {
             let photo = try await Task.detached { try Photo(data: data) }.value
-            let original = try await Task.detached { try OriginalImage.render(photo, position: 0.5) }.value
+            let original = try await Task.detached { try OriginalImage.render(photo) }.value
             guard mine == photos else { return }
-            preview = original.image
+            show(original)
             let fix = try await fixTask.value
             try Task.checkCancellation()
             sealSteps[.locate] = .done
@@ -409,7 +413,7 @@ final class CaptureFlow {
             step = .fingerprint
             let fingerprint = try await run(step, mine) {
                 let planes = original.channels()
-                return try native.fingerprint(r: planes.r, g: planes.g, b: planes.b)
+                return try native.fingerprint(r: planes.r, g: planes.g, b: planes.b, size: original.size)
             }
             step = .seal
             let (secrets, envelope) = try await run(step, mine) {
@@ -474,6 +478,13 @@ final class CaptureFlow {
             detail: detail)
     }
 
+    /// Shows a freshly rendered original, with the crop on all of it.
+    private func show(_ original: OriginalImage) {
+        preview = original.image
+        originalSize = original.size
+        crop = .whole(original.size)
+    }
+
     /// Drops the current photo and everything still running for it.
     func retake() {
         sealTask?.cancel()
@@ -488,11 +499,12 @@ final class CaptureFlow {
         photos += 1
         shot = nil
         preview = nil
+        originalSize = Self.noOriginal
         sealed = nil
         sealSteps = [:]
         sealFailure = nil
         capturing = false
-        crop = .whole
+        crop = .whole(originalSize)
         photoChosen = false
         region = nil
         area = nil
@@ -754,7 +766,7 @@ final class CaptureFlow {
                 let url = Bundle.main.url(forResource: "sample", withExtension: "jpg"),
                 let data = try? Data(contentsOf: url)
             else { return }
-            let preview = (try? Photo(data: data)).flatMap { try? OriginalImage.render($0, position: 0.5) }?.image
+            let original = (try? Photo(data: data)).flatMap { try? OriginalImage.render($0) }
             switch name {
             case "seal":
                 // A real seal of the sample photo at Universidad Torcuato Di Tella.
@@ -763,11 +775,11 @@ final class CaptureFlow {
                     horizontalAccuracy: 8, verticalAccuracy: 8, timestamp: .now))
                 photoTaken(data, at: .now, fix: fix)
             case "sealFailed":
-                self.preview = preview
+                if let original { show(original) }
                 sealSteps = [.locate: .failed]
                 sealFailure = Self.sealFailure(.locate, CaptureError("No GPS fix. Try again."))
             case "sendFailed":
-                self.preview = preview
+                if let original { show(original) }
                 sendSteps = [.prove: .done, .upload: .failed]
                 sendFailure = Failure(
                     title: "Your laptop didn't answer",
