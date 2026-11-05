@@ -6,7 +6,8 @@
 use std::array;
 
 use crop_proof::{
-    left_half, prove, setup_with_rng, Fingerprint, ProverParams, RgbImage, VerifierParams, ORIGINAL,
+    crop, prove, setup_with_rng, Fingerprint, ProverParams, Rect, RgbImage, VerifierParams,
+    ORIGINAL,
 };
 use rand::{RngCore, SeedableRng};
 use tempfile::TempDir;
@@ -35,9 +36,9 @@ pub fn build(seed: u64) -> Honest {
         pixels
     });
     let original = RgbImage::new(ORIGINAL, channels).unwrap();
-    let crop = left_half(&original).unwrap();
+    let crop = crop(&original, Rect::LEFT_HALF).unwrap();
     let fingerprint = Fingerprint::of(&original).unwrap();
-    let proof = prove(&prover, &original, &crop, &fingerprint).unwrap();
+    let proof = prove(&prover, &original, &crop, Rect::LEFT_HALF, &fingerprint).unwrap();
 
     Honest {
         _dir: dir,

@@ -1,5 +1,6 @@
 // The three calls `provenance serve` answers. See crates/provenance/src/serve.rs.
 
+import type { Rect } from "./crop";
 import type { Receipt } from "./receipt";
 
 export interface Secrets {
@@ -19,6 +20,7 @@ export interface Upload {
   receipt: Receipt;
   cell: string;
   resolution: number;
+  crop: Rect;
   accuracy_meters: number | null;
 }
 

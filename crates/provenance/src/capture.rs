@@ -4,7 +4,7 @@
 //! original.png   the 1024x512 original, private
 //! secrets.json   coordinate and salt, private, mode 0600
 //! receipt.json   the device-signed receipt, public
-//! capture.json   the cell chosen at capture and how the capture was made
+//! capture.json   the cell and crop chosen at capture, and how the capture was made
 //! ```
 
 use std::{
@@ -15,7 +15,7 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use crop_proof::{Fingerprint, RgbImage};
+use crop_proof::{Fingerprint, Rect, RgbImage};
 use rand::{rngs::OsRng, RngCore};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
@@ -82,6 +82,8 @@ pub struct Summary {
     /// H3 cell the location proof will claim.
     pub cell: String,
     pub resolution: u8,
+    /// The rectangle of the original that gets published.
+    pub crop: Rect,
     /// Horizontal accuracy the device reported for its fix. Recorded, not signed.
     pub accuracy_meters: Option<f64>,
 }
@@ -106,8 +108,10 @@ impl Capture {
         original: RgbImage,
         coordinate: Coordinate,
         cell: &str,
+        crop: Rect,
     ) -> Result<Self> {
         let region = tool.region(cell)?;
+        crop.check()?;
         let secrets = Secrets::new(coordinate);
         let receipt = Receipt::sign(
             Fingerprint::of(&original)?,
@@ -123,6 +127,7 @@ impl Capture {
                 source: Source::Simulated,
                 cell: region.cell,
                 resolution: region.resolution,
+                crop,
                 accuracy_meters: None,
             },
         })

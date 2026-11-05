@@ -3,6 +3,7 @@
 use std::path::Path;
 
 use anyhow::{bail, Result};
+use crop_proof::Rect;
 
 use crate::{
     capture::{Capture, Coordinate},
@@ -66,6 +67,7 @@ pub fn run(
             image::load_photo(photo)?,
             coordinate,
             cell,
+            Rect::LEFT_HALF,
         )?;
         capture.write(out)?;
         let detail = format!(

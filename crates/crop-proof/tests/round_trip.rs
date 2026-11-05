@@ -1,5 +1,5 @@
 use crop_proof::{
-    left_half, prove, setup_with_rng, verify, Fingerprint, ProverParams, RgbImage, VerifierParams,
+    crop, prove, setup_with_rng, verify, Fingerprint, ProverParams, Rect, RgbImage, VerifierParams,
     ORIGINAL,
 };
 use rand::{RngCore, SeedableRng};
@@ -19,23 +19,37 @@ fn proves_verifies_and_rejects_tampering() {
         pixels
     });
     let original = RgbImage::new(ORIGINAL, channels).unwrap();
-    let crop = left_half(&original).unwrap();
+    // Not the left half, and not a power-of-two size.
+    let rect = Rect {
+        x: 137,
+        y: 61,
+        width: 300,
+        height: 200,
+    };
+    let published = crop(&original, rect).unwrap();
     let fingerprint = Fingerprint::of(&original).unwrap();
 
-    let proof = prove(&prover, &original, &crop, &fingerprint).unwrap();
-    verify(&verifier, &crop, &fingerprint, &proof).unwrap();
+    let proof = prove(&prover, &original, &published, rect, &fingerprint).unwrap();
+    verify(&verifier, &published, rect, &fingerprint, &proof).unwrap();
 
-    let mut pixels = crop.channels().clone();
+    let mut pixels = published.channels().clone();
     pixels[0][0] ^= 1;
-    let changed_crop = RgbImage::new(crop.size(), pixels).unwrap();
-    assert!(verify(&verifier, &changed_crop, &fingerprint, &proof).is_err());
+    let changed = RgbImage::new(published.size(), pixels).unwrap();
+    assert!(verify(&verifier, &changed, rect, &fingerprint, &proof).is_err());
+
+    let shifted = Rect {
+        x: rect.x + 1,
+        ..rect
+    };
+    assert!(verify(&verifier, &published, shifted, &fingerprint, &proof).is_err());
+    assert!(prove(&prover, &original, &published, shifted, &fingerprint).is_err());
 
     let mut other = fingerprint.clone();
     other.r.swap(0, 1);
-    assert!(verify(&verifier, &crop, &other, &proof).is_err());
-    assert!(prove(&prover, &original, &crop, &other).is_err());
+    assert!(verify(&verifier, &published, rect, &other, &proof).is_err());
+    assert!(prove(&prover, &original, &published, rect, &other).is_err());
 
     let mut flipped = proof.clone();
     *flipped.last_mut().unwrap() ^= 1;
-    assert!(verify(&verifier, &crop, &fingerprint, &flipped).is_err());
+    assert!(verify(&verifier, &published, rect, &fingerprint, &flipped).is_err());
 }

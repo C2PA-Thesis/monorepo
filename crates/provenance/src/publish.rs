@@ -1,4 +1,4 @@
-//! From a capture to a published file: crop, both proofs, and the C2PA manifest.
+//! From a capture to a published file: the crop, both proofs, and the C2PA manifest.
 
 use std::{
     fs,
@@ -8,7 +8,7 @@ use std::{
 
 use anyhow::{ensure, Context, Result};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
-use crop_proof::{left_half, ProverParams, CROP};
+use crop_proof::{crop, ProverParams};
 use serde::Serialize;
 
 use crate::{capture::Capture, image, manifest::Assertion, Workspace};
@@ -58,7 +58,7 @@ pub enum Event {
     },
 }
 
-/// Publishes the left half of `capture` with both proofs as `out/signed.png`,
+/// Publishes the crop of `capture` with both proofs as `out/signed.png`,
 /// keeping the unsigned crop next to it, and returns the signed path.
 pub fn run(
     workspace: &Workspace,
@@ -68,13 +68,14 @@ pub fn run(
 ) -> Result<PathBuf> {
     let tool = workspace.location_tool();
     let cell = &capture.summary.cell;
+    let rect = capture.summary.crop;
     fs::create_dir_all(out).with_context(|| format!("creating {}", out.display()))?;
 
     let crop_png = out.join("crop.png");
-    let crop = stage(on, Stage::Crop, || {
-        let crop = left_half(&capture.original)?;
-        image::write_png(&crop, &crop_png)?;
-        Ok((crop, format!("kept the {CROP} left half")))
+    let published = stage(on, Stage::Crop, || {
+        let published = crop(&capture.original, rect)?;
+        image::write_png(&published, &crop_png)?;
+        Ok((published, format!("kept {rect}")))
     })?;
 
     let location_proof = stage(on, Stage::LocationProof, || {
@@ -95,7 +96,8 @@ pub fn run(
         let proof = crop_proof::prove(
             &params,
             &capture.original,
-            &crop,
+            &published,
+            rect,
             &capture.receipt.fingerprint,
         )?;
         Ok((
@@ -109,6 +111,7 @@ pub fn run(
         let assertion = Assertion::new(
             capture.receipt.clone(),
             cell.clone(),
+            rect,
             location_proof,
             image_proof,
         );

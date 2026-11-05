@@ -16,7 +16,7 @@ use subroutines::{
 };
 use transcript::IOPTranscript;
 
-use crate::{Pcs, CROP, F, NUM_VARS, ORIGINAL};
+use crate::{Pcs, Rect, F, NUM_VARS, ORIGINAL};
 
 pub(crate) type Poly = Arc<DenseMultilinearExtension<F>>;
 pub(crate) type SumCheckProof = <PolyIOP<F> as SumCheck<F>>::SumCheckProof;
@@ -68,13 +68,13 @@ pub(crate) fn hash_weights(transcript: &mut IOPTranscript<F>) -> Result<(Vec<F>,
     Ok((weights, combined))
 }
 
-/// `S^T r` for the crop selection S: original pixel (x, y) maps to published
-/// pixel (x, y) when x is in the left half.
-pub(crate) fn crop_weights(r: &[F]) -> Vec<F> {
+/// `S^T r` for the crop selection S: original pixel (rect.x + x, rect.y + y)
+/// maps to published pixel (x, y).
+pub(crate) fn crop_weights(rect: Rect, r: &[F]) -> Vec<F> {
     let mut weights = vec![F::zero(); ORIGINAL.pixels()];
-    for y in 0..CROP.height {
-        for x in 0..CROP.width {
-            weights[y * ORIGINAL.width + x] = r[y * CROP.width + x];
+    for y in 0..rect.height {
+        for x in 0..rect.width {
+            weights[(rect.y + y) * ORIGINAL.width + rect.x + x] = r[y * rect.width + x];
         }
     }
     weights

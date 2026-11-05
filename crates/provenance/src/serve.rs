@@ -17,7 +17,7 @@ use axum::{
     Json, Router,
 };
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
-use crop_proof::Fingerprint;
+use crop_proof::{Fingerprint, Rect};
 use rand::{rngs::OsRng, Rng};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -72,6 +72,8 @@ pub struct Upload {
     pub receipt: Receipt,
     pub cell: String,
     pub resolution: u8,
+    /// The rectangle the photographer chose to publish.
+    pub crop: Rect,
     pub accuracy_meters: Option<f64>,
 }
 
@@ -143,6 +145,7 @@ impl Server {
             tool.commit(&upload.secrets)? == upload.receipt.envelope,
             "the envelope does not match the secrets"
         );
+        upload.crop.check()?;
         let region = tool.cell(upload.secrets.coordinate(), upload.resolution)?;
         ensure!(
             region.cell == upload.cell,
@@ -160,6 +163,7 @@ impl Server {
                 source: Source::Phone,
                 cell: upload.cell,
                 resolution: upload.resolution,
+                crop: upload.crop,
                 accuracy_meters: upload.accuracy_meters,
             },
         };

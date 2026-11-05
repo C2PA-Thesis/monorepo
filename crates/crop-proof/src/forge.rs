@@ -29,12 +29,19 @@ use subroutines::{
 use transcript::IOPTranscript;
 
 use crate::{
-    crop::{append, new_transcript, open},
+    crop::{self, append, new_transcript, open},
     hooks,
     iop::{self, challenge, check, poly, OpeningPoints, Poly, RangeCheck, IRREDUCIBLE},
     lattice,
     wire::{self, CropProof, Sumcheck},
-    Fingerprint, Pcs, ProverParams, RgbImage, CROP, F, NUM_VARS, ORIGINAL,
+    Fingerprint, Pcs, ProverParams, Rect, RgbImage, Size, F, NUM_VARS, ORIGINAL,
+};
+
+/// The forgeries target the rectangle the demo publishes.
+pub const RECT: Rect = Rect::LEFT_HALF;
+pub const CROP: Size = Size {
+    width: RECT.width,
+    height: RECT.height,
 };
 
 /// Published pixels that absorb the difference in A2, one per lattice
@@ -61,7 +68,7 @@ pub fn substitute_crop(
         "the published image must be {CROP}"
     );
     ensure!(target.size() == CROP, "the target must be {CROP}");
-    let challenges = hooks::crop_challenges(fingerprint, proof)?;
+    let challenges = hooks::crop_challenges(fingerprint, RECT, proof)?;
     let mut channels = Vec::with_capacity(3);
     for (honest, target) in published.channels().iter().zip(target.channels()) {
         let fitted = (0..ATTEMPTS)
@@ -227,12 +234,9 @@ fn prove_forged(pcs: &MultilinearProverParam<Bls12_381>, values: [Vec<F>; 3]) ->
     for channel in &channels {
         ranges.push(forged_range(channel, pcs, &mut transcript)?);
     }
-    let crop_challenges = check(
-        transcript.get_and_append_challenge_vectors(b"frievald", CROP.pixels()),
-        "deriving crop challenges",
-    )?;
+    let crop_challenges = crop::crop_challenges(&mut transcript, RECT)?;
     let crop = iop::prove_products(
-        &poly(iop::crop_weights(&crop_challenges)),
+        &poly(iop::crop_weights(RECT, &crop_challenges)),
         &channels,
         &mut transcript,
     )?;

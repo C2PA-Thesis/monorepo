@@ -2,6 +2,7 @@ use std::{fs, path::Path};
 
 use anyhow::{ensure, Context, Result};
 use c2pa::{create_signer, Builder, Reader, SigningAlg, ValidationState};
+use crop_proof::Rect;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -9,7 +10,7 @@ use crate::receipt::Receipt;
 
 /// Label of the custom assertion carrying the receipt and both proofs.
 pub const LABEL: &str = "edu.utdt.td8.zkloc";
-const VERSION: u32 = 2;
+const VERSION: u32 = 3;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -18,6 +19,8 @@ pub struct Assertion {
     pub receipt: Receipt,
     /// H3 cell the location proof claims.
     pub cell: String,
+    /// The rectangle of the original the crop proof claims these pixels are.
+    pub crop: Rect,
     /// Base64 BN254 Groth16 proof from location-proof.
     pub location_proof: String,
     /// Base64 HyperVerITAS PST proof from crop-proof.
@@ -28,6 +31,7 @@ impl Assertion {
     pub fn new(
         receipt: Receipt,
         cell: String,
+        crop: Rect,
         location_proof: String,
         image_proof: String,
     ) -> Self {
@@ -35,6 +39,7 @@ impl Assertion {
             version: VERSION,
             receipt,
             cell,
+            crop,
             location_proof,
             image_proof,
         }

@@ -70,6 +70,7 @@ fn upload_of(capture: &Capture) -> Upload {
         receipt: capture.receipt.clone(),
         cell: capture.summary.cell.clone(),
         resolution: capture.summary.resolution,
+        crop: capture.summary.crop,
         accuracy_meters: Some(5.0),
     }
 }
@@ -107,6 +108,12 @@ async fn accepts_a_signed_capture_and_rejects_tampered_ones() {
         image::load_photo(&workspace.sample_photo()).unwrap(),
         DEMO_PLACE.coordinate,
         DEMO_PLACE.cell,
+        crop_proof::Rect {
+            x: 200,
+            y: 100,
+            width: 640,
+            height: 360,
+        },
     )
     .unwrap();
     let genuine = serde_json::to_value(upload_of(&capture)).unwrap();
@@ -154,6 +161,11 @@ async fn accepts_a_signed_capture_and_rejects_tampered_ones() {
         "{body}"
     );
 
+    let mut wrong_crop = genuine.clone();
+    wrong_crop["crop"]["width"] = 900.into();
+    let (_, body) = post(&router, "/api/captures", &wrong_crop).await;
+    assert!(error_of(&body).contains("does not fit"), "{body}");
+
     let mut wrong_cell = genuine.clone();
     wrong_cell["cell"] = "87c2e3021ffffff".into();
     let (_, body) = post(&router, "/api/captures", &wrong_cell).await;
@@ -166,6 +178,7 @@ async fn accepts_a_signed_capture_and_rejects_tampered_ones() {
         capture.original.clone(),
         DEMO_PLACE.coordinate,
         DEMO_PLACE.cell,
+        crop_proof::Rect::LEFT_HALF,
     )
     .unwrap();
     let from_phone = serde_json::to_value(upload_of(&unknown)).unwrap();

@@ -5,9 +5,9 @@
 use ark_bls12_381::Fr as F;
 use ark_ff::UniformRand;
 use crop_proof::{
-    forge::{forge_crop_proof, solve, sorted_vector_for_product},
-    left_half, setup_with_rng, verify, Fingerprint, ProverParams, RgbImage, VerifierParams, CROP,
-    ORIGINAL,
+    crop,
+    forge::{forge_crop_proof, solve, sorted_vector_for_product, CROP, RECT},
+    setup_with_rng, verify, Fingerprint, ProverParams, RgbImage, VerifierParams, ORIGINAL,
 };
 use rand::{RngCore, SeedableRng};
 
@@ -39,7 +39,7 @@ fn forged_crop_of_another_picture_is_accepted() {
             .collect()
     });
     let target = RgbImage::new(CROP, gradient).unwrap();
-    assert_ne!(target, left_half(&original).unwrap());
+    assert_ne!(target, crop(&original, RECT).unwrap());
 
     // The forger needs only the public fingerprint. The rest of its working
     // image is plain gray, not the original.
@@ -50,11 +50,12 @@ fn forged_crop_of_another_picture_is_accepted() {
     .unwrap();
     let forged = forge_crop_proof(&prover, &fingerprint, &gray, &target).unwrap();
 
-    verify(&verifier, &target, &fingerprint, &forged)
+    verify(&verifier, &target, RECT, &fingerprint, &forged)
         .expect("the verifier accepts the gradient as a crop of the signed original");
     assert!(verify(
         &verifier,
-        &left_half(&original).unwrap(),
+        &crop(&original, RECT).unwrap(),
+        RECT,
         &fingerprint,
         &forged
     )

@@ -415,7 +415,8 @@ impl Ui {
                 println!("\n{} accepted", style("✓").green());
                 if let Some(claim) = &verdict.claim {
                     println!(
-                        "  these pixels are the left half of an original that device {} signed,\n  together with a coordinate in cell {}, at {} (device time)",
+                        "  these pixels are the {} of an original that device {} signed,\n  together with a coordinate in cell {}, at {} (device time)",
+                        claim.crop,
                         short(&claim.device),
                         claim.cell,
                         claim.captured_at

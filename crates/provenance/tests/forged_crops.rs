@@ -11,8 +11,8 @@ use std::{
 
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use crop_proof::{
-    forge::{forge_crop_proof, substitute_crop},
-    ProverParams, RgbImage, CROP, ORIGINAL,
+    forge::{forge_crop_proof, substitute_crop, CROP},
+    ProverParams, RgbImage, ORIGINAL,
 };
 use provenance::{
     image,
