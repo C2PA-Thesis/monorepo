@@ -35,7 +35,8 @@ require (
 // The ZKLP fork has no license, so its code is referenced here rather than copied.
 // gnark is replaced the same way the fork's own go.mod does; Go ignores that
 // replacement when the fork is used as a dependency.
+// The pinned commit is on the fork's c2p-77-sealed-hints branch.
 replace (
 	github.com/consensys/gnark => github.com/winderica/gnark v0.0.0-20240319143525-e30c94cd2e7e
-	github.com/tumberger/zk-Location => github.com/C2PA-Thesis/zk-Location v0.0.0-20260903012756-cc8f1c745156
+	github.com/tumberger/zk-Location => github.com/C2PA-Thesis/zk-Location v0.0.0-20261031000233-793d561e84e4
 )

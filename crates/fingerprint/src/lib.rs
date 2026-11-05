@@ -17,7 +17,7 @@ mod image;
 #[cfg(target_arch = "wasm32")]
 mod wasm;
 
-pub use image::{RgbImage, Size, ORIGINAL};
+pub use image::{test_image, RgbImage, Size, ORIGINAL};
 
 pub type F = ark_bls12_381::Fr;
 
@@ -28,6 +28,11 @@ pub const HASH_ROWS: usize = 128;
 
 /// Bytes of one field element in the fingerprint's binary form.
 pub const ELEMENT_BYTES: usize = 32;
+
+/// Test vector shared with the capture page and the C ABI: the SHA-256 of all
+/// 384 elements of `test_image`'s fingerprint, channel by channel, in binary.
+pub const TEST_IMAGE_DIGEST: &str =
+    "cfa3ff823a6ac9e044bf3ba042bb7f7b5fc50ac696ad86e439d03acc273f5083";
 
 /// Public binding to the original. It is deterministic, so anyone holding a
 /// candidate image can check whether it is the original.
@@ -51,10 +56,16 @@ impl Fingerprint {
             "fingerprints are defined for a {ORIGINAL} original, got {}",
             image.size()
         );
-        let [r, g, b] = image
-            .channels()
-            .each_ref()
-            .map(|channel| hash_channel(channel).iter().map(to_hex).collect());
+        let elements = hash_image(image.channels().each_ref().map(Vec::as_slice));
+        let mut channels = elements.chunks_exact(HASH_ROWS);
+        let [r, g, b] = std::array::from_fn(|_| {
+            channels
+                .next()
+                .expect("hash_image returns three channels")
+                .iter()
+                .map(to_hex)
+                .collect()
+        });
         Ok(Self {
             algorithm: ALGORITHM.to_string(),
             size: ORIGINAL,
@@ -99,9 +110,24 @@ pub fn matrix_row(row: usize) -> ChaCha8Rng {
 }
 
 fn hash_row(pixels: &[u8], row: usize) -> F {
+    // Summing the entries per pixel value first leaves 256 multiplications
+    // instead of one per pixel, which halves the time. Same entries, same order.
     let mut entries = matrix_row(row);
-    pixels.iter().fold(F::zero(), |sum, &pixel| {
-        sum + F::rand(&mut entries) * F::from(pixel)
+    let mut sums = [F::zero(); 256];
+    for &pixel in pixels {
+        sums[usize::from(pixel)] += F::rand(&mut entries);
+    }
+    sums.iter()
+        .zip(0u64..)
+        .fold(F::zero(), |total, (sum, value)| {
+            total + *sum * F::from(value)
+        })
+}
+
+/// All three channels in one pool of 384 rows, so no core idles between channels.
+fn hash_image(channels: [&[u8]; 3]) -> Vec<F> {
+    parallel_map(3 * HASH_ROWS, |index| {
+        hash_row(channels[index / HASH_ROWS], index % HASH_ROWS)
     })
 }
 
@@ -110,12 +136,29 @@ pub fn hash_channel(pixels: &[u8]) -> Vec<F> {
     parallel_map(HASH_ROWS, |row| hash_row(pixels, row))
 }
 
+fn write_elements(elements: &[F], out: &mut [u8]) {
+    assert_eq!(
+        out.len(),
+        elements.len() * ELEMENT_BYTES,
+        "output buffer does not fit the elements"
+    );
+    for (slot, element) in out.chunks_exact_mut(ELEMENT_BYTES).zip(elements) {
+        slot.copy_from_slice(&element.into_bigint().to_bytes_be());
+    }
+}
+
 /// Rows `rows` of one channel's hash as big-endian 32-byte elements, for
 /// callers that split the work themselves, like the page's web workers.
 pub fn hash_rows_into(pixels: &[u8], rows: std::ops::Range<usize>, out: &mut [u8]) {
-    for (slot, row) in out.chunks_exact_mut(ELEMENT_BYTES).zip(rows) {
-        slot.copy_from_slice(&hash_row(pixels, row).into_bigint().to_bytes_be());
-    }
+    let first = rows.start;
+    let elements = parallel_map(rows.len(), |offset| hash_row(pixels, first + offset));
+    write_elements(&elements, out);
+}
+
+/// The whole fingerprint in binary: R, G, then B, `HASH_ROWS` big-endian
+/// 32-byte elements each, the same values `Fingerprint::of` writes in hex.
+pub fn hash_image_into(channels: [&[u8]; 3], out: &mut [u8]) {
+    write_elements(&hash_image(channels), out);
 }
 
 /// `r^T A` for row weights `r`.
@@ -153,26 +196,40 @@ fn worker_count(tasks: usize) -> usize {
 }
 
 /// `(0..count).map(task)` spread over the available cores, in order.
+///
+/// Workers take the next task as they finish one, rather than a fixed share:
+/// Apple chips mix fast and slow cores, and a fixed split waits for the slow ones.
 #[cfg(not(target_arch = "wasm32"))]
 fn parallel_map<T: Send>(count: usize, task: impl Fn(usize) -> T + Sync) -> Vec<T> {
-    let workers = worker_count(count);
-    let per_worker = count.div_ceil(workers);
-    std::thread::scope(|scope| {
-        let task = &task;
-        let handles: Vec<_> = (0..workers)
-            .map(|worker| {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let next = AtomicUsize::new(0);
+    let done = std::thread::scope(|scope| {
+        let (task, next) = (&task, &next);
+        let handles: Vec<_> = (0..worker_count(count))
+            .map(|_| {
                 scope.spawn(move || {
-                    (worker * per_worker..((worker + 1) * per_worker).min(count))
-                        .map(task)
-                        .collect::<Vec<_>>()
+                    std::iter::from_fn(|| {
+                        let index = next.fetch_add(1, Ordering::Relaxed);
+                        (index < count).then(|| (index, task(index)))
+                    })
+                    .collect::<Vec<_>>()
                 })
             })
             .collect();
         handles
             .into_iter()
             .flat_map(|handle| handle.join().expect("fingerprint worker panicked"))
-            .collect()
-    })
+            .collect::<Vec<_>>()
+    });
+    let mut slots: Vec<Option<T>> = std::iter::repeat_with(|| None).take(count).collect();
+    for (index, value) in done {
+        slots[index] = Some(value);
+    }
+    slots
+        .into_iter()
+        .map(|slot| slot.expect("every task ran once"))
+        .collect()
 }
 
 /// The browser has no threads inside one wasm instance; the page runs
@@ -207,6 +264,10 @@ mod tests {
 
     use super::*;
 
+    fn hash_channel(pixels: &[u8]) -> Vec<F> {
+        parallel_map(HASH_ROWS, |row| hash_row(pixels, row))
+    }
+
     #[test]
     fn rows_are_deterministic_and_distinct() {
         let pixels = [1, 2, 3, 4];
@@ -214,6 +275,27 @@ mod tests {
         assert_eq!(first.len(), HASH_ROWS);
         assert_eq!(first, hash_channel(&pixels));
         assert_ne!(first[0], first[1]);
+    }
+
+    /// `hash_row` regroups the sum; it must still be `sum_i A[row][i] * pixel_i`.
+    #[test]
+    fn row_matches_the_definition() {
+        let pixels: Vec<u8> = (0..4096u32).map(|i| (i * 31 % 251) as u8).collect();
+        let mut entries = matrix_row(3);
+        let expected = pixels.iter().fold(F::zero(), |sum, &pixel| {
+            sum + F::rand(&mut entries) * F::from(pixel)
+        });
+        assert_eq!(hash_row(&pixels, 3), expected);
+    }
+
+    #[test]
+    fn parallel_map_keeps_order() {
+        let squares = parallel_map(1000, |index| index * index);
+        assert_eq!(
+            squares,
+            (0..1000).map(|index| index * index).collect::<Vec<_>>()
+        );
+        assert!(parallel_map(0, |index| index).is_empty());
     }
 
     #[test]
@@ -225,32 +307,22 @@ mod tests {
         assert!(from_hex("0x01").is_err());
     }
 
-    #[test]
-    fn binary_rows_match_the_hex_fingerprint() {
-        let image = image::test_image();
-        let fingerprint = Fingerprint::of(&image).unwrap();
-        let mut out = vec![0u8; 2 * ELEMENT_BYTES];
-        hash_rows_into(&image.channels()[1], 5..7, &mut out);
-        assert_eq!(format!("0x{}", hex::encode(&out[..32])), fingerprint.g[5]);
-        assert_eq!(format!("0x{}", hex::encode(&out[32..])), fingerprint.g[6]);
-    }
-
-    /// Test vector shared with the capture page: the SHA-256 of all 384
-    /// elements of the test image's fingerprint, channel by channel, in binary.
+    /// `Fingerprint::of` and `hash_rows_into`, the page's path, against the
+    /// pinned digest. One fingerprint only: CI runs these tests unoptimized.
     #[test]
     fn test_image_fingerprint_digest() {
         let image = image::test_image();
-        let mut out = vec![0u8; 3 * HASH_ROWS * ELEMENT_BYTES];
-        for (channel, slot) in image
-            .channels()
-            .iter()
-            .zip(out.chunks_exact_mut(HASH_ROWS * ELEMENT_BYTES))
-        {
-            hash_rows_into(channel, 0..HASH_ROWS, slot);
-        }
-        assert_eq!(
-            hex::encode(Sha256::digest(&out)),
-            "cfa3ff823a6ac9e044bf3ba042bb7f7b5fc50ac696ad86e439d03acc273f5083"
-        );
+        let fingerprint = Fingerprint::of(&image).unwrap();
+        let binary: Vec<u8> = [&fingerprint.r, &fingerprint.g, &fingerprint.b]
+            .into_iter()
+            .flatten()
+            .flat_map(|element| hex::decode(&element[2..]).unwrap())
+            .collect();
+        assert_eq!(hex::encode(Sha256::digest(&binary)), TEST_IMAGE_DIGEST);
+
+        let mut rows = vec![0u8; 2 * ELEMENT_BYTES];
+        hash_rows_into(&image.channels()[1], 5..7, &mut rows);
+        let start = (HASH_ROWS + 5) * ELEMENT_BYTES;
+        assert_eq!(rows, binary[start..start + rows.len()]);
     }
 }

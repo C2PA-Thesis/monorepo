@@ -2,9 +2,13 @@ name: scripts
 
 on:
   push:
-    paths: ['scripts/**', '.github/workflows/scripts.yml']
+    paths: &paths
+      - 'scripts/**'
+      - 'ios/scripts/**'
+      - 'crates/fingerprint-ffi/c/*.sh'
+      - '.github/workflows/scripts.yml'
   pull_request:
-    paths: ['scripts/**', '.github/workflows/scripts.yml']
+    paths: *paths
 
 jobs:
   shellcheck:
@@ -13,4 +17,6 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Lint every script
-        run: shellcheck --external-sources --source-path=SCRIPTDIR scripts/*.sh
+        run: >
+          shellcheck --external-sources --source-path=SCRIPTDIR
+          scripts/*.sh ios/scripts/*.sh crates/fingerprint-ffi/c/*.sh

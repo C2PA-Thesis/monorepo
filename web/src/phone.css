@@ -1,50 +1,45 @@
 body.phone {
-  padding: max(1rem, env(safe-area-inset-top)) 1rem calc(1.5rem + env(safe-area-inset-bottom));
+  padding: max(16px, env(safe-area-inset-top)) 16px calc(32px + env(safe-area-inset-bottom));
 }
 
 .top,
-.steps,
-.foot {
+.steps {
   max-width: 34rem;
   margin: 0 auto;
 }
 
-.brand {
-  display: flex;
-  gap: 0.75rem;
-  align-items: center;
-  padding: 0.25rem 0.25rem 1rem;
-}
-
-.logo {
-  flex: none;
-  width: 2.2rem;
-  height: 2.2rem;
-  color: var(--accent);
-}
-
-.brand h1 {
-  font-size: 1.15rem;
+.top {
+  padding: 4px 4px 16px;
 }
 
 .steps {
   display: grid;
-  gap: 0.75rem;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
 }
 
+/* Step cards: number and title; collapsed to one line with a value once done. */
+
 .step {
-  padding: 1rem;
+  padding: 16px;
+  transition: opacity var(--ease), box-shadow var(--ease);
+}
+
+/* Only the card holding the primary action lifts; Crop and Area stay flat beside Send. */
+.step[data-state="active"]:is(#step-pair, #step-photo, #step-send) {
+  box-shadow: var(--shadow-2);
 }
 
 .step-head {
   display: flex;
-  gap: 0.75rem;
-  align-items: flex-start;
+  align-items: center;
+  gap: 10px;
+  min-height: 24px;
 }
 
 .step-head h2 {
-  font-size: 1.02rem;
-  padding-top: 0.15rem;
+  flex: none;
+  font-size: 17px;
 }
 
 .step-num {
@@ -52,143 +47,167 @@ body.phone {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 1.75rem;
-  height: 1.75rem;
-  font-size: 0.85rem;
-  font-weight: 700;
+  width: 22px;
+  height: 22px;
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
   border-radius: 50%;
-  color: var(--accent-ink);
-  background: var(--accent);
+  color: var(--on-ink);
+  background: var(--ink);
 }
 
 .step-summary {
-  margin-top: 0.15rem;
-  font-size: 0.86rem;
+  flex: 1;
+  min-width: 0;
+  margin-left: auto;
+  font-size: 13px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
   color: var(--muted);
-  overflow-wrap: anywhere;
-}
-
-.step-summary:empty {
-  display: none;
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .step-body {
   display: grid;
-  gap: 0.85rem;
-  margin-top: 1rem;
+  gap: 12px;
+  margin-top: 16px;
 }
 
+/* A locked step is a bare row, not a card: its title is all it has to say. */
 .step[data-state="locked"] {
-  opacity: 0.45;
+  padding-top: 10px;
+  padding-bottom: 10px;
+  background: transparent;
+  border-color: transparent;
   box-shadow: none;
 }
 
-.step[data-state="locked"] .step-num {
-  color: var(--muted);
-  background: var(--surface-2);
+.step[data-state="locked"] h2 {
+  color: var(--faint);
 }
 
-.step[data-state="locked"] .step-summary,
+.step[data-state="locked"] .step-num {
+  color: var(--faint);
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--line-strong);
+}
+
+.step:not([data-state="done"]) .step-summary,
 .step[data-state="locked"] .step-body,
 .step[data-state="done"] .step-body {
   display: none;
 }
 
+/* A done Publishing step reopens its timeline from its head. */
+.step[data-state="done"][data-open] .step-body {
+  display: grid;
+}
+
+.step-head[role="button"] {
+  cursor: pointer;
+}
+
 .step[data-state="done"] .step-num {
-  color: var(--ok);
-  background: var(--ok-soft);
+  color: var(--on-ink);
+  background: var(--ink);
   font-size: 0;
 }
 
 .step[data-state="done"] .step-num::after {
   content: "";
-  width: 0.7rem;
-  height: 0.38rem;
-  margin-top: -0.15rem;
-  border-left: 2.2px solid currentColor;
-  border-bottom: 2.2px solid currentColor;
+  width: 9px;
+  height: 5px;
+  margin-top: -2px;
+  border-left: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
   transform: rotate(-45deg);
 }
 
-.step[data-state="active"] {
-  border-color: color-mix(in srgb, var(--accent) 35%, var(--line));
+/* A done photo step reopens the camera. */
+#step-photo[data-state="done"] {
+  cursor: pointer;
 }
 
-.hint {
-  font-size: 0.82rem;
-  color: var(--muted);
+.small-line {
+  font-size: 13px;
 }
 
-.hint.warning {
-  color: var(--private);
+.icon-lg {
+  width: 20px;
+  height: 20px;
 }
+
+/* Pair */
 
 .pair-form {
   display: flex;
-  gap: 0.5rem;
+  gap: 8px;
 }
 
 .pair-form input {
   flex: 1;
+  width: 100%;
   min-width: 0;
-  min-height: 2.75rem;
-  padding: 0 0.85rem;
-  font: inherit;
+  min-height: 44px;
+  padding: 0 12px;
   font-family: var(--mono);
-  font-size: 1.35rem;
-  letter-spacing: 0.3em;
+  font-size: var(--code-size);
+  font-weight: 600;
+  letter-spacing: var(--code-tracking);
+  font-variant-numeric: tabular-nums;
   color: var(--ink);
   background: var(--surface-2);
-  border: 1px solid var(--line);
-  border-radius: 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
 }
 
-.gps {
-  display: flex;
-  gap: 0.6rem;
-  align-items: center;
-  padding: 0.6rem 0.8rem;
-  font-size: 0.9rem;
-  background: var(--surface-2);
-  border-radius: 10px;
+.pair-form input::placeholder {
+  color: var(--faint);
 }
 
-.gps-dot {
-  flex: none;
-  width: 0.6rem;
-  height: 0.6rem;
-  border-radius: 50%;
-  background: var(--faint);
+.pair-form input:focus {
+  outline: none;
+  border-color: var(--ink);
 }
 
-.gps[data-state="waiting"] .gps-dot {
-  background: var(--accent);
-  animation: pulse 1.2s ease-in-out infinite;
+/* GPS: a pill only while it is not OK. */
+
+.gps[data-state="ok"] {
+  display: none;
 }
 
-.gps[data-state="ok"] .gps-dot {
-  background: var(--ok);
-}
-
-.gps[data-state="error"] {
+.gps[data-state="error"] .pill {
   color: var(--bad);
   background: var(--bad-soft);
 }
 
-.gps[data-state="error"] .gps-dot {
-  background: var(--bad);
+.gps-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.gps[data-state="waiting"] .gps-dot {
+  animation: pulse 1.2s ease-in-out infinite;
 }
 
 @keyframes pulse {
   50% {
-    opacity: 0.3;
+    opacity: 0.25;
   }
 }
+
+/* Crop */
 
 .stage {
   position: relative;
   overflow: hidden;
-  border-radius: 10px;
+  border-radius: var(--r-md);
   touch-action: none;
   user-select: none;
   -webkit-user-select: none;
@@ -204,89 +223,47 @@ body.phone {
 .crop-box {
   position: absolute;
   border: 2px solid #fff;
-  outline: 1px solid rgb(0 0 0 / 35%);
-  box-shadow: 0 0 0 9999px rgb(0 0 0 / 55%);
+  outline: 1px solid var(--ink);
+  box-shadow: 0 0 0 9999px var(--overlay);
   pointer-events: none;
-}
-
-.crop-box .tag {
-  position: absolute;
-  top: 0.3rem;
-  left: 0.3rem;
-  color: #fff;
-  background: var(--accent);
-}
-
-.legend {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.35rem 1rem;
-  font-size: 0.82rem;
-  color: var(--muted);
-}
-
-.swatch {
-  display: inline-block;
-  width: 0.7rem;
-  height: 0.7rem;
-  margin-right: 0.35rem;
-  vertical-align: -0.05rem;
-  border-radius: 3px;
-}
-
-.swatch.public {
-  border: 2px solid var(--accent);
-}
-
-.swatch.private {
-  background: rgb(0 0 0 / 55%);
 }
 
 .presets {
   display: flex;
-  flex-wrap: wrap;
-  gap: 0.4rem;
+  gap: 8px;
+  margin: 0 -16px;
+  padding: 0 16px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.presets::-webkit-scrollbar {
+  display: none;
+}
+
+/* Area */
+
+.map {
+  height: 180px;
 }
 
 .control {
   display: grid;
-  gap: 0.35rem;
-  font-size: 0.9rem;
+  gap: 8px;
 }
 
 .control-row {
   display: flex;
   justify-content: space-between;
-  gap: 0.5rem;
+  align-items: baseline;
+  gap: 8px;
 }
 
-.split {
+/* Sign and send */
+
+.leaves {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 0.75rem;
-}
-
-@media (max-width: 26rem) {
-  .split {
-    grid-template-columns: 1fr;
-  }
-}
-
-.split > div {
-  padding: 0.75rem;
-  background: var(--surface-2);
-  border-radius: 10px;
-}
-
-ul.plain {
-  margin: 0.5rem 0 0;
-  padding: 0;
-  list-style: none;
-  font-size: 0.85rem;
-}
-
-ul.plain li + li {
-  margin-top: 0.3rem;
+  gap: 2px;
 }
 
 .local-steps {
@@ -295,10 +272,13 @@ ul.plain li + li {
   list-style: none;
 }
 
+/* Result */
+
 .result {
   display: grid;
-  gap: 1rem;
-  padding: 1rem;
+  gap: 16px;
+  padding: 16px;
+  box-shadow: var(--shadow-2);
 }
 
 .published-image {
@@ -306,16 +286,20 @@ ul.plain li + li {
   max-width: 100%;
   max-height: 22rem;
   margin: 0 auto;
-  border-radius: 8px;
+}
+
+.result .well {
+  background: var(--surface-2);
+  border-radius: var(--r-md);
+  overflow: hidden;
 }
 
 .actions {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 0.5rem;
+  gap: 8px;
 }
 
-.foot {
-  padding: 1.25rem 0.25rem 0;
-  text-align: center;
+.actions.single {
+  grid-template-columns: 1fr;
 }

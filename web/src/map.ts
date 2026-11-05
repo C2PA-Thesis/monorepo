@@ -23,14 +23,8 @@ export class CellMap {
     const map = this.ensure();
     if (at) {
       const point: L.LatLngExpression = [at.latitude, at.longitude];
-      this.position ??= L.circleMarker(point, {
-        radius: 6,
-        color: "#fff",
-        weight: 2,
-        fillColor: "#e8590c",
-        fillOpacity: 1,
-      })
-        .bindTooltip("You, exactly. Never published.")
+      this.position ??= L.circleMarker(point, { radius: 6, className: "you-dot" })
+        .bindTooltip("Your position, private")
         .addTo(map);
       this.position.setLatLng(point);
     }
@@ -39,8 +33,9 @@ export class CellMap {
     const outline = await api.outline(cell);
     if (this.shown !== cell) return undefined;
     this.cell?.remove();
-    this.cell = L.polygon(outline.boundary, { color: "#2f6fde", weight: 2, fillOpacity: 0.18 })
-      .bindTooltip(`Cell ${cell}, ${area(outline.area_km2)}. Published.`)
+    // Stroke and fill come from the stylesheet's tokens, so the cell follows the theme.
+    this.cell = L.polygon(outline.boundary, { className: "cell-shape" })
+      .bindTooltip(`${area(outline.area_km2)}, published`)
       .addTo(map);
     map.invalidateSize();
     map.fitBounds(this.cell.getBounds(), { padding: [24, 24], maxZoom: 17 });
@@ -56,6 +51,7 @@ export class CellMap {
   private ensure(): L.Map {
     if (this.map) return this.map;
     this.map = L.map(this.element, { zoomControl: false, attributionControl: true, scrollWheelZoom: false });
+    this.map.attributionControl.setPrefix(false);
     L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
       maxZoom: 19,
       attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',

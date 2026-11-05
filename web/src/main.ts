@@ -7,8 +7,8 @@ import "./phone.css";
 import * as api from "./api";
 import { base64, framing, type Framing } from "./camera";
 import { cropSelector, PRESETS, type CropSelector, type Rect } from "./crop";
-import { $, area, h, icon, rect, short, svg, time } from "./dom";
-import { envelope, freshSalt } from "./envelope";
+import { $, area, cellShort, h, icon, rect, short, svg, when } from "./dom";
+import { envelope, freshSalt, hints } from "./envelope";
 import { fingerprint } from "./fingerprint";
 import { loadOrCreateKey, type DeviceKey } from "./key";
 import { CellMap } from "./map";
@@ -33,10 +33,13 @@ let gpsWaiters: ((fix: GeolocationPosition) => void)[] = [];
 let region: { cell: string; area?: number } | undefined;
 const map = new CellMap();
 
-function step(name: StepName, state: StepState, summary?: string) {
+function step(name: StepName, state: StepState, ...summary: (string | Node)[]) {
   $(`step-${name}`).dataset.state = state;
-  if (summary !== undefined) $(`${name}-summary`).textContent = summary;
+  if (summary.length) $(`${name}-summary`).replaceChildren(...summary);
 }
+
+/// An identifier inside a step's summary, set in mono as the presenter sets it.
+const mono = (text: string) => h("span", { class: "mono" }, text);
 
 async function main() {
   $("map-slot").append(map.element);
@@ -62,7 +65,7 @@ async function pairing() {
   try {
     trusted = await api.isTrusted(key.id);
     if (!trusted && code) {
-      $("pair-status").textContent = "Pairing with the laptop…";
+      $("pair-status").textContent = "Pairing…";
       await api.pair(code, key.pem);
       trusted = true;
     }
@@ -73,7 +76,7 @@ async function pairing() {
   }
   if (trusted) return paired();
 
-  if (!code) $("pair-status").textContent = `This phone's key is ${short(key.id)}. Type the code the laptop shows.`;
+  if (!code) $("pair-status").textContent = "Enter the code on the laptop.";
   const form = $<HTMLFormElement>("pair-form");
   form.hidden = false;
   form.onsubmit = async (event) => {
@@ -89,21 +92,21 @@ async function pairing() {
 }
 
 function paired() {
-  step("pair", "done", `Trusted by the laptop as device ${short(key.id)}`);
+  step("pair", "done", "Paired · ", mono(short(key.id)));
   step("photo", "active");
 }
 
 // 2. GPS and photo
 
 function watchGps() {
-  if (!("geolocation" in navigator)) return gps("error", "This browser has no geolocation.");
+  if (!("geolocation" in navigator)) return gps("error", "No location in this browser");
   if (!window.isSecureContext) {
-    return gps("error", "Location needs HTTPS. Open the https address the laptop shows.");
+    return gps("error", "Location needs HTTPS", "Open the https address the laptop shows.");
   }
   navigator.geolocation.watchPosition(
     (position) => {
       fix = position;
-      gps("ok", `GPS fix, ±${Math.round(position.coords.accuracy)} m`);
+      gps("ok", `±${Math.round(position.coords.accuracy)} m`);
       for (const waiter of gpsWaiters) waiter(position);
       gpsWaiters = [];
     },
@@ -111,14 +114,20 @@ function watchGps() {
       const denied = error.code === error.PERMISSION_DENIED;
       gps(
         "error",
-        denied ? "Location access is blocked for this page." : `No GPS fix yet: ${error.message}`,
-        denied
-          ? "On iPhone: Settings › Privacy & Security › Location Services › Safari Websites › While Using. Then reload this page."
-          : undefined,
+        denied ? "Location blocked" : "No GPS fix yet",
+        denied ? locationHelp() : undefined,
       );
     },
     { enableHighAccuracy: true, maximumAge: 0 },
   );
+}
+
+/// One sentence naming where this browser lets location back in.
+function locationHelp(): string {
+  const ios = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  if (!ios) return "Allow location for this site, then reload.";
+  const safari = !/CriOS|FxiOS|EdgiOS/.test(navigator.userAgent);
+  return safari ? "Allow Location for Safari in Settings, then reload." : "Allow Location for this browser in Settings, then reload.";
 }
 
 function gps(state: "waiting" | "ok" | "error", text: string, help?: string) {
@@ -135,19 +144,16 @@ function nextFix(): Promise<GeolocationPosition> {
 async function onPhoto(file: File) {
   // The time is taken when the photo reaches the page, a few seconds after the shutter.
   const capturedAt = timestamp(new Date());
-  $("photo-summary").textContent = fix ? "" : "Waiting for a GPS fix…";
+  $("photo-error").hidden = true;
   const position = await nextFix();
   shot = { framing: await framing(file, $<HTMLCanvasElement>("preview")), capturedAt, fix: position };
-  $("frame-control").hidden = !shot.framing.slidable;
+  $("frame").hidden = !shot.framing.slidable;
   $<HTMLInputElement>("frame").value = "0.5";
   $("result").hidden = true;
-  step(
-    "photo",
-    "done",
-    `${time(capturedAt)}, GPS ±${Math.round(position.coords.accuracy)} m. Tap to retake.`,
-  );
+  step("photo", "done", `${when(capturedAt)} · ±${Math.round(position.coords.accuracy)} m`);
   for (const name of ["frame", "region", "send"] as const) step(name, "active");
   step("laptop", "locked", "");
+  foldable($("step-laptop"), false);
   $<HTMLButtonElement>("submit").disabled = false;
   $("local-steps").hidden = true;
   map.resize();
@@ -157,13 +163,11 @@ async function onPhoto(file: File) {
 // 3. Crop
 
 function onCrop(chosen: Rect) {
-  $("crop-text").textContent = `Now ${rect(chosen)}.`;
-  $("frame-summary").textContent = `The ${rect(chosen)} of the 1024×512 frame`;
+  $("frame-summary").textContent = rect(chosen);
   for (const chip of $("presets").children) {
     const preset = PRESETS.find((each) => each.name === chip.textContent);
     chip.setAttribute("aria-pressed", String(!!preset && sameRect(preset.rect, chosen)));
   }
-  renderPublished(chosen);
 }
 
 const sameRect = (a: Rect, b: Rect) => a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
@@ -181,27 +185,22 @@ async function lookupCell() {
     const found = await api.cell(coords.latitude, coords.longitude, resolution);
     if (mine !== lookup) return;
     region = { cell: found.cell };
-    $("cell-text").textContent = `Cell ${found.cell}. The published file names this cell, never the point inside it.`;
-    $("cell-text").className = "hint";
+    $("cell-text").hidden = true;
     $<HTMLButtonElement>("submit").disabled = false;
     const outline = await map.show(found.cell, coords);
     if (outline && mine === lookup) {
       region.area = outline.area_km2;
       $("resolution-text").textContent = verdict.resolutionText(resolution, outline.area_km2);
-      $("cell-text").textContent = `Cell ${found.cell}, ${area(outline.area_km2)}. The published file names this cell, never the point inside it.`;
       warnAccuracy(outline.area_km2, coords.accuracy);
     }
   } catch (error) {
     if (mine !== lookup) return;
     region = undefined;
     $("cell-text").textContent = `${message(error)}. Try another size.`;
-    $("cell-text").className = "hint error-text";
+    $("cell-text").hidden = false;
     $<HTMLButtonElement>("submit").disabled = true;
   }
-  $("region-summary").textContent = region
-    ? `Cell ${region.cell}${region.area ? `, ${area(region.area)}` : ""}`
-    : "";
-  renderPublished();
+  $("region-summary").replaceChildren(...(region ? [mono(cellShort(region.cell)), region.area ? ` · ${area(region.area)}` : ""] : []));
 }
 
 function warnAccuracy(km2: number, accuracy: number) {
@@ -209,22 +208,10 @@ function warnAccuracy(km2: number, accuracy: number) {
   const width = Math.sqrt(km2) * 1000;
   const warning = $("accuracy-warning");
   warning.hidden = accuracy * 2 < width;
-  warning.textContent = `The GPS fix is only accurate to ±${Math.round(accuracy)} m, which is coarse for a cell this small. The photo may have been taken in a neighbouring cell.`;
+  warning.textContent = `GPS ±${Math.round(accuracy)} m: the photo may fall in a neighbouring cell.`;
 }
 
 // 5. Sign and send
-
-function renderPublished(chosen: Rect = crop.get()) {
-  const items = [
-    `The ${rect(chosen)} crop`,
-    region ? `Cell ${region.cell}${region.area ? ` (${area(region.area)})` : ""}` : "The cell",
-    shot ? `Capture time, ${time(shot.capturedAt)}` : "The capture time",
-    `This phone's key id, ${short(key?.id ?? "")}`,
-    "A fingerprint of the whole frame (384 numbers)",
-    "An envelope that seals the coordinate",
-  ];
-  $("published-list").replaceChildren(...items.map((item) => h("li", {}, item)));
-}
 
 async function submit() {
   if (!shot || !region) return;
@@ -235,19 +222,24 @@ async function submit() {
   const local = new LocalSteps($("local-steps"));
   try {
     const { coords } = shot.fix;
-    const secrets = { latitude: coords.latitude, longitude: coords.longitude, salt: freshSalt() };
+    const secrets = {
+      latitude: coords.latitude,
+      longitude: coords.longitude,
+      salt: freshSalt(),
+      hints: hints(coords.latitude, coords.longitude),
+    };
     const { channels, png } = await shot.framing.original();
 
-    local.start("Fingerprint the whole frame, in this browser");
+    local.start("Fingerprint");
     const print = await fingerprint(channels, (done, total) => local.progress(done / total));
     local.done();
-    local.start("Seal the coordinate in an envelope (MiMC)");
-    const sealed = envelope(secrets.latitude, secrets.longitude, secrets.salt);
-    local.done(short(sealed));
-    local.start("Sign fingerprint and envelope with this phone's key");
+    local.start("Seal position");
+    const sealed = envelope(secrets.latitude, secrets.longitude, secrets.salt, secrets.hints);
+    local.done();
+    local.start("Sign");
     const receipt = await signReceipt(key, print, sealed, shot.capturedAt);
-    local.done(`device ${short(receipt.device)}`);
-    local.start("Send to the laptop, which checks it as a reader would");
+    local.done();
+    local.start("Send");
     const accepted = await api.upload({
       original_png: await base64(png),
       secrets,
@@ -257,8 +249,8 @@ async function submit() {
       crop: crop.get(),
       accuracy_meters: coords.accuracy,
     });
-    local.done(accepted.id);
-    step("send", "done", `Signed and accepted as ${accepted.id}`);
+    local.done();
+    step("send", "done", "Sent");
     await follow(accepted.id);
   } catch (error) {
     local.fail(message(error));
@@ -280,37 +272,44 @@ class LocalSteps {
     this.started = performance.now();
     this.current = h(
       "li",
-      { class: "row is-running" },
-      h("span", { class: "mark" }, h("span", { class: "spinner" })),
-      h("div", { class: "row-body" }, h("div", { class: "row-title" }, h("span", {}, title), h("span", { class: "seconds" }))),
+      { class: "is-running" },
+      h(
+        "div",
+        { class: "row-line" },
+        h("span", { class: "mark" }, h("span", { class: "spinner" })),
+        h("span", { class: "row-title" }, title),
+        h("span", { class: "seconds" }),
+      ),
     );
     this.list.append(this.current);
   }
 
   progress(fraction: number) {
-    const body = this.current?.querySelector(".row-body");
+    const body = this.current;
     if (!body) return;
     const bar = body.querySelector(".progress > span") as HTMLElement | null;
     if (bar) bar.style.width = `${fraction * 100}%`;
     else body.append(h("div", { class: "progress" }, h("span", { style: `width: ${fraction * 100}%` })));
   }
 
-  done(detail?: string) {
-    this.finish("is-done", icon.check, detail);
+  done() {
+    this.finish("is-done", icon.check);
   }
 
   fail(reason: string) {
-    if (!this.current) this.start("Prepare the capture");
+    if (!this.current) this.start("Prepare");
     this.finish("is-failed", icon.cross, reason);
   }
 
-  private finish(state: string, mark: string, detail?: string) {
+  private finish(state: string, mark: string, reason?: string) {
     if (!this.current) return;
-    this.current.className = `row ${state}`;
+    this.current.className = state;
     this.current.querySelector(".mark")!.replaceChildren(svg(mark));
-    this.current.querySelector(".seconds")!.textContent = `${((performance.now() - this.started) / 1000).toFixed(1)} s`;
+    // Steps under a tenth of a second show no time, as on the timeline.
+    const took = (performance.now() - this.started) / 1000;
+    this.current.querySelector(".seconds")!.textContent = took >= 0.05 ? seconds(took) : "";
     this.current.querySelector(".progress")?.remove();
-    if (detail) this.current.querySelector(".row-body")!.append(h("div", { class: "row-detail" }, detail));
+    if (reason) this.current.append(h("p", { class: "row-reason" }, reason));
     this.current = undefined;
   }
 }
@@ -319,6 +318,7 @@ class LocalSteps {
 
 async function follow(id: string) {
   step("laptop", "active", "");
+  foldable($("step-laptop"), false);
   const timeline = new Timeline(["publish", "verify"]);
   $("laptop-body").replaceChildren(timeline.element);
   let status: api.Status | undefined;
@@ -331,25 +331,52 @@ async function follow(id: string) {
     }
     if (status.phase === "stored") {
       $("laptop-body").replaceChildren(
-        h(
-          "p",
-          {},
-          "The laptop stored the capture without publishing it. Publish it there with ",
-          h("code", {}, `scripts/publish.sh ${id}`),
-          ".",
-        ),
+        h("p", { class: "muted" }, "Stored, not published. Run ", h("code", {}, `scripts/publish.sh ${id}`), " on the laptop."),
       );
       return;
     }
     timeline.update(status.events, status.phase === "failed" ? (status.error ?? "failed") : undefined);
     if (!api.isRunning(status.phase)) break;
-    $("laptop-summary").textContent =
-      status.phase === "queued" ? "Waiting for another capture to finish" : "Working…";
     await sleep(700);
   }
-  $("laptop-summary").textContent =
-    status.phase === "accepted" ? "Published and verified" : status.phase === "rejected" ? "Rejected" : "Failed";
+  // The result card says the verdict; the folded row says how long it took.
+  step("laptop", "done", seconds(total(status.events)));
+  foldable($("step-laptop"), true);
   showResult(status);
+}
+
+/// The time the laptop's steps took, as the timeline's groups add it up.
+function total(events: api.Event[]): number {
+  return events.reduce(
+    (sum, event) => sum + (event.event === "finished" || event.event === "passed" || event.event === "rejected" ? event.seconds : 0),
+    0,
+  );
+}
+
+/// A done step whose head reopens its body, as the Publishing step keeps its timeline.
+function foldable(card: HTMLElement, on: boolean) {
+  const head = card.querySelector<HTMLElement>(".step-head")!;
+  delete card.dataset.open;
+  if (!on) {
+    for (const name of ["role", "tabindex", "aria-expanded"]) head.removeAttribute(name);
+    head.onclick = head.onkeydown = null;
+    return;
+  }
+  head.setAttribute("role", "button");
+  head.tabIndex = 0;
+  head.setAttribute("aria-expanded", "false");
+  const toggle = () => {
+    const open = card.dataset.open === undefined;
+    if (open) card.dataset.open = "";
+    else delete card.dataset.open;
+    head.setAttribute("aria-expanded", String(open));
+  };
+  head.onclick = toggle;
+  head.onkeydown = (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    toggle();
+  };
 }
 
 // 7. Result
@@ -357,38 +384,41 @@ async function follow(id: string) {
 function showResult(status: api.Status) {
   const card = $("result");
   card.hidden = false;
-  const again = h("button", { type: "button", class: "button-quiet", onclick: retake }, "Take another");
+  const again = h("button", { type: "button", class: "secondary", onclick: retake }, "Take another");
   if (status.phase !== "accepted" || !status.claim) {
     card.replaceChildren(
       verdict.rejected(
         status.phase === "rejected" ? "Rejected" : "Publishing failed",
-        status.error ?? "unknown error",
+        verdict.stopped(status.events, status.error),
       ),
-      h("div", { class: "actions" }, again),
+      h("div", { class: "actions single" }, again),
     );
     card.scrollIntoView({ behavior: "smooth" });
     return;
   }
   const resultMap = new CellMap();
+  const claim = status.claim;
+  const facts = verdict.facts(claim);
+  // The same order as the presenter's verdict card: verdict, image, map, facts, caveat, then the actions.
   card.replaceChildren(
-    verdict.accepted(status.claim),
+    verdict.accepted(),
     h(
       "div",
-      { class: "checker", style: "border-radius: 8px; padding: 0.5rem" },
+      { class: "well" },
       h("img", { class: "published-image", src: api.signedUrl(status.id), alt: "The published crop" }),
     ),
-    verdict.facts(status.claim),
     resultMap.element,
+    facts,
+    h("p", { class: "caveat" }, verdict.CAVEAT),
     h(
       "div",
       { class: "actions" },
       h("a", { class: "button", href: api.signedUrl(status.id), download: `${status.id}.png` }, "Download"),
       again,
     ),
-    h("p", { class: "caveat" }, verdict.CAVEAT),
   );
   card.scrollIntoView({ behavior: "smooth" });
-  void resultMap.show(status.claim.cell);
+  void resultMap.show(claim.cell).then((outline) => outline && facts.replaceWith(verdict.facts(claim, outline.area_km2)));
 }
 
 function retake() {
@@ -396,6 +426,7 @@ function retake() {
   shot = undefined;
   step("photo", "active", "");
   for (const name of ["frame", "region", "send", "laptop"] as const) step(name, "locked", "");
+  foldable($("step-laptop"), false);
   $("local-steps").hidden = true;
   $<HTMLInputElement>("photo").value = "";
   $("step-photo").scrollIntoView({ behavior: "smooth" });
@@ -404,7 +435,12 @@ function retake() {
 function wireControls() {
   $<HTMLInputElement>("photo").onchange = (event) => {
     const file = (event.target as HTMLInputElement).files?.[0];
-    if (file) void onPhoto(file).catch((error) => ($("photo-summary").textContent = message(error)));
+    if (file) {
+      void onPhoto(file).catch((error) => {
+        $("photo-error").textContent = message(error);
+        $("photo-error").hidden = false;
+      });
+    }
   };
   // A done photo step reopens the camera.
   $("step-photo").onclick = (event) => {
@@ -424,6 +460,7 @@ function wireControls() {
   $("resolution-text").textContent = verdict.resolutionText(7);
 }
 
+const seconds = (value: number) => `${value.toFixed(1)} s`;
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
 

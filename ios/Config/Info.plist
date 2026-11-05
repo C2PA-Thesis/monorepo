@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDisplayName</key>
+	<string>Capture</string>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+	<key>NSCameraUsageDescription</key>
+	<string>Capture takes the photos it certifies, and scans the code on your laptop to connect.</string>
+	<key>NSFaceIDUsageDescription</key>
+	<string>Face ID confirms it's you before this iPhone signs a photo.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Capture sends your photos to your laptop on this Wi-Fi.</string>
+	<key>NSLocationTemporaryUsageDescriptionDictionary</key>
+	<dict>
+		<key>capture</key>
+		<string>Precise location places the photo in the right area.</string>
+	</dict>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>To save your verified photos, with their proof, to your library.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>So each photo can prove where it was taken. Your location stays private.</string>
+	<key>UIAppFonts</key>
+	<array>
+		<string>HankenGrotesk-Regular.ttf</string>
+		<string>HankenGrotesk-Medium.ttf</string>
+		<string>HankenGrotesk-SemiBold.ttf</string>
+		<string>HankenGrotesk-Bold.ttf</string>
+		<string>IBMPlexMono-Regular.ttf</string>
+		<string>IBMPlexMono-Medium.ttf</string>
+	</array>
+	<key>UILaunchScreen</key>
+	<dict/>
+	<key>UIRequiredDeviceCapabilities</key>
+	<array>
+		<string>arm64</string>
+	</array>
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+	</array>
+</dict>
+</plist>

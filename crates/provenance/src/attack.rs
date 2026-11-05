@@ -175,7 +175,7 @@ pub const ATTACKS: &[Attack] = &[
     Attack {
         name: "fine-cell",
         summary: "publish the honest coordinate in a resolution-13 cell, about 44 m^2",
-        expected: Expected::Accepted,
+        expected: Expected::Rejected(Check::Location),
         needs_other_capture: false,
         tamper: |evidence, forger| {
             evidence.assertion.cell = FINE_CELL.to_string();
@@ -293,7 +293,10 @@ fn other_capture(workspace: &Workspace, run: &Path, device: &DeviceKey) -> Resul
         OTHER_PLACE.cell,
         Rect::LEFT_HALF,
     )?;
-    let proof = tool.prove(&capture.secrets, OTHER_PLACE.cell)?;
+    let secrets = capture
+        .secrets()
+        .context("a simulated capture holds its secrets")?;
+    let proof = tool.prove(secrets, OTHER_PLACE.cell)?;
     Ok(Assertion::new(
         capture.receipt,
         OTHER_PLACE.cell.to_string(),
