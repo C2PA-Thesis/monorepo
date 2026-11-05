@@ -12,7 +12,7 @@ use clap::{Parser, Subcommand};
 use console::style;
 use indicatif::{ProgressBar, ProgressStyle};
 use provenance::{
-    attack::{self, Outcome, ATTACKS},
+    attack::{self, Expected, Outcome, ATTACKS},
     capture::{Capture, Coordinate},
     demo::{self, DEMO_PLACE},
     manifest, publish,
@@ -237,15 +237,15 @@ fn run(cli: Cli, ui: &Ui) -> Result<ExitCode> {
             let outcomes = attack::run(&workspace, &run, only.as_deref(), &mut |outcome| {
                 ui.attack(outcome)
             })?;
-            let rejected = outcomes
+            let as_expected = outcomes
                 .iter()
                 .filter(|outcome| outcome.as_expected())
                 .count();
             let summary = format!(
-                "{rejected} of {} rejected by the expected check",
+                "{as_expected} of {} ended as expected",
                 plural(outcomes.len(), "attack")
             );
-            if rejected < outcomes.len() {
+            if as_expected < outcomes.len() {
                 ui.line(format!("\n{} {summary}", style("✗").red()));
                 return Ok(ExitCode::FAILURE);
             }
@@ -438,20 +438,29 @@ impl Ui {
             .iter()
             .find(|attack| attack.name == outcome.attack)
             .map_or("", |attack| attack.summary);
-        let (mark, result) = match &outcome.verdict.rejected {
-            Some(step) if outcome.as_expected() => (
+        let (mark, result) = match (outcome.expected, &outcome.verdict.rejected) {
+            (Expected::Rejected(expected), Some(step)) if step.check == expected => (
                 style("✓").green(),
                 format!("rejected by the {}", step.check.title()),
             ),
-            Some(step) => (
+            (Expected::Rejected(expected), Some(step)) => (
                 style("✗").red(),
                 format!(
                     "rejected by the {}, not the {}",
                     step.check.title(),
-                    outcome.expected.title()
+                    expected.title()
                 ),
             ),
-            None => (style("✗").red(), "accepted".to_string()),
+            (Expected::Rejected(_), None) => (style("✗").red(), "accepted".to_string()),
+            // Accepted by design: the pipeline trusts the device for these.
+            (Expected::Accepted, None) => (style("!").yellow(), "accepted, trusted".to_string()),
+            (Expected::Accepted, Some(step)) => (
+                style("✗").red(),
+                format!(
+                    "rejected by the {}, expected acceptance",
+                    step.check.title()
+                ),
+            ),
         };
         println!(
             "  {mark} {:<21} {result:<31} {}",

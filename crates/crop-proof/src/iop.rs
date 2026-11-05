@@ -80,7 +80,7 @@ pub(crate) fn crop_weights(rect: Rect, r: &[F]) -> Vec<F> {
     weights
 }
 
-fn times_x(slot: u64, size: u64, reduction: u64) -> u64 {
+pub(crate) fn times_x(slot: u64, size: u64, reduction: u64) -> u64 {
     let mut next = slot << 1;
     if next & size != 0 {
         next ^= reduction;

@@ -12,7 +12,13 @@ use anyhow::{ensure, Result};
 use serde::{Deserialize, Serialize};
 
 mod crop;
+#[cfg(feature = "attack-hooks")]
+pub mod forge;
+#[cfg(feature = "attack-hooks")]
+pub mod hooks;
 mod iop;
+#[cfg(feature = "attack-hooks")]
+pub mod lattice;
 mod params;
 mod wire;
 
