@@ -29,4 +29,6 @@ else
   echo "    ngrok config add-authtoken <TOKEN>"
 fi
 
-say "ready. Next: scripts/serve.sh"
+say "ready"
+echo "    scripts/demo.sh phone   capture on a phone, prove and verify on this laptop"
+echo "    scripts/demo.sh         the laptop-only demo and every attack"

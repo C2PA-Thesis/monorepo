@@ -5,6 +5,8 @@ import { HEIGHT, WIDTH, type Channels } from "./fingerprint";
 
 export interface Framing {
   canvas: HTMLCanvasElement;
+  /// Whether the photo is longer than 2:1 along some axis, so there is a window to slide.
+  slidable: boolean;
   /// Redraws with the window at `position`, 0 to 1 along the photo's longer axis.
   frame(position: number): void;
   /// The pixels as the fingerprint takes them, and the lossless PNG of the same bytes.
@@ -40,7 +42,8 @@ export async function framing(file: File, canvas: HTMLCanvasElement): Promise<Fr
     );
     return { channels, png };
   };
-  return { canvas, frame, original };
+  const slidable = wide ? photo.width - window.width > 1 : photo.height - window.height > 1;
+  return { canvas, slidable, frame, original };
 }
 
 /// An <img> honors the EXIF orientation, so a portrait photo comes in upright.

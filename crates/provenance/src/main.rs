@@ -18,7 +18,7 @@ use provenance::{
     manifest, publish,
     publish::{Event, Stage},
     receipt::short,
-    serve::{self, Server},
+    serve::{self, Phase, Server, Status},
     verify::{self, Check, Verdict},
     Step, Workspace,
 };
@@ -80,9 +80,15 @@ enum Command {
         /// Where uploaded captures land, one directory each.
         #[arg(long, default_value = "captures")]
         captures: PathBuf,
-        /// Built capture page to serve at `/`.
+        /// Built pages to serve: the capture page at `/`, the presenter page at `/screen`.
         #[arg(long)]
         web: Option<PathBuf>,
+        /// The tunnel's https address, for the QR code on the presenter page.
+        #[arg(long, env = "PUBLIC_URL")]
+        public_url: Option<String>,
+        /// Store uploads without publishing them.
+        #[arg(long)]
+        no_publish: bool,
     },
     /// Verify a published PNG as a reader.
     Verify {
@@ -203,25 +209,40 @@ fn run(cli: Cli, ui: &Ui) -> Result<ExitCode> {
             port,
             captures,
             web,
+            public_url,
+            no_publish,
         } => {
-            let server = Arc::new(Server::new(workspace, captures.clone()));
+            let mut server = Server::new(workspace, captures.clone())
+                .public_url(public_url)
+                .on_change(serve_listener(ui.json));
+            if !no_publish {
+                server = server.publishing();
+            }
             let url = format!("http://127.0.0.1:{port}");
             if ui.json {
                 ui.emit(&serde_json::json!({
-                    "event": "serving", "url": url, "captures": captures, "pairing_code": server.pairing_code()
+                    "event": "serving", "url": url, "captures": captures,
+                    "pairing_code": server.pairing_code(), "pair_url": server.pair_url(),
                 }));
             } else {
-                ui.header(
-                    "serve",
-                    &[
-                        ("url", url),
-                        ("captures", shown(&captures)),
-                        ("pair", server.pairing_code().to_string()),
-                    ],
-                );
-                ui.note("Type the pairing code on the phone once. Uploaded captures land in the directory above; publish one with `provenance publish --capture DIR`. Ctrl-C stops.");
+                let mut fields = vec![
+                    ("url", url.clone()),
+                    ("captures", shown(&captures)),
+                    ("pair", server.pairing_code().to_string()),
+                ];
+                if web.is_some() {
+                    fields.insert(1, ("screen", format!("{url}/screen")));
+                }
+                if let Some(pair_url) = server.pair_url() {
+                    fields.insert(0, ("phone", pair_url));
+                }
+                ui.header("serve", &fields);
+                ui.note(match no_publish {
+                    false => "Each upload is proved, signed and verified here as soon as it arrives. Ctrl-C stops.\n",
+                    true => "Uploads are stored only; publish one with `provenance publish --capture DIR`. Ctrl-C stops.\n",
+                });
             }
-            serve::run(server.router(web), port)?;
+            serve::run(Arc::new(server).router(web), port)?;
         }
         Command::Verify { file, cell } => {
             ensure!(file.exists(), "{} does not exist", file.display());
@@ -258,6 +279,34 @@ fn run(cli: Cli, ui: &Ui) -> Result<ExitCode> {
         }
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// One line on the laptop's terminal each time a capture changes phase.
+fn serve_listener(json: bool) -> impl Fn(&Status) + Send + Sync + 'static {
+    move |status| {
+        if json {
+            let event = serde_json::json!({"event": "capture", "id": status.id, "phase": status.phase, "error": status.error});
+            return println!("{event}");
+        }
+        let id = style(&status.id).bold();
+        match status.phase {
+            Phase::Queued => println!(
+                "  {} {id}  from device {}, cell {}, crop {}",
+                style("↓").cyan(),
+                short(&status.device),
+                status.capture.cell,
+                status.capture.crop
+            ),
+            Phase::Publishing => println!("  {} {id}  proving", style("…").dim()),
+            Phase::Accepted => println!("  {} {id}  published and verified", style("✓").green()),
+            Phase::Rejected | Phase::Failed => println!(
+                "  {} {id}  {}",
+                style("✗").red(),
+                style(status.error.as_deref().unwrap_or("failed")).red()
+            ),
+            Phase::Stored | Phase::Published | Phase::Verifying => {}
+        }
+    }
 }
 
 /// Paths under the working directory are shown relative to it.

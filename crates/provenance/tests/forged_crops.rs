@@ -60,7 +60,10 @@ fn republish_and_verify(name: &str, pixels: &RgbImage, assertion: &Assertion) {
         .unwrap();
 
     assert_eq!(&image::read_png(&signed).unwrap(), pixels);
-    let verdict = workspace.verifier().unwrap().verify(&signed, None);
+    let verdict = workspace
+        .verifier()
+        .unwrap()
+        .verify(&signed, None, &mut |_| {});
     assert!(
         verdict.rejected.is_none(),
         "the reader rejected the forgery: {:?}",
