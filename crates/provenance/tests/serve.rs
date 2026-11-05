@@ -1086,6 +1086,50 @@ async fn refuses_resolutions_outside_four_to_nine() {
         .expect("a version-3 assertion was accepted");
     assert_eq!(rejected.check, Check::Manifest);
     assert!(rejected.detail.contains("version 3"), "{}", rejected.detail);
+
+    // Under the label used before, the manifest check still passes and says so.
+    let legacy = out.path().join("legacy-label.png");
+    workspace
+        .editor()
+        .unwrap()
+        .sign_as(
+            manifest::LEGACY_LABEL,
+            &out.path().join("crop.png"),
+            &manifest::read(&signed).unwrap(),
+            &legacy,
+        )
+        .unwrap();
+    let verdict = workspace
+        .verifier()
+        .unwrap()
+        .verify(&legacy, None, &mut |_| {});
+    let manifest_step = &verdict.passed[0];
+    assert_eq!(manifest_step.check, Check::Manifest);
+    assert!(
+        manifest_step.detail.contains(manifest::LEGACY_LABEL),
+        "{}",
+        manifest_step.detail
+    );
+    assert_eq!(verdict.rejected.unwrap().check, Check::Location);
+    // Under any other label there is nothing to read.
+    let unknown = out.path().join("unknown-label.png");
+    workspace
+        .editor()
+        .unwrap()
+        .sign_as(
+            "org.example.other",
+            &out.path().join("crop.png"),
+            &manifest::read(&signed).unwrap(),
+            &unknown,
+        )
+        .unwrap();
+    let verdict = workspace
+        .verifier()
+        .unwrap()
+        .verify(&unknown, None, &mut |_| {});
+    let rejected = verdict.rejected.unwrap();
+    assert_eq!(rejected.check, Check::Manifest);
+    assert!(rejected.detail.contains("found 0"), "{}", rejected.detail);
 }
 
 /// The resolution-10 cell of the demo coordinate, which the API refuses to

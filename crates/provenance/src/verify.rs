@@ -11,7 +11,7 @@ use serde::Serialize;
 use crate::{
     image,
     location::{check_cell, LocationTool},
-    manifest::{self, LABEL},
+    manifest,
     publish::describe_edit,
     receipt::{short, TrustedKeys},
 };
@@ -180,10 +180,8 @@ impl Verifier {
             Check::Manifest,
             "reading the C2PA manifest and validating its claim signature".to_string(),
             || {
-                Ok((
-                    manifest::read(signed)?,
-                    format!("valid, with one {LABEL} assertion"),
-                ))
+                let (assertion, label) = manifest::read_labeled(signed)?;
+                Ok((assertion, format!("valid, with one {label} assertion")))
             },
         ) else {
             return verdict;

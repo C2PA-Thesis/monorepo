@@ -124,7 +124,7 @@ enum DeviceKeys {
 
 /// Generic-password items, readable only while unlocked and never synced or backed up to another device.
 enum Keychain {
-    static let service = "edu.utdt.td8.capture.device-key"
+    static let service = "io.github.c2pa-thesis.capture.device-key"
 
     static func read(account: String) throws -> Data? {
         let query: [CFString: Any] = [

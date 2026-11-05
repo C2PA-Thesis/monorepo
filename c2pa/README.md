@@ -1,7 +1,7 @@
 # C2PA capture, sign and verify pipeline
 
 Local end-to-end C2PA pipeline for the TD8 / P27 thesis, with a placeholder
-custom assertion (`edu.utdt.td8.zkloc`) that carries the shape the real
+custom assertion (`io.github.c2pa-thesis.zkloc`) that carries the shape the real
 ZK location + transformation assertion will eventually have.
 
 Closes [C2P-19](https://linear.app/c2pa-tesis/issue/C2P-19/run-a-c2pa-capture-sign-and-verify-pipeline-locally).
@@ -47,7 +47,7 @@ Outputs land in `out/`:
 | C2P-19 criterion | Status |
 | --- | --- |
 | A documented command runs sign and verify end to end | `./scripts/run.sh` |
-| A custom assertion with placeholder content survives the round trip and is readable | `edu.utdt.td8.zkloc` recovered with all nested fields intact |
+| A custom assertion with placeholder content survives the round trip and is readable | `io.github.c2pa-thesis.zkloc` recovered with all nested fields intact |
 | An off-the-shelf C2PA validator is run against the output, result recorded | see [Validation results](#validation-results) |
 | Commands and tool versions in the README | below |
 
@@ -117,7 +117,8 @@ worth answering before M3 rather than during it.
 ## Custom assertions are invisible to third-party verifiers
 
 Adobe's verifier accepted the signed file and showed the standard parts of the
-manifest, but showed nothing at all for `edu.utdt.td8.zkloc`. It does not
+manifest, but showed nothing at all for `edu.utdt.td8.zkloc`, the label the
+assertion had then. It does not
 reject the assertion; it simply does not know how to render it, so it is
 dropped from the summary view.
 
@@ -133,7 +134,7 @@ discovering it during M3.
 
 ## The placeholder assertion
 
-`manifests/placeholder-assertion.json` carries `edu.utdt.td8.zkloc` with the shape
+`manifests/placeholder-assertion.json` carries `io.github.c2pa-thesis.zkloc` with the shape
 of the eventual real assertion and dummy values throughout:
 
 - `commitment`: algorithm, what it covers, and the value

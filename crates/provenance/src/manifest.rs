@@ -1,6 +1,6 @@
 use std::{fs, path::Path};
 
-use anyhow::{ensure, Context, Result};
+use anyhow::{bail, ensure, Context, Result};
 use c2pa::{create_signer, Builder, Reader, SigningAlg, ValidationState};
 use crop_proof::{Rect, Turn};
 use serde::{Deserialize, Serialize};
@@ -8,8 +8,13 @@ use serde_json::json;
 
 use crate::receipt::Receipt;
 
-/// Label of the custom assertion carrying the receipt and both proofs.
-pub const LABEL: &str = "edu.utdt.td8.zkloc";
+/// Label of the custom assertion carrying the receipt and both proofs. C2PA
+/// namespaces start with the defining entity's domain (§6.2.1); this one is
+/// c2pa-thesis.github.io, which the project's GitHub organization controls.
+pub const LABEL: &str = "io.github.c2pa-thesis.zkloc";
+/// The label before, under the university's domain, which is not ours to use.
+/// Still read so files published with it keep verifying.
+pub const LEGACY_LABEL: &str = "edu.utdt.td8.zkloc";
 /// 6 adds the turn. A version 5 file has none and still verifies, since the
 /// crop proof hashes no turn into its statement when there is none. Version 5
 /// allowed any original up to 2^19 pixels and bound the crop proof to its
@@ -75,6 +80,17 @@ impl Editor {
 
     /// Writes `output`: the PNG `image` with a manifest carrying `assertion`.
     pub fn sign(&self, image: &Path, assertion: &Assertion, output: &Path) -> Result<()> {
+        self.sign_as(LABEL, image, assertion, output)
+    }
+
+    /// `sign` under another label, for tests of what the reader accepts.
+    pub fn sign_as(
+        &self,
+        label: &str,
+        image: &Path,
+        assertion: &Assertion,
+        output: &Path,
+    ) -> Result<()> {
         let definition = json!({
             "claim_generator_info": [{"name": "provenance", "version": env!("CARGO_PKG_VERSION")}],
             "assertions": [{
@@ -84,7 +100,7 @@ impl Editor {
         });
         let mut builder =
             Builder::from_context(c2pa::Context::new()).with_definition(definition)?;
-        builder.add_assertion(LABEL, assertion)?;
+        builder.add_assertion(label, assertion)?;
         let signer = create_signer::from_keys(
             &self.certificates,
             &self.private_key,
@@ -115,6 +131,11 @@ fn actions(turn: Turn) -> Vec<serde_json::Value> {
 
 /// The assertion in a signed file, once C2PA validation has passed.
 pub fn read(signed: &Path) -> Result<Assertion> {
+    Ok(read_labeled(signed)?.0)
+}
+
+/// The assertion and the label it was found under.
+pub fn read_labeled(signed: &Path) -> Result<(Assertion, &'static str)> {
     let reader = Reader::from_context(c2pa::Context::new())
         .with_file(signed)
         .with_context(|| format!("reading the C2PA manifest of {}", signed.display()))?;
@@ -126,18 +147,24 @@ pub fn read(signed: &Path) -> Result<Assertion> {
     let manifest = reader
         .active_manifest()
         .context("the file has no active C2PA manifest")?;
-    let count = manifest
+    let labels: Vec<&'static str> = manifest
         .assertions()
         .iter()
-        .filter(|assertion| assertion.label() == LABEL)
-        .count();
-    ensure!(count == 1, "expected one {LABEL} assertion, found {count}");
-    let assertion: Assertion = manifest.find_assertion(LABEL)?;
+        .filter_map(|assertion| {
+            [LABEL, LEGACY_LABEL]
+                .into_iter()
+                .find(|label| *label == assertion.label())
+        })
+        .collect();
+    let [label] = labels[..] else {
+        bail!("expected one {LABEL} assertion, found {}", labels.len());
+    };
+    let assertion: Assertion = manifest.find_assertion(label)?;
     ensure!(
         assertion.version == VERSION
             || (assertion.version == NO_TURN_VERSION && assertion.turn == Turn::NONE),
-        "the {LABEL} assertion is version {}, and this reader only reads versions {NO_TURN_VERSION} and {VERSION} (full-frame originals and crop proofs bound to their statement)",
+        "the {label} assertion is version {}, and this reader only reads versions {NO_TURN_VERSION} and {VERSION} (full-frame originals and crop proofs bound to their statement)",
         assertion.version
     );
-    Ok(assertion)
+    Ok((assertion, label))
 }
