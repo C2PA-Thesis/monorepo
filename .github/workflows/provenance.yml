@@ -4,6 +4,8 @@ on:
   push:
     paths: &paths
       - 'crates/**'
+      # crates/fingerprint-ffi tests and links against this header.
+      - 'ios/Frameworks/include/fingerprint.h'
       - 'location-proof/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
@@ -41,6 +43,9 @@ jobs:
         run: |
           cargo test --workspace
           cd location-proof && go test ./...
+
+      - name: Link the C header the app uses against the fingerprint staticlib
+        run: crates/fingerprint-ffi/c/check.sh
 
       # Slow tests: the crop-proof round trip and the attacks of the security
       # analysis, which pass while each attack still works.

@@ -1,51 +1,68 @@
+/* Tokens. The same values drive the iOS app. Color carries meaning only:
+   ok, bad, warn. Everything else is ink on paper. */
+
 :root {
-  color-scheme: light dark;
-  --bg: #f3f4f7;
+  color-scheme: light;
+  --bg: #f6f6f4;
   --surface: #ffffff;
-  --surface-2: #f6f7f9;
-  --ink: #161b24;
-  --muted: #5d6676;
-  --faint: #8a93a3;
-  --line: #e1e4ea;
-  --accent: #2f6fde;
-  --accent-ink: #ffffff;
-  --accent-soft: #e7effc;
-  --ok: #1f8a5b;
-  --ok-soft: #e3f4ec;
-  --bad: #c62f3c;
-  --bad-soft: #fbe7e9;
-  --private: #a15c07;
-  --private-soft: #fbf0dc;
-  --public: #2f6fde;
-  --public-soft: #e7effc;
-  --radius: 14px;
-  --shadow: 0 1px 2px rgb(16 24 40 / 6%), 0 4px 16px rgb(16 24 40 / 6%);
+  --surface-2: #f1f1ef;
+  --ink: #0a0a0a;
+  --ink-2: #3a3a3a;
+  --muted: #737373;
+  --faint: #a3a3a3;
+  --line: #e8e8e5;
+  --line-strong: #d6d6d2;
+  --ok: #157f3b;
+  --ok-soft: rgb(21 127 59 / 8%);
+  --bad: #b42318;
+  --bad-soft: rgb(180 35 24 / 8%);
+  --warn: #9a6700;
+  --warn-soft: rgb(154 103 0 / 10%);
+  --overlay: rgb(10 10 10 / 55%);
+  --on-ink: var(--surface);
+
+  --shadow-1: 0 1px 2px rgb(0 0 0 / 5%);
+  --shadow-2: 0 1px 2px rgb(0 0 0 / 5%), 0 12px 32px -12px rgb(0 0 0 / 18%);
+
+  --r-sm: 6px;
+  --r-md: 10px;
+  --r-lg: 14px;
+  --r-pill: 999px;
+
+  --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
   --mono: ui-monospace, "SF Mono", Menlo, monospace;
-  font-family: -apple-system, BlinkMacSystemFont, "Inter", system-ui, sans-serif;
+  /* The pairing code is read aloud and typed: the one mono text set large and tracked. */
+  --code-size: 17px;
+  --code-tracking: 0.08em;
+  --ease: 180ms ease-out;
+
+  font-family: var(--sans);
+  font-size: 15px;
   line-height: 1.45;
   -webkit-text-size-adjust: 100%;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #0e1116;
-    --surface: #171b22;
-    --surface-2: #1d222b;
-    --ink: #e8ebf0;
-    --muted: #a1a9b6;
-    --faint: #6f7886;
-    --line: #2a303b;
-    --accent: #5b8ff0;
-    --accent-soft: #1b2a45;
-    --ok: #3cc488;
-    --ok-soft: #14301f;
-    --bad: #f0606b;
-    --bad-soft: #3a1a1e;
-    --private: #e6a545;
-    --private-soft: #33260f;
-    --public: #6b9cf3;
-    --public-soft: #1b2a45;
-    --shadow: 0 1px 2px rgb(0 0 0 / 40%);
+    color-scheme: dark;
+    --bg: #0a0a0b;
+    --surface: #141415;
+    --surface-2: #1c1c1e;
+    --ink: #f5f5f4;
+    --ink-2: #cfcfcf;
+    --muted: #8e8e8e;
+    --faint: #5c5c5c;
+    --line: #262628;
+    --line-strong: #3a3a3c;
+    --ok: #3fb96b;
+    --ok-soft: rgb(63 185 107 / 12%);
+    --bad: #f06a5f;
+    --bad-soft: rgb(240 106 95 / 12%);
+    --warn: #e0a43a;
+    --warn-soft: rgb(224 164 58 / 12%);
+    --on-ink: var(--bg);
+    --shadow-1: none;
+    --shadow-2: none;
   }
 }
 
@@ -63,6 +80,7 @@ h1,
 h2,
 h3 {
   margin: 0;
+  font-weight: 600;
   line-height: 1.25;
 }
 
@@ -71,20 +89,62 @@ p {
 }
 
 a {
-  color: var(--accent);
+  color: var(--ink);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
 }
 
 code,
 .mono {
   font-family: var(--mono);
-  font-size: 0.86em;
+  font-size: 12px;
 }
 
 [hidden] {
   display: none !important;
 }
 
-/* Buttons */
+:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.meta {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--muted);
+}
+
+.error-text {
+  color: var(--bad);
+}
+
+.warn-text {
+  color: var(--warn);
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Buttons: one primary (ink) per region, the rest secondary. 15/600 on
+   every page; only the presenter's tabs and the text links are 13/500. */
 
 button,
 .button {
@@ -92,111 +152,107 @@ button,
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 0.5rem;
-  min-height: 2.75rem;
-  padding: 0.6rem 1.1rem;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 16px;
   font: inherit;
   font-weight: 600;
-  color: var(--accent-ink);
-  background: var(--accent);
-  border: 0;
-  border-radius: 10px;
+  color: var(--on-ink);
+  background: var(--ink);
+  border: 1px solid var(--ink);
+  border-radius: var(--r-md);
   cursor: pointer;
   text-decoration: none;
+  transition: opacity var(--ease), background var(--ease);
   -webkit-tap-highlight-color: transparent;
 }
 
-button:active,
-.button:active {
-  transform: translateY(1px);
+.button:hover {
+  text-decoration: none;
+}
+
+button:hover:not(:disabled),
+.button:hover {
+  opacity: 0.88;
 }
 
 button:disabled {
-  opacity: 0.5;
+  opacity: 0.35;
   cursor: default;
+}
+
+.secondary {
+  color: var(--ink);
+  background: var(--surface);
+  border-color: var(--line-strong);
+}
+
+.secondary:hover:not(:disabled) {
+  opacity: 1;
+  background: var(--surface-2);
 }
 
 .button-wide {
   width: 100%;
 }
 
-.button-quiet {
-  color: var(--accent);
-  background: var(--accent-soft);
-}
-
 .chip {
-  appearance: none;
-  min-height: 2rem;
-  padding: 0.3rem 0.75rem;
-  font: inherit;
-  font-size: 0.85rem;
+  flex: none;
+  min-height: 32px;
+  padding: 0 12px;
+  font-size: 13px;
   font-weight: 500;
   color: var(--ink);
   background: var(--surface-2);
-  border: 1px solid var(--line);
-  border-radius: 999px;
+  border: 1px solid transparent;
+  border-radius: var(--r-pill);
+}
+
+.chip:hover:not(:disabled) {
+  opacity: 1;
+  border-color: var(--line-strong);
 }
 
 .chip[aria-pressed="true"] {
-  color: var(--accent);
-  background: var(--accent-soft);
-  border-color: var(--accent);
+  color: var(--on-ink);
+  background: var(--ink);
 }
 
 input[type="range"] {
   width: 100%;
-  accent-color: var(--accent);
+  margin: 0;
+  accent-color: var(--ink);
 }
 
-/* Badges and tags */
+/* Pills */
 
-.badge {
+.pill {
   display: inline-flex;
   align-items: center;
-  gap: 0.35rem;
-  padding: 0.15rem 0.6rem;
-  font-size: 0.78rem;
-  font-weight: 600;
-  border-radius: 999px;
+  gap: 6px;
+  height: 24px;
+  padding: 0 10px;
+  font-size: 13px;
+  font-weight: 500;
   white-space: nowrap;
-  background: var(--surface-2);
   color: var(--muted);
+  background: var(--surface-2);
+  border-radius: var(--r-pill);
 }
 
-.badge.ok {
-  background: var(--ok-soft);
+.pill.ok {
   color: var(--ok);
+  background: var(--ok-soft);
 }
 
-.badge.bad {
-  background: var(--bad-soft);
+.pill.bad {
   color: var(--bad);
+  background: var(--bad-soft);
 }
 
-.badge.busy {
-  background: var(--accent-soft);
-  color: var(--accent);
-}
-
-.tag {
-  display: inline-block;
-  padding: 0.05rem 0.45rem;
-  font-size: 0.7rem;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  border-radius: 5px;
-}
-
-.tag.private {
-  color: var(--private);
-  background: var(--private-soft);
-}
-
-.tag.public {
-  color: var(--public);
-  background: var(--public-soft);
+.pill.warn {
+  color: var(--warn);
+  background: var(--warn-soft);
 }
 
 /* Cards */
@@ -204,30 +260,64 @@ input[type="range"] {
 .card {
   background: var(--surface);
   border: 1px solid var(--line);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-1);
 }
 
-.muted {
-  color: var(--muted);
+/* Status marks: done, failed, running, pending. */
+
+.mark {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  color: var(--faint);
 }
 
-.small {
-  font-size: 0.85rem;
+.mark .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
 }
 
-.error-text {
-  color: var(--bad);
+/* Green is kept for verdicts. A finished step is ink: a plain check in a
+   timeline, an ink circle on a step card. */
+.mark.ok {
+  color: var(--surface);
+  background: var(--ok);
 }
 
-/* Spinner and icons */
+.is-done .mark {
+  color: var(--ink-2);
+}
+
+.mark.bad,
+.is-failed .mark {
+  color: var(--surface);
+  background: var(--bad);
+}
+
+.icon {
+  display: inline-flex;
+  width: 12px;
+  height: 12px;
+}
+
+.icon svg {
+  width: 100%;
+  height: 100%;
+}
 
 .spinner {
   display: inline-block;
-  width: 1rem;
-  height: 1rem;
-  border: 2px solid var(--accent-soft);
-  border-top-color: var(--accent);
+  width: 14px;
+  height: 14px;
+  border: 1.5px solid var(--line-strong);
+  border-top-color: var(--ink);
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
 }
@@ -238,23 +328,11 @@ input[type="range"] {
   }
 }
 
-.icon {
-  display: inline-flex;
-  width: 1.1rem;
-  height: 1.1rem;
-}
-
-.icon svg {
-  width: 100%;
-  height: 100%;
-}
-
-/* Progress */
-
 .progress {
-  height: 6px;
+  height: 3px;
+  margin-top: 6px;
   background: var(--surface-2);
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   overflow: hidden;
 }
 
@@ -262,25 +340,59 @@ input[type="range"] {
   display: block;
   height: 100%;
   width: 0;
-  background: var(--accent);
-  border-radius: inherit;
-  transition: width 0.3s ease;
+  background: var(--ink);
+  transition: width var(--ease);
 }
 
-/* Timeline */
+/* Disclosure */
+
+details > summary {
+  list-style: none;
+  cursor: pointer;
+}
+
+details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.more > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--muted);
+}
+
+.more > summary:hover {
+  color: var(--ink);
+}
+
+.more > summary::after {
+  content: "";
+  width: 5px;
+  height: 5px;
+  margin: -2px 0 0 2px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(45deg);
+  transition: transform var(--ease);
+}
+
+.more[open] > summary::after {
+  margin-top: 2px;
+  transform: rotate(-135deg);
+}
+
+.more[open] > summary {
+  margin-bottom: 8px;
+}
+
+/* Timeline: mark, title, time. Everything else behind the row. */
 
 .timeline {
   display: grid;
-  gap: 1rem;
-}
-
-.timeline h3 {
-  font-size: 0.78rem;
-  font-weight: 700;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  color: var(--faint);
-  margin-bottom: 0.35rem;
+  gap: 16px;
 }
 
 .timeline ol {
@@ -289,184 +401,238 @@ input[type="range"] {
   padding: 0;
 }
 
-.row {
-  display: grid;
-  grid-template-columns: 1.6rem 1fr;
-  gap: 0.6rem;
-  padding: 0.55rem 0;
-  position: relative;
-}
-
-.row + .row {
-  border-top: 1px solid var(--line);
-}
-
-.mark {
+.row > summary,
+.row-line {
   display: flex;
   align-items: center;
-  justify-content: center;
-  width: 1.6rem;
-  height: 1.6rem;
-  border-radius: 50%;
-  background: var(--surface-2);
-  color: var(--faint);
+  gap: 10px;
+  min-height: 36px;
 }
 
-.mark .dot {
-  width: 0.45rem;
-  height: 0.45rem;
-  border-radius: 50%;
-  background: currentColor;
+.row > summary::after {
+  content: "";
+  flex: none;
+  width: 5px;
+  height: 5px;
+  margin: -3px 2px 0 0;
+  border-right: 1.5px solid var(--faint);
+  border-bottom: 1.5px solid var(--faint);
+  transform: rotate(45deg);
+  transition: transform var(--ease);
 }
 
-.is-done .mark {
-  background: var(--ok-soft);
-  color: var(--ok);
+/* Keeps times aligned with the rows that carry a chevron. */
+.timeline .row-line {
+  padding-right: 17px;
 }
 
-.is-failed .mark {
-  background: var(--bad-soft);
-  color: var(--bad);
+/* A group that fully passed folds into one row; its steps sit under it. */
+.group > ol {
+  margin-bottom: 4px;
+  padding-left: 28px;
 }
 
-.is-running .mark {
-  background: var(--accent-soft);
+.row[open] > summary::after {
+  margin-top: 3px;
+  transform: rotate(-135deg);
 }
 
-.is-pending,
-.is-skipped {
-  opacity: 0.6;
+.row > summary:hover .seconds,
+.row[open] > summary .seconds {
+  color: var(--ink);
 }
 
 .row-title {
-  display: flex;
-  justify-content: space-between;
-  gap: 0.5rem;
-  font-weight: 600;
+  flex: 1;
+  min-width: 0;
+}
+
+.is-pending .row-title,
+.is-skipped .row-title {
+  color: var(--faint);
 }
 
 .seconds {
-  font-family: var(--mono);
-  font-size: 0.8rem;
-  font-weight: 500;
-  color: var(--faint);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
   white-space: nowrap;
 }
 
-.row-what {
-  font-size: 0.86rem;
+.row-more {
+  display: grid;
+  gap: 4px;
+  margin: 0 0 10px 28px;
+  padding: 10px 12px;
+  font-size: 13px;
+  color: var(--ink-2);
+  background: var(--surface-2);
+  border-radius: var(--r-sm);
+}
+
+.row-more .mono {
+  overflow-wrap: anywhere;
+}
+
+.outcome-value {
   color: var(--muted);
 }
 
-.row-detail {
-  margin-top: 0.2rem;
-  font-family: var(--mono);
-  font-size: 0.76rem;
-  color: var(--ink);
-  overflow-wrap: anywhere;
-}
-
-.is-failed .row-detail {
+.row-reason {
+  margin: -4px 0 8px 28px;
+  font-size: 13px;
   color: var(--bad);
-}
-
-.row-note {
-  margin-top: 0.15rem;
-  font-size: 0.75rem;
-  color: var(--faint);
   overflow-wrap: anywhere;
 }
 
-/* Map */
+/* Map: monochrome tiles, ink cell. */
 
 .map {
-  height: 15rem;
-  border-radius: 10px;
+  height: 240px;
+  border-radius: var(--r-md);
   overflow: hidden;
   border: 1px solid var(--line);
   background: var(--surface-2);
   z-index: 0;
 }
 
-.leaflet-container {
-  font: inherit;
+.map .leaflet-tile-pane {
+  filter: grayscale(1) contrast(0.92) brightness(1.03);
 }
 
-/* Verdict */
+@media (prefers-color-scheme: dark) {
+  .map .leaflet-tile-pane {
+    filter: grayscale(1) invert(1) brightness(0.82) contrast(0.9);
+  }
+}
+
+.leaflet-container {
+  font: inherit;
+  background: var(--surface-2);
+}
+
+.leaflet-container .leaflet-control-attribution {
+  font-size: 10px;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--surface) 80%, transparent);
+}
+
+.leaflet-container .leaflet-control-attribution a {
+  color: inherit;
+}
+
+.cell-shape {
+  stroke: var(--ink);
+  stroke-width: 1.5px;
+  fill: var(--ink);
+  fill-opacity: 0.06;
+}
+
+.you-dot {
+  stroke: var(--surface);
+  stroke-width: 2px;
+  fill: var(--ink);
+  fill-opacity: 1;
+}
+
+/* Verdict: one line. */
 
 .verdict {
   display: flex;
-  gap: 0.85rem;
-  align-items: flex-start;
-  padding: 1rem;
-  border-radius: 12px;
+  gap: 10px;
+  align-items: center;
+}
+
+.verdict .mark {
+  width: 22px;
+  height: 22px;
 }
 
 .verdict .icon {
-  flex: none;
-  width: 2.2rem;
-  height: 2.2rem;
-  padding: 0.45rem;
-  border-radius: 50%;
-  color: #fff;
+  width: 14px;
+  height: 14px;
 }
 
-.verdict.ok {
-  background: var(--ok-soft);
-}
-
-.verdict.ok .icon {
-  background: var(--ok);
-}
-
-.verdict.bad {
-  background: var(--bad-soft);
-}
-
-.verdict.bad .icon {
-  background: var(--bad);
+.verdict-block {
+  display: grid;
+  gap: 6px;
 }
 
 .verdict h2 {
-  font-size: 1.15rem;
+  font-size: 17px;
 }
 
-.verdict p {
-  margin-top: 0.2rem;
-  font-size: 0.92rem;
+/* The one action a capture without a verdict offers: Publish or Verify. */
+.verdict > button {
+  min-height: 40px;
+  margin-left: auto;
+}
+
+.verdict > button .icon {
+  width: 16px;
+  height: 16px;
+}
+
+/* Verify again: the icon alone, square. */
+.verdict > .icon-button {
+  width: 40px;
+  padding: 0;
+}
+
+.verdict-reason {
+  font-size: 15px;
+  color: var(--bad);
+  overflow-wrap: anywhere;
 }
 
 .caveat {
-  font-size: 0.78rem;
-  color: var(--faint);
+  font-size: 13px;
+  color: var(--muted);
 }
 
 /* Facts */
 
+/* One fixed label column, so the rows under "Details" line up with the three above. */
 .facts {
   display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 0.35rem 1rem;
+  grid-template-columns: 88px minmax(0, 1fr);
+  gap: 6px 16px;
   margin: 0;
-  font-size: 0.88rem;
 }
 
 .facts dt {
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 21px;
   color: var(--muted);
 }
 
 .facts dd {
   margin: 0;
+  font-variant-numeric: tabular-nums;
   overflow-wrap: anywhere;
 }
 
-.checker {
-  background-color: var(--surface-2);
-  background-image:
-    linear-gradient(45deg, var(--line) 25%, transparent 25%),
-    linear-gradient(-45deg, var(--line) 25%, transparent 25%),
-    linear-gradient(45deg, transparent 75%, var(--line) 75%),
-    linear-gradient(-45deg, transparent 75%, var(--line) 75%);
-  background-size: 16px 16px;
-  background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+.facts .mono {
+  line-height: 21px;
+}
+
+/* The product mark */
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.logo {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  color: var(--ink);
+}
+
+.brand h1 {
+  font-size: 17px;
+  letter-spacing: -0.01em;
 }

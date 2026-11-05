@@ -1,0 +1,19 @@
+[package]
+name = "fingerprint-ffi"
+description = "C ABI over the lattice fingerprint for native callers, like the iOS capture app"
+version = "0.1.0"
+license = "MIT"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lib]
+# staticlib is what the iOS app links; rlib lets the tests call the same functions.
+crate-type = ["staticlib", "rlib"]
+
+[dependencies]
+fingerprint = { path = "../fingerprint" }
+
+[dev-dependencies]
+hex.workspace = true
+sha2.workspace = true

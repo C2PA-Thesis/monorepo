@@ -9,22 +9,27 @@ publish.workspace = true
 [dependencies]
 anyhow.workspace = true
 axum = "0.8"
+axum-server = { version = "0.8", features = ["tls-rustls-no-provider"] }
 base64 = "0.22"
 c2pa = { version = "0.90", default-features = false, features = ["file_io", "rust_native_crypto"] }
 clap = { version = "4", features = ["derive", "env"] }
 console = "0.15"
 crop-proof = { path = "../crop-proof" }
 hex.workspace = true
+if-addrs = "0.15"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 indicatif = "0.17"
 p256 = { version = "0.13", features = ["ecdsa", "pem", "pkcs8"] }
 rand = "0.8"
+rcgen = "0.14"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 tempfile = "3"
 time = { version = "0.3", features = ["formatting"] }
-tokio = { version = "1", features = ["rt-multi-thread", "net"] }
+tokio = { version = "1", features = ["rt-multi-thread", "net", "macros"] }
+tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.7", features = ["fs", "set-header"] }
 
 [dev-dependencies]
@@ -32,4 +37,3 @@ tower-http = { version = "0.7", features = ["fs", "set-header"] }
 crop-proof = { path = "../crop-proof", features = ["attack-hooks"] }
 http-body-util = "0.1"
 tokio = { version = "1", features = ["macros", "time"] }
-tower = { version = "0.5", features = ["util"] }

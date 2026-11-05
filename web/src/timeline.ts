@@ -1,9 +1,11 @@
-// The publish stages and the reader checks as a live list: what each step
-// establishes, whether it is waiting, running, done or refused, and its
-// timing. Built from the events `provenance serve` reports.
+// The publish stages and the reader checks as a live list: a mark, a title
+// and a time per step. A group that fully passed folds into one row; what
+// each step establishes and what it found sit behind the row. A refusal's
+// sentence is the verdict's; the server's words sit behind the failed row. Built from the events `provenance serve` reports.
 
-import type { Event } from "./api";
+import type { Event as Progress } from "./api";
 import { h, icon, svg } from "./dom";
+import { tidy } from "./verdict";
 
 interface Row {
   key: string;
@@ -18,7 +20,7 @@ const STAGES: Row[] = [
   {
     key: "location-proof",
     title: "Location proof",
-    what: "Groth16: the coordinate sealed in the envelope lies in the cell.",
+    what: "Groth16: the hints sealed in the envelope map to the cell.",
   },
   {
     key: "crop-proof",
@@ -33,14 +35,14 @@ const CHECKS: Row[] = [
   { key: "manifest", title: "C2PA manifest", what: "The file carries a valid C2PA claim with one zkloc assertion." },
   { key: "device", title: "Device receipt", what: "A trusted device signed the fingerprint and the envelope together." },
   { key: "image", title: "Crop proof", what: "These pixels are the claimed rectangle of the fingerprinted original." },
-  { key: "location", title: "Location proof", what: "The coordinate in the signed envelope lies in the claimed cell." },
+  { key: "location", title: "Location proof", what: "The hints sealed in the signed envelope map to the claimed cell." },
 ];
 
 type State =
   | { kind: "pending" }
   | { kind: "running"; detail?: string }
-  | { kind: "done"; seconds: number; detail: string; note?: string }
-  | { kind: "failed"; seconds?: number; detail: string; note?: string }
+  | { kind: "done"; seconds: number; detail: string }
+  | { kind: "failed"; seconds?: number; detail: string }
   | { kind: "skipped" };
 
 export type Section = "publish" | "verify";
@@ -48,6 +50,7 @@ export type Section = "publish" | "verify";
 export class Timeline {
   readonly element: HTMLElement;
   private started = new Map<string, number>();
+  private open = new Set<string>();
   private ticker: number | undefined;
 
   constructor(private sections: Section[]) {
@@ -57,7 +60,7 @@ export class Timeline {
 
   /// `halted` marks a step still running as failed, for a job that stopped
   /// with an error between events.
-  update(events: Event[], halted?: string): void {
+  update(events: Progress[], halted?: string): void {
     const states = new Map<string, State>();
     for (const event of events) {
       switch (event.event) {
@@ -71,10 +74,10 @@ export class Timeline {
           states.set(event.check, { kind: "running", detail: event.intent });
           break;
         case "passed":
-          states.set(event.check, { kind: "done", seconds: event.seconds, detail: event.outcome, note: event.intent });
+          states.set(event.check, { kind: "done", seconds: event.seconds, detail: event.outcome });
           break;
         case "rejected":
-          states.set(event.check, { kind: "failed", seconds: event.seconds, detail: event.reason, note: event.intent });
+          states.set(event.check, { kind: "failed", seconds: event.seconds, detail: event.reason });
           break;
       }
     }
@@ -87,20 +90,58 @@ export class Timeline {
 
     const groups = this.sections.map((section) => {
       const rows = section === "publish" ? STAGES : CHECKS;
+      const title = section === "publish" ? "Publish" : "Verify";
       let stopped = false;
-      const items = rows.map((row) => {
+      const resolved = rows.map((row): [Row, State] => {
         let state = states.get(row.key) ?? { kind: "pending" };
         if (stopped && state.kind === "pending") state = { kind: "skipped" };
         if (state.kind === "failed") stopped = true;
         if (state.kind === "pending" && rejected) state = { kind: "skipped" };
-        return this.row(row, state);
+        return [row, state];
       });
-      return h(
-        "section",
-        { class: "timeline-group" },
-        h("h3", {}, section === "publish" ? "On the laptop: prove and sign" : "As a reader: verify the file"),
-        h("ol", {}, items),
+      const items = resolved.map(([row, state]) => this.row(`${section}:${row.key}`, row, state));
+      const settled =
+        resolved.every(([, state]) => state.kind === "pending" || state.kind === "skipped") ||
+        resolved.every(([, state]) => state.kind === "done");
+      if (settled) this.started.delete(`group:${section}`);
+      if (resolved.every(([, state]) => state.kind === "pending" || state.kind === "skipped")) {
+        const dot = h("span", { class: "mark" }, h("span", { class: "dot" }));
+        return h("div", { class: "timeline-group is-pending" }, h("div", { class: "row-line" }, dot, h("span", { class: "row-title" }, title)));
+      }
+      if (resolved.every(([, state]) => state.kind === "done")) {
+        const total = resolved.reduce((sum, [, state]) => sum + (state.kind === "done" ? state.seconds : 0), 0);
+        return h(
+          "details",
+          {
+            class: "timeline-group row group is-done",
+            open: this.open.has(section),
+            ontoggle: (event: Event) => {
+              if ((event.target as HTMLDetailsElement).open) this.open.add(section);
+              else this.open.delete(section);
+            },
+          },
+          h(
+            "summary",
+            {},
+            h("span", { class: "mark" }, svg(icon.check)),
+            h("span", { class: "row-title" }, title),
+            h("span", { class: "seconds" }, seconds(total)),
+          ),
+          h("ol", {}, items),
+        );
+      }
+      // Running or stopped: the same row as a finished group, its steps open under it.
+      const failed = resolved.some(([, state]) => state.kind === "failed");
+      const key = `group:${section}`;
+      if (!this.started.has(key)) this.started.set(key, performance.now());
+      const head = h(
+        "div",
+        { class: "row-line" },
+        failed ? h("span", { class: "mark bad" }, svg(icon.cross)) : h("span", { class: "mark" }, h("span", { class: "spinner" })),
+        h("span", { class: "row-title" }, title),
+        !failed && h("span", { class: "seconds live", "data-key": key }, this.elapsed(key)),
       );
+      return h("div", { class: "timeline-group group" }, head, h("ol", {}, items));
     });
     this.element.replaceChildren(...groups);
 
@@ -112,7 +153,7 @@ export class Timeline {
     }
   }
 
-  private row(row: Row, state: State): HTMLElement {
+  private row(id: string, row: Row, state: State): HTMLElement {
     const mark =
       state.kind === "done"
         ? svg(icon.check)
@@ -121,46 +162,63 @@ export class Timeline {
           : state.kind === "running"
             ? h("span", { class: "spinner" })
             : h("span", { class: "dot" });
-    let seconds: HTMLElement | false = false;
-    if (state.kind === "done" || (state.kind === "failed" && state.seconds !== undefined)) {
-      seconds = h("span", { class: "seconds" }, `${state.seconds!.toFixed(1)} s`);
+    let time: HTMLElement | false = false;
+    // Steps under a tenth of a second show no time: a column of "0.0 s" is noise.
+    if ((state.kind === "done" || state.kind === "failed") && state.seconds !== undefined && state.seconds >= 0.05) {
+      time = h("span", { class: "seconds" }, seconds(state.seconds));
     } else if (state.kind === "running") {
       if (!this.started.has(row.key)) this.started.set(row.key, performance.now());
-      seconds = h("span", { class: "seconds live", "data-key": row.key }, this.elapsed(row));
+      time = h("span", { class: "seconds live", "data-key": row.key }, this.elapsed(row.key, row.typical));
     }
-    const detail =
-      state.kind === "done" || state.kind === "failed"
-        ? h("div", { class: "row-detail" }, state.detail)
-        : state.kind === "running" && state.detail
-          ? h("div", { class: "row-detail" }, state.detail)
-          : false;
-    return h(
-      "li",
-      { class: `row is-${state.kind}` },
-      h("span", { class: "mark" }, mark),
+    const line: (HTMLElement | false)[] = [h("span", { class: "mark" }, mark), h("span", { class: "row-title" }, row.title), time];
+    if (state.kind !== "done" && state.kind !== "failed") {
+      return h("li", { class: `is-${state.kind}` }, h("div", { class: "row-line" }, line));
+    }
+    const more = h(
+      "details",
+      {
+        class: "row",
+        open: this.open.has(id),
+        ontoggle: (event: Event) => {
+          if ((event.target as HTMLDetailsElement).open) this.open.add(id);
+          else this.open.delete(id);
+        },
+      },
+      h("summary", {}, line),
       h(
         "div",
-        { class: "row-body" },
-        h("div", { class: "row-title" }, h("span", {}, row.title), seconds),
-        h("div", { class: "row-what" }, row.what),
-        detail,
-        (state.kind === "done" || state.kind === "failed") && state.note
-          ? h("div", { class: "row-note" }, state.note)
-          : false,
-        state.kind === "skipped" ? h("div", { class: "row-note" }, "Not run") : false,
+        { class: "row-more" },
+        h("span", {}, row.what),
+        state.kind === "done"
+          ? h("span", { class: "mono outcome-value" }, outcome(state.detail))
+          : h("span", { class: "error-text" }, tidy(state.detail)),
       ),
     );
+    return h("li", { class: `is-${state.kind}` }, more);
   }
 
-  private elapsed(row: Row): string {
-    const seconds = (performance.now() - (this.started.get(row.key) ?? performance.now())) / 1000;
-    return row.typical ? `${seconds.toFixed(0)} s of ~${row.typical} s` : `${seconds.toFixed(0)} s`;
+  private elapsed(key: string, typical?: number): string {
+    const seconds = (performance.now() - (this.started.get(key) ?? performance.now())) / 1000;
+    return typical ? `${seconds.toFixed(0)} / ~${typical} s` : `${seconds.toFixed(0)} s`;
   }
 
   private tick(): void {
     for (const span of this.element.querySelectorAll<HTMLElement>(".seconds.live")) {
-      const row = [...STAGES, ...CHECKS].find((each) => each.key === span.dataset.key);
-      if (row) span.textContent = this.elapsed(row);
+      const key = span.dataset.key!;
+      span.textContent = this.elapsed(key, [...STAGES, ...CHECKS].find((each) => each.key === key)?.typical);
     }
   }
+}
+
+const seconds = (value: number) => `${value.toFixed(1)} s`;
+
+/// What a step found, as a value: "kept 512x512 at (0, 0)" reads
+/// "512×512 at (0, 0)" and "proof accepted" reads "Accepted".
+export function outcome(text: string): string {
+  const value = text
+    .trim()
+    .replace(/^(?:kept|proof) (?=\S)/i, "")
+    .replace(/\.$/, "")
+    .replace(/\b([1-9]\d*)x([1-9]\d*)\b/g, "$1×$2");
+  return value ? `${value[0]!.toUpperCase()}${value.slice(1)}` : value;
 }

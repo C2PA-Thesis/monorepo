@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-# Builds the CLI and the page, runs `provenance setup`, and checks ngrok.
-# Safe to run again: every step skips what already exists.
+# Builds the CLI and the page, runs `provenance setup` (which also makes the
+# TLS key the app pins), and checks ngrok. Safe to run again: every step
+# skips what already exists, except the location setup, which is redone when
+# its parameters are for an older circuit.
 set -euo pipefail
 # shellcheck source=lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -30,5 +32,5 @@ else
 fi
 
 say "ready"
-echo "    scripts/demo.sh phone   capture on a phone, prove and verify on this laptop"
+echo "    scripts/demo.sh phone   capture on a phone (the app or the browser), prove and verify on this laptop"
 echo "    scripts/demo.sh         the laptop-only demo and every attack"

@@ -9,6 +9,8 @@ export default {
         'c2pa',
         'crop-proof',
         'fingerprint',
+        'fingerprint-ffi',
+        'ios',
         'location-proof',
         'provenance',
         'scripts',

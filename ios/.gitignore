@@ -1,0 +1,6 @@
+# Built by scripts/build-rust.sh and scripts/build-go.sh, about 50 MB each.
+Frameworks/*.xcframework/
+build/
+DerivedData/
+xcuserdata/
+*.xcuserstate

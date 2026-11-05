@@ -57,9 +57,8 @@ impl RgbImage {
 }
 
 /// A deterministic original, so every implementation of the fingerprint can
-/// be checked against one digest. The page has the same formula.
-#[cfg(any(test, target_arch = "wasm32"))]
-pub(crate) fn test_image() -> RgbImage {
+/// be checked against one digest. The page and the C ABI test have the same formula.
+pub fn test_image() -> RgbImage {
     let channels = std::array::from_fn(|channel| {
         (0..ORIGINAL.pixels())
             .map(|i| ((i * 7 + channel * 13 + (i >> 9)) & 0xff) as u8)
