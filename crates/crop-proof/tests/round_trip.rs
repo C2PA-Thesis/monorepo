@@ -1,5 +1,6 @@
 use crop_proof::{
-    prove, setup_with_rng, verify, Fingerprint, ProverParams, RgbImage, VerifierParams, ORIGINAL,
+    left_half, prove, setup_with_rng, verify, Fingerprint, ProverParams, RgbImage, VerifierParams,
+    ORIGINAL,
 };
 use rand::{RngCore, SeedableRng};
 
@@ -18,7 +19,7 @@ fn proves_verifies_and_rejects_tampering() {
         pixels
     });
     let original = RgbImage::new(ORIGINAL, channels).unwrap();
-    let crop = original.left_half().unwrap();
+    let crop = left_half(&original).unwrap();
     let fingerprint = Fingerprint::of(&original).unwrap();
 
     let proof = prove(&prover, &original, &crop, &fingerprint).unwrap();

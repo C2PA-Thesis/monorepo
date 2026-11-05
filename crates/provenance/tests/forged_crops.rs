@@ -15,7 +15,7 @@ use crop_proof::{
     ProverParams, RgbImage, CROP, ORIGINAL,
 };
 use provenance::{
-    capture,
+    image,
     manifest::{self, Assertion},
     Workspace,
 };
@@ -51,7 +51,7 @@ fn republish_and_verify(name: &str, pixels: &RgbImage, assertion: &Assertion) {
     let dir = repository().join("out/attacks").join(name);
     fs::create_dir_all(&dir).unwrap();
     let unsigned = dir.join("crop.png");
-    capture::write_png(pixels, &unsigned).unwrap();
+    image::write_png(pixels, &unsigned).unwrap();
     let signed = dir.join("signed.png");
     workspace
         .editor()
@@ -59,7 +59,7 @@ fn republish_and_verify(name: &str, pixels: &RgbImage, assertion: &Assertion) {
         .sign(&unsigned, assertion, &signed)
         .unwrap();
 
-    assert_eq!(&capture::read_png(&signed).unwrap(), pixels);
+    assert_eq!(&image::read_png(&signed).unwrap(), pixels);
     let verdict = workspace.verifier().unwrap().verify(&signed, None);
     assert!(
         verdict.rejected.is_none(),
@@ -72,7 +72,7 @@ fn republish_and_verify(name: &str, pixels: &RgbImage, assertion: &Assertion) {
 fn demo() -> (Assertion, RgbImage) {
     let signed = repository().join("out/signed.png");
     let assertion = manifest::read(&signed).expect("run `provenance demo` first");
-    (assertion, capture::read_png(&signed).unwrap())
+    (assertion, image::read_png(&signed).unwrap())
 }
 
 #[test]

@@ -30,7 +30,10 @@ func TestAttackForgedHintsProveAnotherCell(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	honest := secrets{Latitude: -34.5478, Longitude: -58.4462, Salt: "0x" + strings.Repeat("0", 63) + "1"}
+	honest := secrets{
+		coordinate: coordinate{Latitude: -34.5478, Longitude: -58.4462},
+		Salt:       "0x" + strings.Repeat("0", 63) + "1",
+	}
 	lat, lng, salt, err := honest.parse()
 	if err != nil {
 		t.Fatal(err)

@@ -20,6 +20,7 @@ use arithmetic::merge_polynomials;
 use ark_bls12_381::Bls12_381;
 use ark_ff::{BigInteger, Field, PrimeField, UniformRand, Zero};
 use ark_poly::DenseMultilinearExtension;
+use fingerprint::{self, HASH_ROWS};
 use num_bigint::{BigInt, Sign};
 use subroutines::{
     pcs::prelude::{MultilinearProverParam, PolynomialCommitmentScheme},
@@ -29,7 +30,6 @@ use transcript::IOPTranscript;
 
 use crate::{
     crop::{append, new_transcript, open},
-    fingerprint::{self, HASH_ROWS},
     hooks,
     iop::{self, challenge, check, poly, OpeningPoints, Poly, RangeCheck, IRREDUCIBLE},
     lattice,

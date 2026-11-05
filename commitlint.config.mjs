@@ -8,6 +8,7 @@ export default {
       [
         'c2pa',
         'crop-proof',
+        'fingerprint',
         'location-proof',
         'provenance',
         'web',

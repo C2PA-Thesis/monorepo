@@ -2,14 +2,16 @@ use std::{fs, path::Path};
 
 use anyhow::{ensure, Context, Result};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
-use crop_proof::{Fingerprint, RgbImage};
+use crop_proof::RgbImage;
 use serde::Serialize;
 
 use crate::{
-    capture::{self, DeviceKey, Receipt, Secrets},
+    capture::{Capture, Secrets},
     demo::OTHER_PLACE,
+    image,
     location::LocationTool,
     manifest::{self, Assertion},
+    receipt::{DeviceKey, Receipt},
     verify::{Check, Verdict},
     Workspace,
 };
@@ -145,10 +147,15 @@ pub const ATTACKS: &[Attack] = &[
         expected: Expected::Accepted,
         needs_other_capture: false,
         tamper: |evidence, forger| {
-            let secrets = Secrets::new(OTHER_PLACE.latitude, OTHER_PLACE.longitude);
-            let fingerprint = evidence.assertion.receipt.fingerprint.clone();
+            let secrets = Secrets::new(OTHER_PLACE.coordinate);
+            let receipt = &evidence.assertion.receipt;
             let envelope = forger.location.commit(&secrets)?;
-            evidence.assertion.receipt = Receipt::sign(fingerprint, envelope, &forger.device)?;
+            evidence.assertion.receipt = Receipt::sign(
+                receipt.fingerprint.clone(),
+                envelope,
+                receipt.captured_at.clone(),
+                &forger.device,
+            )?;
             evidence.assertion.cell = OTHER_PLACE.cell.to_string();
             evidence.assertion.location_proof =
                 forger.location.prove(&secrets, OTHER_PLACE.cell)?.proof;
@@ -210,7 +217,7 @@ pub fn run(
     let signed = run.join("signed.png");
     let assertion = manifest::read(&signed)
         .with_context(|| format!("reading {}; run `provenance demo` first", signed.display()))?;
-    let pixels = capture::read_png(&signed)?;
+    let pixels = image::read_png(&signed)?;
     let device = workspace.device_key()?;
     let other = match selected.iter().any(|attack| attack.needs_other_capture) {
         true => Some(other_capture(workspace, run, &device)?),
@@ -239,7 +246,7 @@ pub fn run(
         };
         (attack.tamper)(&mut evidence, &forger)?;
         let unsigned = dir.join("crop.png");
-        capture::write_png(&evidence.pixels, &unsigned)?;
+        image::write_png(&evidence.pixels, &unsigned)?;
         let forged = dir.join("signed.png");
         editor.sign(&unsigned, &evidence.assertion, &forged)?;
         let outcome = Outcome {
@@ -256,7 +263,7 @@ pub fn run(
 /// A genuine capture of a different photo (the original mirrored) at
 /// another place, with its own receipt and location proof.
 fn other_capture(workspace: &Workspace, run: &Path, device: &DeviceKey) -> Result<Assertion> {
-    let original = capture::read_png(&run.join("original.png"))?;
+    let original = image::read_png(&run.join("original.png"))?;
     let width = original.size().width;
     let mirrored = original.channels().each_ref().map(|channel| {
         channel
@@ -268,11 +275,16 @@ fn other_capture(workspace: &Workspace, run: &Path, device: &DeviceKey) -> Resul
     let mirrored = RgbImage::new(original.size(), mirrored)?;
 
     let tool = workspace.location_tool();
-    let secrets = Secrets::new(OTHER_PLACE.latitude, OTHER_PLACE.longitude);
-    let receipt = Receipt::sign(Fingerprint::of(&mirrored)?, tool.commit(&secrets)?, device)?;
-    let proof = tool.prove(&secrets, OTHER_PLACE.cell)?;
+    let capture = Capture::simulate(
+        &tool,
+        device,
+        mirrored,
+        OTHER_PLACE.coordinate,
+        OTHER_PLACE.cell,
+    )?;
+    let proof = tool.prove(&capture.secrets, OTHER_PLACE.cell)?;
     Ok(Assertion::new(
-        receipt,
+        capture.receipt,
         OTHER_PLACE.cell.to_string(),
         proof.proof,
         String::new(),
