@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Capture</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <main>
+      <h1>Capture</h1>
+
+      <section id="pair">
+        <h2>Device</h2>
+        <p id="device-status">Creating the device key…</p>
+        <form id="pair-form" hidden>
+          <input id="pair-code" inputmode="numeric" pattern="[0-9]{6}" placeholder="pairing code" required />
+          <button type="submit">Pair</button>
+        </form>
+      </section>
+
+      <section id="capture">
+        <h2>Photo</h2>
+        <label class="button">
+          Take a photo
+          <input id="photo" type="file" accept="image/*" capture="environment" hidden />
+        </label>
+        <p id="gps">Waiting for a GPS fix…</p>
+        <div id="framing" hidden>
+          <canvas id="preview" width="1024" height="512"></canvas>
+          <label>Frame <input id="frame" type="range" min="0" max="1" step="0.001" value="0.5" /></label>
+          <label>Resolution <span id="resolution-value">7</span>
+            <input id="resolution" type="range" min="0" max="15" step="1" value="7" />
+          </label>
+          <p id="cell">Cell: …</p>
+          <button id="submit" type="button">Sign and upload</button>
+        </div>
+      </section>
+
+      <section id="result" hidden>
+        <h2>Result</h2>
+        <pre id="log"></pre>
+      </section>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
