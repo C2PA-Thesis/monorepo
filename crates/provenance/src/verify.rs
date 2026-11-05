@@ -1,4 +1,7 @@
-use std::path::Path;
+//! The reader checks. Each one first says what it is about to establish,
+//! then reports its outcome, so a reader can follow the argument as it runs.
+
+use std::{path::Path, time::Instant};
 
 use anyhow::{ensure, Context, Result};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
@@ -45,9 +48,33 @@ impl Check {
     }
 }
 
+/// What a check is about to establish, and how it ended.
+#[derive(Debug, Serialize)]
+#[serde(tag = "event", rename_all = "kebab-case")]
+pub enum Event {
+    Checking {
+        check: Check,
+        intent: String,
+    },
+    Passed {
+        check: Check,
+        intent: String,
+        outcome: String,
+        seconds: f64,
+    },
+    Rejected {
+        check: Check,
+        intent: String,
+        reason: String,
+        seconds: f64,
+    },
+}
+
 #[derive(Debug, Serialize)]
 pub struct Step {
     pub check: Check,
+    pub intent: String,
+    /// The outcome when the check passed, the reason when it rejected the file.
     pub detail: String,
 }
 
@@ -79,22 +106,56 @@ pub struct Verdict {
 }
 
 impl Verdict {
-    fn check<T>(&mut self, check: Check, run: impl FnOnce() -> Result<(T, String)>) -> Option<T> {
-        match run() {
-            Ok((value, detail)) => {
-                self.passed.push(Step { check, detail });
+    fn check<T>(
+        &mut self,
+        on: &mut dyn FnMut(Event),
+        check: Check,
+        intent: String,
+        run: impl FnOnce() -> Result<(T, String)>,
+    ) -> Option<T> {
+        on(Event::Checking {
+            check,
+            intent: intent.clone(),
+        });
+        let started = Instant::now();
+        let result = run();
+        let seconds = started.elapsed().as_secs_f64();
+        match result {
+            Ok((value, outcome)) => {
+                on(Event::Passed {
+                    check,
+                    intent: intent.clone(),
+                    outcome: outcome.clone(),
+                    seconds,
+                });
+                self.passed.push(Step {
+                    check,
+                    intent,
+                    detail: outcome,
+                });
                 Some(value)
             }
             Err(error) => {
+                let reason = format!("{error:#}");
+                on(Event::Rejected {
+                    check,
+                    intent: intent.clone(),
+                    reason: reason.clone(),
+                    seconds,
+                });
                 self.rejected = Some(Step {
                     check,
-                    detail: format!("{error:#}"),
+                    intent,
+                    detail: reason,
                 });
                 None
             }
         }
     }
 }
+
+/// A check after the manifest: what it establishes, and how to run it.
+type Later<'a> = (Check, String, &'a dyn Fn() -> Result<String>);
 
 /// What a reader needs: the trusted device keys and both proof verifiers.
 pub struct Verifier {
@@ -104,71 +165,95 @@ pub struct Verifier {
 }
 
 impl Verifier {
-    /// `cell`, when given, is the region the reader asks about.
-    pub fn verify(&self, signed: &Path, cell: Option<&str>) -> Verdict {
+    /// `cell`, when given, is the region the reader asks about. `on` sees
+    /// every check start and end.
+    pub fn verify(&self, signed: &Path, cell: Option<&str>, on: &mut dyn FnMut(Event)) -> Verdict {
         let mut verdict = Verdict::default();
-        let Some(assertion) = verdict.check(Check::Manifest, || {
-            Ok((
-                manifest::read(signed)?,
-                format!("valid, with one {LABEL} assertion"),
-            ))
-        }) else {
+        let Some(assertion) = verdict.check(
+            on,
+            Check::Manifest,
+            "reading the C2PA manifest and validating its claim signature".to_string(),
+            || {
+                Ok((
+                    manifest::read(signed)?,
+                    format!("valid, with one {LABEL} assertion"),
+                ))
+            },
+        ) else {
             return verdict;
         };
         let receipt = &assertion.receipt;
         let fingerprint = receipt.fingerprint_digest();
 
-        let steps: [(Check, &dyn Fn() -> Result<String>); 3] = [
-            (Check::Device, &|| {
-                receipt.verify(&self.trusted)?;
-                Ok(format!(
-                    "device {} signed fingerprint {} and envelope {}",
-                    short(&receipt.device),
+        let steps: [Later; 3] = [
+            (
+                Check::Device,
+                format!(
+                    "checking the device signature over fingerprint {} and envelope {}",
                     short(&fingerprint),
                     short(&receipt.envelope)
-                ))
-            }),
-            (Check::Image, &|| {
-                let published = image::read_png(signed)?;
-                let proof = BASE64
-                    .decode(&assertion.image_proof)
-                    .context("the crop proof is not base64")?;
-                crop_proof::verify(
-                    &self.crop_params,
-                    &published,
-                    assertion.crop,
-                    &receipt.fingerprint,
-                    &proof,
-                )
-                .context("the proof does not tie these pixels to the signed fingerprint")?;
-                Ok(format!(
-                    "these pixels are the {} of the original with fingerprint {}",
+                ),
+                &|| {
+                    receipt.verify(&self.trusted)?;
+                    Ok(format!(
+                        "signed by trusted device {} at {}",
+                        short(&receipt.device),
+                        receipt.captured_at
+                    ))
+                },
+            ),
+            (
+                Check::Image,
+                format!(
+                    "verifying that the published pixels are the {} of the original with fingerprint {}",
                     assertion.crop,
                     short(&fingerprint)
-                ))
-            }),
-            (Check::Location, &|| {
-                if let Some(cell) = cell {
-                    ensure!(
-                        cell == assertion.cell,
-                        "the file claims cell {}, not {cell}",
-                        assertion.cell
-                    );
-                }
-                self.location.verify(
-                    &assertion.cell,
-                    &receipt.envelope,
-                    &assertion.location_proof,
-                )?;
-                Ok(format!(
-                    "the coordinate in envelope {} is in cell {}",
+                ),
+                &|| {
+                    let published = image::read_png(signed)?;
+                    let proof = BASE64
+                        .decode(&assertion.image_proof)
+                        .context("the crop proof is not base64")?;
+                    crop_proof::verify(
+                        &self.crop_params,
+                        &published,
+                        assertion.crop,
+                        &receipt.fingerprint,
+                        &proof,
+                    )
+                    .context("the proof does not tie these pixels to the signed fingerprint")?;
+                    Ok("proof accepted".to_string())
+                },
+            ),
+            (
+                Check::Location,
+                format!(
+                    "verifying that the coordinate in envelope {} lies in cell {}",
                     short(&receipt.envelope),
                     assertion.cell
-                ))
-            }),
+                ),
+                &|| {
+                    if let Some(cell) = cell {
+                        ensure!(
+                            cell == assertion.cell,
+                            "the file claims cell {}, not {cell}",
+                            assertion.cell
+                        );
+                    }
+                    self.location.verify(
+                        &assertion.cell,
+                        &receipt.envelope,
+                        &assertion.location_proof,
+                    )?;
+                    Ok("proof accepted".to_string())
+                },
+            ),
         ];
-        for (check, run) in steps {
-            if verdict.check(check, || Ok(((), run()?))).is_none() {
+        for (check, intent, run) in steps {
+            if verdict
+                .check(on, check, intent, || Ok(((), run()?)))
+                .is_none()
+            {
                 return verdict;
             }
         }
