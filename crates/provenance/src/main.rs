@@ -108,6 +108,13 @@ enum Command {
         /// Store uploads without publishing them.
         #[arg(long)]
         no_publish: bool,
+        /// The app's App ID (Team ID, a period, the bundle id), to check App
+        /// Attest attestations against. Without it they are not checked.
+        #[arg(long, env = "PROVENANCE_APP_ID")]
+        app_id: Option<String>,
+        /// Refuse a secure-enclave pairing that carries no App Attest attestation.
+        #[arg(long, requires = "app_id")]
+        require_attestation: bool,
     },
     /// Verify a published PNG as a reader.
     Verify {
@@ -257,6 +264,8 @@ fn run(cli: Cli, ui: &Ui) -> Result<ExitCode> {
             web,
             public_url,
             no_publish,
+            app_id,
+            require_attestation,
         } => {
             let tls = match no_tls {
                 true => None,
@@ -264,6 +273,7 @@ fn run(cli: Cli, ui: &Ui) -> Result<ExitCode> {
             };
             let mut server = Server::new(workspace, captures.clone())
                 .public_url(public_url)
+                .app_attest(app_id.clone(), require_attestation)?
                 .on_change(serve_listener(ui.json));
             let app_urls = match &tls {
                 Some(tls) => serve::app_urls(&tls.addresses, tls_port, &extra_app_urls)?,
@@ -284,6 +294,7 @@ fn run(cli: Cli, ui: &Ui) -> Result<ExitCode> {
                     "event": "serving", "url": url, "captures": captures,
                     "pairing_code": server.pairing_code(), "pair_url": server.pair_url(),
                     "app_urls": app_urls, "pin": tls.as_ref().map(|tls| &tls.pin),
+                    "app_id": app_id, "require_attestation": require_attestation,
                 }));
             } else {
                 let mut fields = vec![
@@ -302,6 +313,14 @@ fn run(cli: Cli, ui: &Ui) -> Result<ExitCode> {
                 if web.is_some() {
                     fields.insert(1, ("screen", format!("{url}/screen")));
                 }
+                fields.push((
+                    "app attest",
+                    match (&app_id, require_attestation) {
+                        (None, _) => "not checked (no --app-id)".to_string(),
+                        (Some(app_id), false) => app_id.clone(),
+                        (Some(app_id), true) => format!("{app_id}, required"),
+                    },
+                ));
                 if let Some(pair_url) = server.pair_url() {
                     fields.insert(0, ("phone", pair_url));
                 }
@@ -633,16 +652,16 @@ impl Ui {
     /// `laptop` names this laptop's own key when no sidecar says so.
     fn device(&self, device: &Device, laptop: bool) {
         let (kind, name, paired_at) = match &device.info {
-            Some(info) => (
-                info.kind.shown(),
-                info.name.as_str(),
-                info.paired_at.as_str(),
+            Some(info) => (info.shown(), info.name.as_str(), info.paired_at.as_str()),
+            None if laptop => ("laptop".to_string(), "this laptop", ""),
+            None => (
+                "unknown".to_string(),
+                "",
+                "paired before kinds were recorded",
             ),
-            None if laptop => ("laptop", "this laptop", ""),
-            None => ("unknown", "", "paired before kinds were recorded"),
         };
         println!(
-            "  {}  {kind:<24}  {name:<20}  {}",
+            "  {}  {kind:<38}  {name:<20}  {}",
             style(&device.id).bold(),
             style(paired_at).dim()
         );

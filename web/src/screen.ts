@@ -124,9 +124,13 @@ class AppPairing {
 }
 
 /// Who signed a capture, in the words of the presenter page.
-/// The app declares a Secure Enclave key, and nothing here checks it.
+/// A Secure Enclave key is declared by the app unless the laptop verified an
+/// App Attest attestation when it paired.
 function deviceKind(status: api.Status): string {
   const kind = status.device_kind ?? (status.capture.source === "simulated" ? "laptop" : "browser");
+  if (kind === "secure-enclave" && status.device_attested) {
+    return `Secure Enclave, attested (${status.device_attested})`;
+  }
   return {
     "secure-enclave": "Secure Enclave, declared",
     software: "Software key",

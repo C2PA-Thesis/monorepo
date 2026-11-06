@@ -25,7 +25,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{Arc, Mutex, MutexGuard, PoisonError},
     thread,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{anyhow, bail, ensure, Context, Result};
@@ -55,11 +55,11 @@ use tower_http::{
 
 use crate::{
     capture::{self, Capture, Coordinate, LocationSource, Secrets, Source, Summary, Witness},
-    devices::{DeviceInfo, DeviceKind},
+    devices::{Attested, DeviceInfo, DeviceKind},
     image,
     location::{check_resolution, LocationProof, Outline, Region, PROVER_FILES},
     publish,
-    receipt::{parse_public_key, Receipt, TrustedKeys},
+    receipt::{key_id, parse_public_key, Receipt, TrustedKeys},
     verify::Verdict,
     Workspace,
 };
@@ -116,6 +116,17 @@ pub struct Server {
     on_change: Option<Listener>,
     /// The laptop's own key id, which signs the demo's captures.
     laptop: Option<String>,
+    attest: AttestPolicy,
+}
+
+/// How app pairings with an App Attest attestation are checked.
+struct AttestPolicy {
+    /// Team ID and bundle id. Without it attestations are not checked.
+    app_id: Option<String>,
+    /// Refuse a `secure-enclave` pairing that carries no attestation.
+    required: bool,
+    /// Apple's App Attest root, DER. Tests put their own.
+    root: Vec<u8>,
 }
 
 #[derive(Deserialize)]
@@ -129,6 +140,12 @@ pub struct PairRequest {
 #[derive(Serialize)]
 pub struct Paired {
     pub device: String,
+    /// The kind as the laptop now shows it. App pairing only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    /// Why an attestation that came with the pairing was not checked.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
 
 /// The app pairs with a token from the QR code and shows that it holds the
@@ -141,10 +158,30 @@ pub struct AppPairRequest {
     pub public_key: String,
     /// Base64 DER ECDSA-SHA256 signature over the token's UTF-8 bytes.
     pub signature: String,
-    /// `secure-enclave` or `software`, as the app declares it. Nothing checks
-    /// where the key lives.
+    /// `secure-enclave` or `software`, as the app declares it.
     pub kind: DeviceKind,
     pub name: String,
+    /// Only with `secure-enclave`, from a device that supports App Attest.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attestation: Option<AppAttestation>,
+}
+
+/// What `DCAppAttestService.attestKey` returned, over
+/// SHA-256 of [`pairing_client_data`].
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AppAttestation {
+    /// As `generateKey` returns it: base64 of SHA-256 of the attested key.
+    pub key_id: String,
+    /// The CBOR attestation object, base64.
+    pub object: String,
+}
+
+/// What the app attests when it pairs: the token from the QR code and the id
+/// of the key that will sign its receipts. The token is single use, so the
+/// attestation cannot be replayed for another pairing or another key.
+pub fn pairing_client_data(token: &str, device: &str) -> Vec<u8> {
+    format!("io.github.c2pa-thesis.pair.v2\n{token}\n{device}").into_bytes()
 }
 
 /// The TLS listener's addresses and the pin of its key.
@@ -308,6 +345,9 @@ pub struct Status {
     pub device: String,
     /// What kind of key that is, when known.
     pub device_kind: Option<DeviceKind>,
+    /// The App Attest environment, when the key paired with an attestation
+    /// that verified.
+    pub device_attested: Option<String>,
     pub captured_at: String,
     /// The original's size, from the signed fingerprint.
     pub original: Size,
@@ -346,7 +386,41 @@ impl Server {
             jobs: Mutex::new(HashMap::new()),
             prover: Mutex::new(()),
             on_change: None,
+            attest: AttestPolicy {
+                app_id: None,
+                required: false,
+                root: app_attest::apple_root(),
+            },
         }
+    }
+
+    /// Checks App Attest attestations against `app_id` (Team ID, a period,
+    /// the bundle id). With `required`, a `secure-enclave` pairing without
+    /// one is refused.
+    pub fn app_attest(mut self, app_id: Option<String>, required: bool) -> Result<Self> {
+        if let Some(app_id) = &app_id {
+            let team = app_id.split('.').next().unwrap_or_default();
+            ensure!(
+                team.len() == 10
+                    && team.chars().all(|c| c.is_ascii_alphanumeric())
+                    && app_id.len() > 11,
+                "the App ID is the 10-character Team ID, a period and the bundle id, not {app_id}"
+            );
+        }
+        ensure!(
+            app_id.is_some() || !required,
+            "requiring App Attest needs the App ID (--app-id)"
+        );
+        self.attest.app_id = app_id;
+        self.attest.required = required;
+        Ok(self)
+    }
+
+    /// Trusts another App Attest root instead of Apple's. Only for tests.
+    #[doc(hidden)]
+    pub fn app_attest_root(mut self, root: Vec<u8>) -> Self {
+        self.attest.root = root;
+        self
     }
 
     /// Publishes and verifies every accepted upload in the background.
@@ -449,9 +523,14 @@ impl Server {
                 kind: DeviceKind::Browser,
                 name: "capture page".to_string(),
                 paired_at: capture::now()?,
+                attestation: None,
             },
         )?;
-        Ok(Paired { device })
+        Ok(Paired {
+            device,
+            kind: None,
+            note: None,
+        })
     }
 
     /// What the presenter page puts in the app's QR code. An expired token
@@ -489,16 +568,86 @@ impl Server {
             .ok()
             .and_then(|der| Signature::from_der(&der).ok())
             .is_some_and(|signature| key.verify(request.token.as_bytes(), &signature).is_ok());
-        self.pairing().redeem(&request.token, possession)?;
-        let device = self.workspace.devices().add(
-            &key,
-            &DeviceInfo {
-                kind: request.kind,
-                name: device_name(&request.name),
-                paired_at: capture::now()?,
-            },
+        let checked = match possession {
+            false => Err("the signature over the token does not match the public key".to_string()),
+            true => self.check_attestation(&request, &key_id(&key)?),
+        };
+        // A failed check keeps the token, like a wrong signature.
+        self.pairing().redeem(
+            &request.token,
+            checked.as_ref().map(drop).map_err(Clone::clone),
         )?;
-        Ok(Paired { device })
+        let attestation = checked.map_err(|error| anyhow!(error))?;
+        let note = (request.attestation.is_some() && attestation.is_none()).then(|| {
+            "this laptop does not check App Attest; start provenance serve with --app-id"
+                .to_string()
+        });
+        let info = DeviceInfo {
+            kind: request.kind,
+            name: device_name(&request.name),
+            paired_at: capture::now()?,
+            attestation,
+        };
+        let device = self.workspace.devices().add(&key, &info)?;
+        Ok(Paired {
+            device,
+            kind: Some(info.shown()),
+            note,
+        })
+    }
+
+    /// The verified attestation, or none when the pairing carried none or
+    /// this laptop has no App ID to check it against.
+    fn check_attestation(
+        &self,
+        request: &AppPairRequest,
+        device: &str,
+    ) -> Result<Option<Attested>, String> {
+        let secure_enclave = request.kind == DeviceKind::SecureEnclave;
+        let Some(sent) = &request.attestation else {
+            return match self.attest.required && secure_enclave {
+                true => Err("this laptop requires App Attest for a secure-enclave key, and the pairing carried no attestation".to_string()),
+                false => Ok(None),
+            };
+        };
+        if !secure_enclave {
+            return Err(
+                "only a secure-enclave key pairs with an App Attest attestation".to_string(),
+            );
+        }
+        let Some(app_id) = &self.attest.app_id else {
+            return Ok(None);
+        };
+        let key_id = BASE64
+            .decode(&sent.key_id)
+            .map_err(|_| "the App Attest key id is not base64".to_string())?;
+        let object = BASE64
+            .decode(&sent.object)
+            .map_err(|_| "the App Attest attestation is not base64".to_string())?;
+        let client_data_hash = Sha256::digest(pairing_client_data(&request.token, device));
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|_| "the laptop's clock is before 1970".to_string())?
+            .as_secs() as i64;
+        let verified = app_attest::verify_with_root(
+            &object,
+            &app_attest::Expected {
+                app_id,
+                key_id: &key_id,
+                client_data_hash: &client_data_hash,
+            },
+            now,
+            &self.attest.root,
+        )
+        .map_err(|error| format!("the App Attest attestation does not verify: {error}"))?;
+        Ok(Some(Attested {
+            environment: verified.environment.as_str().to_string(),
+            app_id: app_id.clone(),
+            key_id: sent.key_id.clone(),
+            validation_category: verified.validation_category,
+            bundle_version: verified.bundle_version,
+            verified_at: capture::now().map_err(|error| error.to_string())?,
+        }))
     }
 
     fn pairing(&self) -> MutexGuard<'_, Pairing> {
@@ -697,6 +846,12 @@ impl Server {
                 Phase::Stored
             },
             device_kind: self.device_kind(&receipt.device, capture.source),
+            device_attested: self
+                .workspace
+                .devices()
+                .info(&receipt.device)
+                .and_then(|info| info.attestation)
+                .map(|attested| attested.environment),
             device: receipt.device,
             captured_at: receipt.captured_at,
             original: receipt.fingerprint.size,
@@ -1188,20 +1343,21 @@ impl Pairing {
         )
     }
 
-    /// Spends the token when it is the current one, unexpired, and
-    /// `possession` holds. Anything else counts as a refused attempt.
-    fn redeem(&mut self, token: &str, possession: bool) -> Result<()> {
+    /// Spends the token when it is the current one, unexpired, and `check`
+    /// passed (possession of the key, and the attestation if any). Anything
+    /// else counts as a refused attempt.
+    fn redeem(&mut self, token: &str, check: Result<(), String>) -> Result<()> {
         let matches = equal_in_constant_time(token.as_bytes(), self.token.as_bytes());
-        let reason = match (matches, self.expired(), possession) {
-            (true, false, true) => {
+        let reason = match (matches, self.expired(), check) {
+            (true, false, Ok(())) => {
                 self.rotate();
                 return Ok(());
             }
             (false, _, _) => {
-                "the pairing token is wrong or was used already; scan the QR code again"
+                "the pairing token is wrong or was used already; scan the QR code again".to_string()
             }
-            (true, true, _) => "the pairing token expired; scan the QR code again",
-            (true, false, false) => "the signature over the token does not match the public key",
+            (true, true, _) => "the pairing token expired; scan the QR code again".to_string(),
+            (true, false, Err(reason)) => reason,
         };
         self.failures += 1;
         if self.failures >= PAIRING_ATTEMPTS {
@@ -1315,8 +1471,8 @@ mod tests {
         let (token, left) = pairing.current();
         assert_eq!(token.len(), 32);
         assert!(left <= PAIRING_TTL);
-        pairing.redeem(&token, true).unwrap();
-        let error = pairing.redeem(&token, true).unwrap_err();
+        pairing.redeem(&token, Ok(())).unwrap();
+        let error = pairing.redeem(&token, Ok(())).unwrap_err();
         assert!(error.to_string().contains("used already"), "{error}");
         assert_ne!(pairing.current().0, token);
     }
@@ -1325,16 +1481,21 @@ mod tests {
     fn a_token_without_possession_is_refused_and_kept() {
         let mut pairing = Pairing::new(PAIRING_TTL);
         let (token, _) = pairing.current();
-        let error = pairing.redeem(&token, false).unwrap_err();
+        let error = pairing
+            .redeem(
+                &token,
+                Err("the signature over the token does not match".to_string()),
+            )
+            .unwrap_err();
         assert!(error.to_string().contains("signature"), "{error}");
-        pairing.redeem(&token, true).unwrap();
+        pairing.redeem(&token, Ok(())).unwrap();
     }
 
     #[test]
     fn an_expired_token_is_refused_and_replaced() {
         let mut pairing = Pairing::new(Duration::ZERO);
         let token = pairing.token.clone();
-        let error = pairing.redeem(&token, true).unwrap_err();
+        let error = pairing.redeem(&token, Ok(())).unwrap_err();
         assert!(error.to_string().contains("expired"), "{error}");
         assert_ne!(pairing.current().0, token);
     }
@@ -1344,14 +1505,14 @@ mod tests {
         let mut pairing = Pairing::new(PAIRING_TTL);
         let (token, _) = pairing.current();
         for _ in 1..PAIRING_ATTEMPTS {
-            assert!(pairing.redeem("00", true).is_err());
+            assert!(pairing.redeem("00", Ok(())).is_err());
             assert_eq!(pairing.current().0, token);
         }
-        assert!(pairing.redeem("00", true).is_err());
+        assert!(pairing.redeem("00", Ok(())).is_err());
         let (replaced, _) = pairing.current();
         assert_ne!(replaced, token);
-        assert!(pairing.redeem(&token, true).is_err());
-        pairing.redeem(&replaced, true).unwrap();
+        assert!(pairing.redeem(&token, Ok(())).is_err());
+        pairing.redeem(&replaced, Ok(())).unwrap();
     }
 
     #[test]
@@ -1370,6 +1531,231 @@ mod tests {
             assert!(attempts.admit(false));
         }
         assert!(attempts.admit(true), "the cooldown never ended");
+    }
+
+    mod attest {
+        use app_attest::testing::{Forge, Options};
+        use p256::{
+            ecdsa::{signature::Signer, SigningKey},
+            pkcs8::{EncodePublicKey, LineEnding},
+        };
+
+        use super::*;
+
+        const APP_ID: &str = "ABCDE12345.io.github.c2pa-thesis.capture";
+
+        struct Phone {
+            key: SigningKey,
+            device: String,
+        }
+
+        impl Phone {
+            fn new() -> Self {
+                let key = SigningKey::random(&mut OsRng);
+                let device = key_id(key.verifying_key()).unwrap();
+                Self { key, device }
+            }
+
+            fn request(
+                &self,
+                token: &str,
+                kind: DeviceKind,
+                attestation: Option<AppAttestation>,
+            ) -> AppPairRequest {
+                let signature: Signature = self.key.sign(token.as_bytes());
+                AppPairRequest {
+                    token: token.to_string(),
+                    public_key: self
+                        .key
+                        .verifying_key()
+                        .to_public_key_pem(LineEnding::LF)
+                        .unwrap(),
+                    signature: BASE64.encode(signature.to_der()),
+                    kind,
+                    name: "Test iPhone".to_string(),
+                    attestation,
+                }
+            }
+        }
+
+        /// An attestation over `client_data`, as the app would send it.
+        fn attest(forge: &Forge, client_data: &[u8]) -> AppAttestation {
+            let forged = forge.attest(&Options::new(APP_ID, &Sha256::digest(client_data)));
+            AppAttestation {
+                key_id: BASE64.encode(&forged.key_id),
+                object: BASE64.encode(&forged.object),
+            }
+        }
+
+        fn server(
+            home: &std::path::Path,
+            forge: &Forge,
+            app_id: Option<&str>,
+            required: bool,
+        ) -> Server {
+            fs::create_dir_all(home.join("trusted")).unwrap();
+            Server::new(Workspace::new(home), home.join("captures"))
+                .app_attest(app_id.map(str::to_string), required)
+                .unwrap()
+                .app_attest_root(forge.root().to_vec())
+        }
+
+        fn current_token(server: &Server) -> String {
+            server.pairing().current().0
+        }
+
+        #[test]
+        fn client_data_is_fixed() {
+            // Pinned in the app's tests too (ProvenanceCaptureTests).
+            let data = pairing_client_data("0123456789abcdef0123456789abcdef", &"ab".repeat(32));
+            assert_eq!(
+                hex::encode(Sha256::digest(data)),
+                "16506113a77c759bbec2f3084dd656b07268fbf4f5df890834bf3aa7f92981bc"
+            );
+        }
+
+        #[test]
+        fn an_attested_key_is_recorded() {
+            let home = tempfile::tempdir().unwrap();
+            let forge = Forge::new();
+            let server = server(home.path(), &forge, Some(APP_ID), true);
+            let phone = Phone::new();
+            let token = current_token(&server);
+            let attestation = attest(&forge, &pairing_client_data(&token, &phone.device));
+            let key_id = attestation.key_id.clone();
+            let paired = server
+                .app_pair(phone.request(&token, DeviceKind::SecureEnclave, Some(attestation)))
+                .unwrap();
+            assert_eq!(paired.device, phone.device);
+            assert_eq!(
+                paired.kind.as_deref(),
+                Some("attested: secure-enclave (development)")
+            );
+            assert!(paired.note.is_none());
+            let info = server.workspace.devices().info(&phone.device).unwrap();
+            let attested = info.attestation.unwrap();
+            assert_eq!(attested.environment, "development");
+            assert_eq!(attested.app_id, APP_ID);
+            assert_eq!(attested.key_id, key_id);
+            assert_eq!(attested.validation_category, Some(3));
+        }
+
+        #[test]
+        fn an_attestation_for_another_token_or_key_is_refused_and_the_token_kept() {
+            let home = tempfile::tempdir().unwrap();
+            let forge = Forge::new();
+            let server = server(home.path(), &forge, Some(APP_ID), false);
+            let phone = Phone::new();
+            let other = Phone::new();
+            let token = current_token(&server);
+            for client_data in [
+                pairing_client_data(&"0".repeat(32), &phone.device),
+                pairing_client_data(&token, &other.device),
+            ] {
+                let error = server
+                    .app_pair(phone.request(
+                        &token,
+                        DeviceKind::SecureEnclave,
+                        Some(attest(&forge, &client_data)),
+                    ))
+                    .err()
+                    .unwrap();
+                assert!(error.to_string().contains("does not verify"), "{error}");
+                assert!(!server.workspace.devices().is_trusted(&phone.device));
+            }
+            // An attestation under another root.
+            let error = server
+                .app_pair(phone.request(
+                    &token,
+                    DeviceKind::SecureEnclave,
+                    Some(attest(
+                        &Forge::new(),
+                        &pairing_client_data(&token, &phone.device),
+                    )),
+                ))
+                .err()
+                .unwrap();
+            assert!(
+                error.to_string().contains("Apple's App Attest root"),
+                "{error}"
+            );
+            assert_eq!(
+                current_token(&server),
+                token,
+                "a refused attestation spent the token"
+            );
+            server
+                .app_pair(phone.request(&token, DeviceKind::SecureEnclave, None))
+                .unwrap();
+            let info = server.workspace.devices().info(&phone.device).unwrap();
+            assert_eq!(info.shown(), "declared: secure-enclave");
+        }
+
+        #[test]
+        fn a_missing_attestation_is_refused_only_when_required() {
+            let home = tempfile::tempdir().unwrap();
+            let forge = Forge::new();
+            let server = server(home.path(), &forge, Some(APP_ID), true);
+            let phone = Phone::new();
+            let token = current_token(&server);
+            let error = server
+                .app_pair(phone.request(&token, DeviceKind::SecureEnclave, None))
+                .err()
+                .unwrap();
+            assert!(error.to_string().contains("requires App Attest"), "{error}");
+            // The Simulator's software key has nothing to attest.
+            let paired = server
+                .app_pair(phone.request(&token, DeviceKind::Software, None))
+                .unwrap();
+            assert_eq!(paired.kind.as_deref(), Some("software"));
+        }
+
+        #[test]
+        fn a_software_key_with_an_attestation_is_refused() {
+            let home = tempfile::tempdir().unwrap();
+            let forge = Forge::new();
+            let server = server(home.path(), &forge, Some(APP_ID), false);
+            let phone = Phone::new();
+            let token = current_token(&server);
+            let attestation = attest(&forge, &pairing_client_data(&token, &phone.device));
+            let error = server
+                .app_pair(phone.request(&token, DeviceKind::Software, Some(attestation)))
+                .err()
+                .unwrap();
+            assert!(
+                error.to_string().contains("only a secure-enclave key"),
+                "{error}"
+            );
+        }
+
+        #[test]
+        fn without_an_app_id_the_attestation_is_not_checked() {
+            let home = tempfile::tempdir().unwrap();
+            let forge = Forge::new();
+            let server = server(home.path(), &forge, None, false);
+            let phone = Phone::new();
+            let token = current_token(&server);
+            let attestation = attest(&forge, b"anything");
+            let paired = server
+                .app_pair(phone.request(&token, DeviceKind::SecureEnclave, Some(attestation)))
+                .unwrap();
+            assert_eq!(paired.kind.as_deref(), Some("declared: secure-enclave"));
+            assert!(paired.note.unwrap().contains("--app-id"));
+        }
+
+        #[test]
+        fn app_ids_are_checked() {
+            let home = tempfile::tempdir().unwrap();
+            let make = || Server::new(Workspace::new(home.path()), home.path().join("captures"));
+            assert!(make()
+                .app_attest(Some("io.github.c2pa-thesis.capture".to_string()), false)
+                .is_err());
+            assert!(make()
+                .app_attest(Some("ABCDE12345.".to_string()), false)
+                .is_err());
+            assert!(make().app_attest(None, true).is_err());
+            assert!(make().app_attest(Some(APP_ID.to_string()), true).is_ok());
+        }
     }
 
     #[test]
