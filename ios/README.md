@@ -6,16 +6,18 @@ The native iOS capture app. It makes the same captures as the capture page in
 The order is camera first, one step per screen. A first run shows two
 pages on what the app does, then asks for location, the camera (on a device)
 and the laptop. After that the app opens on the camera. The shutter seals the
-photo on the phone right away: it reads the fix, renders the 1024x512 original
-from the framed box, fingerprints it, seals the position in the envelope and
-signs the receipt. Then two screens: the photo, with Edit and Publish, and
-"Were you around here?" with the cell drawn on a map and the size of the area.
-Edit opens an editor with a tool bar at the bottom. Crop works by hand: drag a
-corner or an edge, drag inside to move, or pick Free, Square, 4:3 or 16:9.
-Rotate, blur and greyscale show as coming soon, because the crop is the only
-edit the laptop can prove today. "Yes, publish" makes the location proof on
-the phone, uploads, and follows the laptop while it proves the crop and runs
-the reader checks. Edits after the shutter cannot change what was signed: the crop and
+photo on the phone right away: it reads the fix, renders the original from the
+whole frame (scaled down to at most 524,288 pixels, the most the crop proof
+takes, so a 4:3 photo gives 836x627), fingerprints it, seals the position in
+the envelope and signs the receipt with the original's size. Then two
+screens: the photo, with Edit and Publish, and "Were you around here?" with
+the cell drawn on a map and the size of the area. Edit opens an editor with a
+tool bar at the bottom. Crop works by hand: drag a corner or an edge, drag
+inside to move, or pick Free, Square, 4:3 or 16:9. Rotate, blur and greyscale
+show as coming soon, because the crop is the only edit the laptop can prove
+today. "Yes, publish" makes the location proof on the phone, uploads, and
+follows the laptop while it proves the crop and runs the reader checks. Edits
+after the shutter cannot change what was signed: the crop and
 the cell are proved against the sealed original and envelope.
 
 Every verified photo is kept on the phone (Application Support/Verified, the
@@ -269,15 +271,18 @@ lists them.
   evaluation fails.
 - A CryptoKit DER signature verifies with CryptoKit, and a signed receipt
   verifies over its signed bytes.
-- Crop handles and fixed shapes, and that every crop they make fits the
-  original, the 2:1 framing window, the timestamp format, the
-  pairing payload checks, the upload JSON, the hints in the secrets JSON, the
+- `OriginalSize.fit` against the sizes `Size::fit` pins in
+  `crates/fingerprint/src/image.rs`, crop handles and fixed shapes, and that
+  every crop they make fits the original, the timestamp format, the pairing
+  payload checks, the upload JSON, the hints in the secrets JSON, the
   timeline rules.
-- Rendering the sample photo gives an opaque 1024x512 bitmap whose PNG decodes
-  back to the same bytes.
+- Rendering the sample photo (1024x683) gives an opaque 886x591 bitmap whose
+  PNG decodes back to the same bytes.
 - `NativeTests` run the linked libraries through `NativeBridge`: the Rust
-  fingerprint of `fingerprint_test_image` hashes to the digest pinned in
-  `crates/fingerprint/src/lib.rs`, and `zkloc_hints`, `zkloc_envelope` and
+  fingerprint of `fingerprint_test_image` at 1024x512 and at 836x627 hashes
+  to the digests pinned in `crates/fingerprint/src/lib.rs`, planes of the
+  wrong size are refused, `OriginalSize.maxPixels` equals
+  `FINGERPRINT_MAX_PIXELS`, and `zkloc_hints`, `zkloc_envelope` and
   `zkloc_cell` on the UTDT coordinate with salt 1 give the hints, envelope
   and resolution 7 cell pinned in `location-proof/main_test.go`. Hints of
   another coordinate are refused.

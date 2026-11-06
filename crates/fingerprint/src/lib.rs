@@ -1,5 +1,6 @@
 //! The HyperVerITAS lattice fingerprint: `A · pixels` over the BLS12-381
-//! scalar field, 128 field elements per RGB channel of a 1024x512 image.
+//! scalar field, 128 field elements per RGB channel of an image of up to
+//! 2^19 pixels.
 //!
 //! Extracted from HyperVerITAS (<https://github.com/C2PA-Thesis/HyperVerITAS>
 //! at 798554f, MIT, see LICENSE). The crop proof checks a published image
@@ -17,7 +18,7 @@ mod image;
 #[cfg(target_arch = "wasm32")]
 mod wasm;
 
-pub use image::{test_image, RgbImage, Size, ORIGINAL};
+pub use image::{test_channel, test_image, RgbImage, Size, MAX_PIXELS, TEST_SIZE};
 
 pub type F = ark_bls12_381::Fr;
 
@@ -30,7 +31,8 @@ pub const HASH_ROWS: usize = 128;
 pub const ELEMENT_BYTES: usize = 32;
 
 /// Test vector shared with the capture page and the C ABI: the SHA-256 of all
-/// 384 elements of `test_image`'s fingerprint, channel by channel, in binary.
+/// 384 elements of the fingerprint of `test_image(TEST_SIZE)`, channel by
+/// channel, in binary.
 pub const TEST_IMAGE_DIGEST: &str =
     "cfa3ff823a6ac9e044bf3ba042bb7f7b5fc50ac696ad86e439d03acc273f5083";
 
@@ -51,11 +53,7 @@ pub struct Fingerprint {
 
 impl Fingerprint {
     pub fn of(image: &RgbImage) -> Result<Self> {
-        ensure!(
-            image.size() == ORIGINAL,
-            "fingerprints are defined for a {ORIGINAL} original, got {}",
-            image.size()
-        );
+        image.size().check()?;
         let elements = hash_image(image.channels().each_ref().map(Vec::as_slice));
         let mut channels = elements.chunks_exact(HASH_ROWS);
         let [r, g, b] = std::array::from_fn(|_| {
@@ -68,7 +66,7 @@ impl Fingerprint {
         });
         Ok(Self {
             algorithm: ALGORITHM.to_string(),
-            size: ORIGINAL,
+            size: image.size(),
             r,
             g,
             b,
@@ -82,11 +80,7 @@ impl Fingerprint {
             "unsupported fingerprint algorithm {}",
             self.algorithm
         );
-        ensure!(
-            self.size == ORIGINAL,
-            "fingerprint is for a {} original, expected {ORIGINAL}",
-            self.size
-        );
+        self.size.check()?;
         let decode = |name: &str, values: &[String]| -> Result<Vec<F>> {
             ensure!(
                 values.len() == HASH_ROWS,
@@ -104,7 +98,9 @@ impl Fingerprint {
 }
 
 /// Row `i` of A is the ChaCha8 stream seeded with `i`, so both sides rebuild
-/// A instead of storing its 128 x 2^19 entries.
+/// A instead of storing its 128 x 2^19 entries. An image of N pixels uses the
+/// first N entries of each row, so its size has to be signed with the
+/// fingerprint: N pixels and the same pixels followed by zeros hash alike.
 pub fn matrix_row(row: usize) -> ChaCha8Rng {
     ChaCha8Rng::seed_from_u64(row as u64)
 }
@@ -161,13 +157,13 @@ pub fn hash_image_into(channels: [&[u8]; 3], out: &mut [u8]) {
     write_elements(&hash_image(channels), out);
 }
 
-/// `r^T A` for row weights `r`.
-pub fn combine_rows(weights: &[F]) -> Vec<F> {
+/// `r^T A` for row weights `r`, over the first `pixels` columns.
+pub fn combine_rows(weights: &[F], pixels: usize) -> Vec<F> {
     // One accumulator per worker: a vector per row would need 128 x 2^19 elements.
     let workers = worker_count(weights.len());
     let rows_per_worker = weights.len().div_ceil(workers);
     let partial = parallel_map(workers, |worker| {
-        let mut combined = vec![F::zero(); ORIGINAL.pixels()];
+        let mut combined = vec![F::zero(); pixels];
         let rows = worker * rows_per_worker..((worker + 1) * rows_per_worker).min(weights.len());
         for row in rows {
             let mut entries = matrix_row(row);
@@ -186,7 +182,7 @@ pub fn combine_rows(weights: &[F]) -> Vec<F> {
                 .for_each(|(sum, value)| *sum += value);
             total
         })
-        .unwrap_or_else(|| vec![F::zero(); ORIGINAL.pixels()])
+        .unwrap_or_else(|| vec![F::zero(); pixels])
 }
 
 fn worker_count(tasks: usize) -> usize {
@@ -307,22 +303,51 @@ mod tests {
         assert!(from_hex("0x01").is_err());
     }
 
-    /// `Fingerprint::of` and `hash_rows_into`, the page's path, against the
-    /// pinned digest. One fingerprint only: CI runs these tests unoptimized.
-    #[test]
-    fn test_image_fingerprint_digest() {
-        let image = image::test_image();
-        let fingerprint = Fingerprint::of(&image).unwrap();
+    fn digest(fingerprint: &Fingerprint) -> (String, Vec<u8>) {
         let binary: Vec<u8> = [&fingerprint.r, &fingerprint.g, &fingerprint.b]
             .into_iter()
             .flatten()
             .flat_map(|element| hex::decode(&element[2..]).unwrap())
             .collect();
-        assert_eq!(hex::encode(Sha256::digest(&binary)), TEST_IMAGE_DIGEST);
+        (hex::encode(Sha256::digest(&binary)), binary)
+    }
+
+    /// `Fingerprint::of` and `hash_rows_into`, the page's path, against the
+    /// pinned digest. One fingerprint per test: CI runs these tests unoptimized.
+    #[test]
+    fn test_image_fingerprint_digest() {
+        let image = image::test_image(TEST_SIZE);
+        let fingerprint = Fingerprint::of(&image).unwrap();
+        assert_eq!(fingerprint.size, TEST_SIZE);
+        let (digest, binary) = digest(&fingerprint);
+        assert_eq!(digest, TEST_IMAGE_DIGEST);
 
         let mut rows = vec![0u8; 2 * ELEMENT_BYTES];
         hash_rows_into(&image.channels()[1], 5..7, &mut rows);
         let start = (HASH_ROWS + 5) * ELEMENT_BYTES;
         assert_eq!(rows, binary[start..start + rows.len()]);
+    }
+    /// The 4:3 original of a 12 MP photo, the size the app sends, so the
+    /// page and the app can pin a size that is not a power of two.
+    #[test]
+    fn four_by_three_fingerprint_digest() {
+        let size = Size::fit(4032, 3024);
+        let fingerprint = Fingerprint::of(&image::test_image(size)).unwrap();
+        assert_eq!(fingerprint.size, size);
+        assert_eq!(
+            digest(&fingerprint).0,
+            "32ae4e96e4679d0dad3e1b10dde31f46d18d15ac25606f73b0f4a014117ab375"
+        );
+    }
+
+    #[test]
+    fn sizes_over_the_limit_are_refused() {
+        let size = Size {
+            width: 1025,
+            height: 512,
+        };
+        let channels = std::array::from_fn(|_| vec![0; size.pixels()]);
+        let image = RgbImage::new(size, channels).unwrap();
+        assert!(Fingerprint::of(&image).is_err());
     }
 }

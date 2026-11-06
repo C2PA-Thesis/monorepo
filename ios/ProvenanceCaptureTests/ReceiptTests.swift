@@ -48,12 +48,12 @@ final class ReceiptTests: XCTestCase {
         binary[31] = 0x01  // R row 0, last byte
         binary[128 * 32 + 32] = 0xff  // G row 1, first byte
         binary[2 * 128 * 32 + 127 * 32 + 31] = 0x07  // B row 127, last byte
-        let fingerprint = try Fingerprint(binary: binary)
+        let fingerprint = try Fingerprint(binary: binary, size: OriginalSize(width: 836, height: 627))
         XCTAssertEqual(fingerprint.r[0], "0x" + String(repeating: "0", count: 63) + "1")
         XCTAssertEqual(fingerprint.g[1], "0xff" + String(repeating: "0", count: 62))
         XCTAssertEqual(fingerprint.b[127], "0x" + String(repeating: "0", count: 63) + "7")
-        XCTAssertEqual(fingerprint.size, .init(width: 1024, height: 512))
-        XCTAssertThrowsError(try Fingerprint(binary: Data(count: 10)))
+        XCTAssertEqual(fingerprint.size, .init(width: 836, height: 627))
+        XCTAssertThrowsError(try Fingerprint(binary: Data(count: 10), size: OriginalSize(width: 836, height: 627)))
     }
 
     func testReceiptSignatureVerifiesOverTheSignedBytes() throws {

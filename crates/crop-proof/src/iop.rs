@@ -16,7 +16,7 @@ use subroutines::{
 };
 use transcript::IOPTranscript;
 
-use crate::{Pcs, Rect, F, NUM_VARS, ORIGINAL};
+use crate::{Pcs, Rect, Size, F, NUM_VARS};
 
 pub(crate) type Poly = Arc<DenseMultilinearExtension<F>>;
 pub(crate) type SumCheckProof = <PolyIOP<F> as SumCheck<F>>::SumCheckProof;
@@ -47,6 +47,17 @@ pub(crate) fn poly(mut values: Vec<F>) -> Poly {
     ))
 }
 
+/// The multilinear extension of a vector over the original's pixels,
+/// zero-padded to `NUM_VARS` variables whatever the original's size.
+pub(crate) fn image_poly(mut values: Vec<F>) -> Poly {
+    assert!(
+        values.len() <= 1 << NUM_VARS,
+        "more values than the polynomial holds"
+    );
+    values.resize(1 << NUM_VARS, F::zero());
+    poly(values)
+}
+
 pub(crate) fn field_values(pixels: &[u8]) -> Vec<F> {
     pixels.iter().map(|&pixel| F::from(pixel)).collect()
 }
@@ -58,23 +69,26 @@ pub(crate) fn challenge(transcript: &mut IOPTranscript<F>, label: &'static [u8])
     )
 }
 
-/// 128 row weights r and `r^T A`, which turn the fingerprint check into one
-/// sumcheck per channel.
-pub(crate) fn hash_weights(transcript: &mut IOPTranscript<F>) -> Result<(Vec<F>, Vec<F>)> {
+/// 128 row weights r and `r^T A` over the original's pixels, which turn the
+/// fingerprint check into one sumcheck per channel.
+pub(crate) fn hash_weights(
+    transcript: &mut IOPTranscript<F>,
+    original: Size,
+) -> Result<(Vec<F>, Vec<F>)> {
     let weights = (0..fingerprint::HASH_ROWS)
         .map(|_| challenge(transcript, b"alpha"))
         .collect::<Result<Vec<_>>>()?;
-    let combined = fingerprint::combine_rows(&weights);
+    let combined = fingerprint::combine_rows(&weights, original.pixels());
     Ok((weights, combined))
 }
 
 /// `S^T r` for the crop selection S: original pixel (rect.x + x, rect.y + y)
 /// maps to published pixel (x, y).
-pub(crate) fn crop_weights(rect: Rect, r: &[F]) -> Vec<F> {
-    let mut weights = vec![F::zero(); ORIGINAL.pixels()];
+pub(crate) fn crop_weights(original: Size, rect: Rect, r: &[F]) -> Vec<F> {
+    let mut weights = vec![F::zero(); original.pixels()];
     for y in 0..rect.height {
         for x in 0..rect.width {
-            weights[(rect.y + y) * ORIGINAL.width + rect.x + x] = r[y * rect.width + x];
+            weights[(rect.y + y) * original.width + rect.x + x] = r[y * rect.width + x];
         }
     }
     weights

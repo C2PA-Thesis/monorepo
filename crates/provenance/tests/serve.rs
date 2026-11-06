@@ -218,7 +218,7 @@ async fn accepts_a_signed_capture_and_rejects_tampered_ones() {
         capture.original.clone(),
         DEMO_PLACE.coordinate,
         DEMO_PLACE.cell,
-        crop_proof::Rect::LEFT_HALF,
+        crop_proof::Rect::left_half(capture.original.size()),
     )
     .unwrap();
     let from_phone = serde_json::to_value(upload_of(&unknown)).unwrap();
@@ -822,7 +822,7 @@ async fn publishes_a_location_proof_made_on_the_phone_without_its_secrets() {
         capture.original.clone(),
         OTHER_PLACE.coordinate,
         OTHER_PLACE.cell,
-        crop_proof::Rect::LEFT_HALF,
+        crop_proof::Rect::left_half(capture.original.size()),
     )
     .unwrap();
     let other_proof = tool
@@ -903,7 +903,7 @@ async fn publishes_a_location_proof_made_on_the_phone_without_its_secrets() {
         signed.location_proof, proof.proof,
         "publishing proved again"
     );
-    assert_eq!(signed.version, 4);
+    assert_eq!(signed.version, manifest::VERSION);
     let verdict = workspace.verifier().unwrap().verify(
         &accepted.dir.join("signed.png"),
         Some(DEMO_PLACE.cell),

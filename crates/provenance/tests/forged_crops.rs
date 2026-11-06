@@ -1,8 +1,10 @@
 //! Security analysis, attacks A2 and A3 end to end. A third party takes the
 //! file `provenance demo` published, replaces the crop, re-signs the C2PA
 //! manifest with the public sample key (B2) and gives it to the reader's
-//! verifier. Both tests pass while the attacks work; each fix must make its
-//! test fail. Run after `provenance setup` and `provenance demo`.
+//! verifier. The A2 forgery is rejected by the crop proof check, since the
+//! proof is bound to the published pixels. The A3 test passes while the attack
+//! works; its fix must make it fail. Run after `provenance setup` and
+//! `provenance demo`.
 
 use std::{
     fs,
@@ -11,12 +13,13 @@ use std::{
 
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use crop_proof::{
-    forge::{forge_crop_proof, substitute_crop, CROP},
-    ProverParams, RgbImage, ORIGINAL,
+    forge::{forge_crop_proof, substitute_crop},
+    ProverParams, RgbImage, Size,
 };
 use provenance::{
     image,
     manifest::{self, Assertion},
+    verify::{Check, Verdict},
     Workspace,
 };
 
@@ -32,21 +35,21 @@ fn workspace() -> Workspace {
 }
 
 /// A color gradient, unrelated to the demo photo.
-fn gradient() -> RgbImage {
+fn gradient(size: Size) -> RgbImage {
     let channels = std::array::from_fn(|c| {
-        (0..CROP.pixels())
+        (0..size.pixels())
             .map(|i| {
-                let (x, y) = (i % CROP.width, i / CROP.width);
+                let (x, y) = (i % size.width, i / size.width);
                 [x / 2, y / 2, 128][c] as u8
             })
             .collect()
     });
-    RgbImage::new(CROP, channels).unwrap()
+    RgbImage::new(size, channels).unwrap()
 }
 
 /// Publishes `pixels` with `assertion` under `out/attacks/<name>/` and runs
 /// the reader's four checks on it.
-fn republish_and_verify(name: &str, pixels: &RgbImage, assertion: &Assertion) {
+fn republish_and_verify(name: &str, pixels: &RgbImage, assertion: &Assertion) -> Verdict {
     let workspace = workspace();
     let dir = repository().join("out/attacks").join(name);
     fs::create_dir_all(&dir).unwrap();
@@ -60,10 +63,13 @@ fn republish_and_verify(name: &str, pixels: &RgbImage, assertion: &Assertion) {
         .unwrap();
 
     assert_eq!(&image::read_png(&signed).unwrap(), pixels);
-    let verdict = workspace
+    workspace
         .verifier()
         .unwrap()
-        .verify(&signed, None, &mut |_| {});
+        .verify(&signed, None, &mut |_| {})
+}
+
+fn assert_accepted(verdict: &Verdict) {
     assert!(
         verdict.rejected.is_none(),
         "the reader rejected the forgery: {:?}",
@@ -80,20 +86,25 @@ fn demo() -> (Assertion, RgbImage) {
 
 #[test]
 #[ignore = "needs `provenance setup` and `provenance demo`; run with --release -- --ignored"]
-fn substituted_crop_passes_every_reader_check() {
+fn substituted_crop_is_rejected_by_the_crop_proof() {
     let (assertion, published) = demo();
     let proof = BASE64.decode(&assertion.image_proof).unwrap();
     let forged = substitute_crop(
         &assertion.receipt.fingerprint,
+        assertion.crop,
         &proof,
         &published,
-        &gradient(),
+        &gradient(assertion.crop.size()),
     )
     .unwrap();
     assert_ne!(forged, published);
 
     // Same receipt, same location proof, same crop proof: only the pixels change.
-    republish_and_verify("substituted-crop", &forged, &assertion);
+    let verdict = republish_and_verify("substituted-crop", &forged, &assertion);
+    let rejected = verdict
+        .rejected
+        .expect("the reader accepted the substituted crop");
+    assert_eq!(rejected.check, Check::Image, "{}", rejected.detail);
 }
 
 #[test]
@@ -101,17 +112,21 @@ fn substituted_crop_passes_every_reader_check() {
 fn forged_crop_proof_passes_every_reader_check() {
     let (mut assertion, published) = demo();
     let prover = ProverParams::load(&workspace().crop_params()).unwrap();
-    let target = gradient();
+    let target = gradient(assertion.crop.size());
     assert_ne!(target, published);
 
     // The forger never sees the original: the rest of its image is gray.
-    let gray = RgbImage::new(
-        ORIGINAL,
-        std::array::from_fn(|_| vec![128; ORIGINAL.pixels()]),
+    let size = assertion.receipt.fingerprint.size;
+    let gray = RgbImage::new(size, std::array::from_fn(|_| vec![128; size.pixels()])).unwrap();
+    let proof = forge_crop_proof(
+        &prover,
+        &assertion.receipt.fingerprint,
+        assertion.crop,
+        &gray,
+        &target,
     )
     .unwrap();
-    let proof = forge_crop_proof(&prover, &assertion.receipt.fingerprint, &gray, &target).unwrap();
     assertion.image_proof = BASE64.encode(proof);
 
-    republish_and_verify("forged-crop", &target, &assertion);
+    assert_accepted(&republish_and_verify("forged-crop", &target, &assertion));
 }

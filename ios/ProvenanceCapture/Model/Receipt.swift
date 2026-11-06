@@ -1,6 +1,6 @@
 import Foundation
 
-/// The lattice fingerprint of the 1024x512 original, as crates/fingerprint serializes it.
+/// The lattice fingerprint of the original, as crates/fingerprint serializes it.
 struct Fingerprint: Codable, Equatable, Sendable {
     static let algorithm = "hyperveritas-ajtai-chacha8-v1"
     static let rows = 128
@@ -24,8 +24,9 @@ struct Fingerprint: Codable, Equatable, Sendable {
         case b = "B"
     }
 
-    /// From the binary form: R, G, then B, 128 big-endian 32-byte elements each.
-    init(binary: Data) throws {
+    /// From the binary form: R, G, then B, 128 big-endian 32-byte elements
+    /// each, of an original of `size`.
+    init(binary: Data, size: OriginalSize) throws {
         let perChannel = Self.rows * Self.elementBytes
         guard binary.count == 3 * perChannel else {
             throw CaptureError("the fingerprint has \(binary.count) bytes, not \(3 * perChannel)")
@@ -39,7 +40,7 @@ struct Fingerprint: Codable, Equatable, Sendable {
         }
         self.init(
             algorithm: Self.algorithm,
-            size: Size(width: Original.width, height: Original.height),
+            size: Size(width: size.width, height: size.height),
             r: channel(0), g: channel(1), b: channel(2))
     }
 

@@ -283,6 +283,7 @@ fn other_capture(workspace: &Workspace, run: &Path, device: &DeviceKey) -> Resul
             .collect()
     });
     let mirrored = RgbImage::new(original.size(), mirrored)?;
+    let crop = Rect::left_half(mirrored.size());
 
     let tool = workspace.location_tool();
     let capture = Capture::simulate(
@@ -291,7 +292,7 @@ fn other_capture(workspace: &Workspace, run: &Path, device: &DeviceKey) -> Resul
         mirrored,
         OTHER_PLACE.coordinate,
         OTHER_PLACE.cell,
-        Rect::LEFT_HALF,
+        crop,
     )?;
     let secrets = capture
         .secrets()
@@ -300,7 +301,7 @@ fn other_capture(workspace: &Workspace, run: &Path, device: &DeviceKey) -> Resul
     Ok(Assertion::new(
         capture.receipt,
         OTHER_PLACE.cell.to_string(),
-        Rect::LEFT_HALF,
+        crop,
         proof.proof,
         String::new(),
     ))

@@ -75,6 +75,8 @@ export interface Status {
   device: string;
   device_kind: DeviceKind | null;
   captured_at: string;
+  /// The original's size, from the signed fingerprint.
+  original: { width: number; height: number };
   capture: {
     source: "phone" | "simulated";
     cell: string;

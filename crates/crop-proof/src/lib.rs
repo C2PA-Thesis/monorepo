@@ -2,9 +2,10 @@
 //! fingerprinted original.
 //!
 //! Extracted from HyperVerITAS (<https://github.com/C2PA-Thesis/HyperVerITAS>
-//! at 798554f, MIT, see LICENSE). The original is fixed at 1024x512; the
-//! rectangle is a public input of the proof. The fingerprint itself lives in
-//! the `fingerprint` crate, shared with the capture device.
+//! at 798554f, MIT, see LICENSE). The original has any size up to 2^19
+//! pixels, taken from its signed fingerprint; the rectangle is a public input
+//! of the proof. The fingerprint itself lives in the `fingerprint` crate,
+//! shared with the capture device.
 
 use std::fmt;
 
@@ -23,15 +24,18 @@ mod params;
 mod wire;
 
 pub use crop::{prove, verify};
-pub use fingerprint::{Fingerprint, RgbImage, Size, ALGORITHM as FINGERPRINT_ALGORITHM, ORIGINAL};
+pub use fingerprint::{
+    Fingerprint, RgbImage, Size, ALGORITHM as FINGERPRINT_ALGORITHM, MAX_PIXELS,
+};
 pub use params::{setup, setup_with_rng, ProverParams, VerifierParams};
 
 /// Names the parameter set, which the crop statement does not change.
 pub const PROTOCOL: &str = "hyperveritas-pst-crop-v1";
 
-/// log2 of the original's pixel count, so the number of variables of every
-/// polynomial over the original.
+/// Variables of every polynomial over the original. Smaller originals are
+/// padded with zeros, so every size shares one set of parameters.
 const NUM_VARS: usize = 19;
+const _: () = assert!(1 << NUM_VARS == MAX_PIXELS);
 
 type F = fingerprint::F;
 type Pcs = subroutines::pcs::prelude::MultilinearKzgPCS<ark_bls12_381::Bls12_381>;
@@ -48,13 +52,15 @@ pub struct Rect {
 }
 
 impl Rect {
-    /// What the demo publishes.
-    pub const LEFT_HALF: Rect = Rect {
-        x: 0,
-        y: 0,
-        width: 512,
-        height: 512,
-    };
+    /// What the demo publishes: the left half, rounded down.
+    pub fn left_half(original: Size) -> Rect {
+        Rect {
+            x: 0,
+            y: 0,
+            width: (original.width / 2).max(1),
+            height: original.height,
+        }
+    }
 
     pub fn size(self) -> Size {
         Size {
@@ -63,13 +69,13 @@ impl Rect {
         }
     }
 
-    pub fn check(self) -> Result<()> {
+    pub fn check(self, original: Size) -> Result<()> {
+        let fits = |start: usize, length: usize, limit: usize| {
+            length > 0 && start.checked_add(length).is_some_and(|end| end <= limit)
+        };
         ensure!(
-            self.width > 0
-                && self.height > 0
-                && self.x + self.width <= ORIGINAL.width
-                && self.y + self.height <= ORIGINAL.height,
-            "crop {self} does not fit a {ORIGINAL} original"
+            fits(self.x, self.width, original.width) && fits(self.y, self.height, original.height),
+            "crop {self} does not fit a {original} original"
         );
         Ok(())
     }
@@ -95,15 +101,12 @@ impl fmt::Display for Rect {
 
 /// The only edit this crate proves.
 pub fn crop(original: &RgbImage, rect: Rect) -> Result<RgbImage> {
-    ensure!(
-        original.size() == ORIGINAL,
-        "expected a {ORIGINAL} original, got {}",
-        original.size()
-    );
-    rect.check()?;
+    let size = original.size();
+    size.check()?;
+    rect.check(size)?;
     let channels = original.channels().each_ref().map(|channel| {
         channel
-            .chunks(ORIGINAL.width)
+            .chunks(size.width)
             .skip(rect.y)
             .take(rect.height)
             .flat_map(|row| &row[rect.x..rect.x + rect.width])
@@ -117,9 +120,48 @@ pub fn crop(original: &RgbImage, rect: Rect) -> Result<RgbImage> {
 mod tests {
     use super::*;
 
+    const ORIGINAL: Size = fingerprint::TEST_SIZE;
+
     #[test]
     fn rects_outside_the_original_or_empty_are_refused() {
-        assert!(Rect::LEFT_HALF.check().is_ok());
+        assert!(Rect::left_half(ORIGINAL).check(ORIGINAL).is_ok());
+        let four_by_three = Size {
+            width: 836,
+            height: 627,
+        };
+        assert_eq!(
+            Rect::left_half(four_by_three),
+            Rect {
+                x: 0,
+                y: 0,
+                width: 418,
+                height: 627
+            }
+        );
+        assert!(Rect {
+            x: 0,
+            y: 0,
+            width: 836,
+            height: 627
+        }
+        .check(four_by_three)
+        .is_ok());
+        for bad in [
+            Rect {
+                x: 0,
+                y: 0,
+                width: 837,
+                height: 1,
+            },
+            Rect {
+                x: usize::MAX,
+                y: 0,
+                width: 2,
+                height: 1,
+            },
+        ] {
+            assert!(bad.check(four_by_three).is_err(), "{bad}");
+        }
         for bad in [
             Rect {
                 x: 513,
@@ -140,7 +182,7 @@ mod tests {
                 height: 1,
             },
         ] {
-            assert!(bad.check().is_err(), "{bad}");
+            assert!(bad.check(ORIGINAL).is_err(), "{bad}");
         }
     }
 

@@ -8,8 +8,6 @@ struct Photo: @unchecked Sendable {
     // CGImage is immutable, so sharing it across tasks is safe.
     let image: CGImage
 
-    var window: FramingWindow { FramingWindow(photoWidth: Double(image.width), photoHeight: Double(image.height)) }
-
     init(image: CGImage) {
         self.image = image
     }
@@ -35,53 +33,47 @@ struct Photo: @unchecked Sendable {
     }
 }
 
-/// The 1024x512 original the device commits to: opaque 8-bit sRGB, so the
-/// pixel buffer and its PNG describe the same bytes.
+/// The original the device commits to: the whole photo at `OriginalSize.fit`,
+/// opaque 8-bit sRGB, so the pixel buffer and its PNG describe the same bytes.
 struct OriginalImage: @unchecked Sendable {
     // The buffer is never mutated after rendering.
     let rgbx: [UInt8]
     let image: CGImage
 
-    static func render(_ photo: Photo, position: Double) throws -> OriginalImage {
-        let width = Original.width
-        let height = Original.height
+    var size: OriginalSize { OriginalSize(width: image.width, height: image.height) }
+
+    static func render(_ photo: Photo) throws -> OriginalImage {
+        let size = OriginalSize.fit(width: photo.image.width, height: photo.image.height)
+        let width = size.width
+        let height = size.height
         guard let space = CGColorSpace(name: CGColorSpace.sRGB),
             let context = CGContext(
                 data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
                 space: space, bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)
-        else { throw CaptureError("could not create the 1024×512 bitmap") }
+        else { throw CaptureError("could not create the \(width)×\(height) bitmap") }
         context.interpolationQuality = .high
-
-        let window = photo.window
-        let origin = window.origin(at: position)
-        let scale = Double(width) / window.width
-        // Core Graphics puts y = 0 at the bottom, the window's origin is top-left.
-        let drawn = CGRect(
-            x: -origin.x * scale,
-            y: Double(height) + origin.y * scale - Double(photo.image.height) * scale,
-            width: Double(photo.image.width) * scale,
-            height: Double(photo.image.height) * scale)
-        context.draw(photo.image, in: drawn)
+        context.draw(photo.image, in: CGRect(x: 0, y: 0, width: width, height: height))
 
         guard let data = context.data, let image = context.makeImage() else {
-            throw CaptureError("could not read the 1024×512 bitmap")
+            throw CaptureError("could not read the \(width)×\(height) bitmap")
         }
+        guard context.bytesPerRow == width * 4 else { throw CaptureError("unexpected bitmap row length") }
         let bytes = context.bytesPerRow * height
         let rgbx = [UInt8](UnsafeBufferPointer(start: data.assumingMemoryBound(to: UInt8.self), count: bytes))
-        guard context.bytesPerRow == width * 4 else { throw CaptureError("unexpected bitmap row length") }
         return OriginalImage(rgbx: rgbx, image: image)
     }
 
     /// The red, green and blue planes, as the fingerprint takes them.
     func channels() -> (r: [UInt8], g: [UInt8], b: [UInt8]) {
-        var r = [UInt8](repeating: 0, count: Original.pixels)
+        let pixels = size.pixels
+        var r = [UInt8](repeating: 0, count: pixels)
         var g = r
         var b = r
-        rgbx.withUnsafeBufferPointer { pixels in
-            for index in 0..<Original.pixels {
-                r[index] = pixels[index * 4]
-                g[index] = pixels[index * 4 + 1]
-                b[index] = pixels[index * 4 + 2]
+        rgbx.withUnsafeBufferPointer { rgbx in
+            for index in 0..<pixels {
+                r[index] = rgbx[index * 4]
+                g[index] = rgbx[index * 4 + 1]
+                b[index] = rgbx[index * 4 + 2]
             }
         }
         return (r, g, b)

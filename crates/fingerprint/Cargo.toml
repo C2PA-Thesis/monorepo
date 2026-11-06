@@ -1,6 +1,6 @@
 [package]
 name = "fingerprint"
-description = "The HyperVerITAS lattice fingerprint of a 1024x512 image, for the prover and for the capture device"
+description = "The HyperVerITAS lattice fingerprint of an image of up to 2^19 pixels, for the prover and for the capture device"
 version = "0.1.0"
 license = "MIT"
 edition.workspace = true

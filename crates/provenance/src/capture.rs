@@ -2,7 +2,7 @@
 //! receipt, as one directory.
 //!
 //! ```text
-//! original.png         the 1024x512 original, private
+//! original.png         the original, the whole frame at up to 2^19 pixels, private
 //! secrets.json         coordinate and salt, private, mode 0600, when the laptop proves the location
 //! location_proof.json  the proof the phone made instead, public; then the laptop never sees the coordinate
 //! receipt.json         the device-signed receipt, public
@@ -142,7 +142,7 @@ impl Capture {
     ) -> Result<Self> {
         let region = tool.region(cell)?;
         check_resolution(region.resolution)?;
-        crop.check()?;
+        crop.check(original.size())?;
         let secrets = Secrets::new(coordinate);
         let receipt = Receipt::sign(
             Fingerprint::of(&original)?,

@@ -14,7 +14,7 @@ use subroutines::{
 
 use crate::{Pcs, F, NUM_VARS};
 
-const MAGIC: &[u8; 8] = b"HVPST002";
+const MAGIC: &[u8; 8] = b"HVPST003";
 const MAX_PROOF_BYTES: usize = 16 * 1024 * 1024;
 const MAX_MEMBER_BYTES: usize = 8 * 1024 * 1024;
 /// Sumcheck round polynomials in this proof have degree at most 3.
@@ -88,7 +88,7 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<CropProof> {
     );
     let body = bytes
         .strip_prefix(MAGIC.as_slice())
-        .context("image proof does not start with HVPST002")?;
+        .context("image proof does not start with HVPST003")?;
     let mut cursor = Cursor::new(body);
     let commitments =
         from_canonical_bytes(&read_frame(&mut cursor, "commitments")?, "commitments")?;

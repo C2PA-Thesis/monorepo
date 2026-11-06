@@ -61,13 +61,15 @@ pub fn run(
     on: &mut dyn FnMut(Event),
 ) -> Result<()> {
     let capture = stage(on, Stage::Capture, || {
+        let original = image::load_photo(photo)?;
+        let crop = Rect::left_half(original.size());
         let capture = Capture::simulate(
             &workspace.location_tool(),
             &workspace.device_key()?,
-            image::load_photo(photo)?,
+            original,
             coordinate,
             cell,
-            Rect::LEFT_HALF,
+            crop,
         )?;
         capture.write(out)?;
         let detail = format!(

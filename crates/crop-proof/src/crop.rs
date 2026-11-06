@@ -7,8 +7,9 @@ use anyhow::{anyhow, ensure, Result};
 use arithmetic::{build_eq_x_r_vec, eq_eval, VPAuxInfo};
 use ark_bls12_381::Bls12_381;
 use ark_ec::{pairing::Pairing, scalar_mul::variable_base::VariableBaseMSM, CurveGroup};
-use ark_ff::{One, Zero};
+use ark_ff::{BigInteger, One, PrimeField, Zero};
 use ark_poly::MultilinearExtension;
+use sha2::{Digest, Sha256};
 use subroutines::{
     pcs::prelude::{
         Commitment, MultilinearProverParam, MultilinearVerifierParam, PolynomialCommitmentScheme,
@@ -19,9 +20,9 @@ use transcript::IOPTranscript;
 
 use crate::{
     crop,
-    iop::{self, challenge, check, poly, Opening, OpeningPoints, Poly},
+    iop::{self, challenge, check, image_poly, poly, Opening, OpeningPoints, Poly},
     wire::{self, BatchOpening, CropProof, Sumcheck},
-    Fingerprint, Pcs, ProverParams, Rect, RgbImage, VerifierParams, F, NUM_VARS,
+    Fingerprint, Pcs, ProverParams, Rect, RgbImage, Size, VerifierParams, F, NUM_VARS, PROTOCOL,
 };
 
 /// Proves that `published` is the `rect` of `original`, whose fingerprint is public.
@@ -40,7 +41,8 @@ pub fn prove(
         crop(original, rect)? == *published,
         "the published image is not the {rect} of the original"
     );
-    wire::encode(&prove_core(&params.pcs, original, rect)?)
+    let statement = statement(rect, fingerprint.size, &fingerprint.elements()?, published);
+    wire::encode(&prove_core(&params.pcs, original, rect, &statement)?)
 }
 
 /// Checks a crop proof against the published pixels, the claimed rectangle
@@ -52,23 +54,65 @@ pub fn verify(
     fingerprint: &Fingerprint,
     proof: &[u8],
 ) -> Result<()> {
-    rect.check()?;
+    // The size comes from the signed fingerprint and nowhere else.
+    let original = fingerprint.size;
+    let hashes = fingerprint.elements()?;
+    rect.check(original)?;
     ensure!(
         published.size() == rect.size(),
         "the published image is {}, but the claimed crop is {rect}",
         published.size()
     );
-    let hashes = fingerprint.elements()?;
+    let statement = statement(rect, original, &hashes, published);
     let proof = wire::decode(proof)?;
     // A malformed proof can reach assertions inside the arkworks and hyperplonk verifiers.
     catch_unwind(AssertUnwindSafe(|| {
-        verify_core(&params.pcs, published, rect, &hashes, &proof)
+        verify_core(
+            &params.pcs,
+            published,
+            rect,
+            original,
+            &hashes,
+            &statement,
+            &proof,
+        )
     }))
     .map_err(|_| anyhow!("the image proof is malformed"))?
 }
 
-pub(crate) fn new_transcript() -> IOPTranscript<F> {
-    <PolyIOP<F> as ProductCheck<Bls12_381, Pcs>>::init_transcript()
+/// Everything the proof is about: the original's size, the rectangle, the
+/// fingerprint and the published pixels. Hashed into the transcript before
+/// anything else, so every challenge depends on the whole statement and a
+/// proof cannot be replayed against another fingerprint, size or image.
+pub(crate) fn statement(
+    rect: Rect,
+    original: Size,
+    hashes: &[Vec<F>; 3],
+    published: &RgbImage,
+) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(PROTOCOL.as_bytes());
+    for value in [original.width, original.height] {
+        hasher.update((value as u64).to_le_bytes());
+    }
+    hasher.update(rect.bytes());
+    for element in hashes.iter().flatten() {
+        hasher.update(element.into_bigint().to_bytes_be());
+    }
+    for channel in published.channels() {
+        hasher.update(channel);
+    }
+    hasher.finalize().into()
+}
+
+/// A transcript that starts from the statement.
+pub(crate) fn new_transcript(statement: &[u8; 32]) -> Result<IOPTranscript<F>> {
+    let mut transcript = <PolyIOP<F> as ProductCheck<Bls12_381, Pcs>>::init_transcript();
+    check(
+        transcript.append_message(b"statement", statement),
+        "appending the statement to the transcript",
+    )?;
+    Ok(transcript)
 }
 
 pub(crate) fn append(
@@ -86,29 +130,31 @@ fn prove_core(
     pcs: &MultilinearProverParam<Bls12_381>,
     original: &RgbImage,
     rect: Rect,
+    statement: &[u8; 32],
 ) -> Result<CropProof> {
+    let size = original.size();
     let channels: [Poly; 3] = original
         .channels()
         .each_ref()
-        .map(|pixels| poly(iop::field_values(pixels)));
+        .map(|pixels| image_poly(iop::field_values(pixels)));
     let mut commitments = channels
         .iter()
         .map(|channel| check(Pcs::commit(pcs, channel), "committing to the image"))
         .collect::<Result<Vec<_>>>()?;
-    let mut transcript = new_transcript();
+    let mut transcript = new_transcript(statement)?;
     for commitment in &commitments {
         append(&mut transcript, b"img(x)", commitment)?;
     }
 
-    let (_, combined_rows) = iop::hash_weights(&mut transcript)?;
-    let hash = iop::prove_products(&poly(combined_rows), &channels, &mut transcript)?;
+    let (_, combined_rows) = iop::hash_weights(&mut transcript, size)?;
+    let hash = iop::prove_products(&image_poly(combined_rows), &channels, &mut transcript)?;
     let mut ranges = Vec::with_capacity(3);
     for (channel, pixels) in channels.iter().zip(original.channels()) {
         ranges.push(iop::prove_range(channel, pixels, pcs, &mut transcript)?);
     }
     let crop_challenges = crop_challenges(&mut transcript, rect)?;
     let crop = iop::prove_products(
-        &poly(iop::crop_weights(rect, &crop_challenges)),
+        &image_poly(iop::crop_weights(size, rect, &crop_challenges)),
         &channels,
         &mut transcript,
     )?;
@@ -168,10 +214,13 @@ fn prove_core(
 #[cfg(feature = "attack-hooks")]
 pub(crate) fn replay_crop_challenges(
     rect: Rect,
+    original: Size,
     hashes: &[Vec<F>; 3],
+    published: &RgbImage,
     proof: &CropProof,
 ) -> Result<Vec<F>> {
-    Ok(verify_prefix(rect, hashes, proof)?.crop_challenges)
+    let statement = statement(rect, original, hashes, published);
+    Ok(verify_prefix(rect, original, hashes, &statement, proof)?.crop_challenges)
 }
 
 /// Commits to one channel exactly as `prove_core` does, for the linkage test.
@@ -181,7 +230,7 @@ pub(crate) fn commit_channel(
     pixels: &[u8],
 ) -> Result<Commitment<Bls12_381>> {
     check(
-        Pcs::commit(pcs, &poly(iop::field_values(pixels))),
+        Pcs::commit(pcs, &image_poly(iop::field_values(pixels))),
         "committing to the image",
     )
 }
@@ -258,14 +307,20 @@ struct VerifyPrefix {
     crop_challenges: Vec<F>,
 }
 
-fn verify_prefix(rect: Rect, hashes: &[Vec<F>; 3], proof: &CropProof) -> Result<VerifyPrefix> {
+fn verify_prefix(
+    rect: Rect,
+    original: Size,
+    hashes: &[Vec<F>; 3],
+    statement: &[u8; 32],
+    proof: &CropProof,
+) -> Result<VerifyPrefix> {
     let commitments = &proof.commitments;
-    let mut transcript = new_transcript();
+    let mut transcript = new_transcript(statement)?;
     for commitment in &commitments[..3] {
         append(&mut transcript, b"img(x)", commitment)?;
     }
 
-    let (row_weights, combined_rows) = iop::hash_weights(&mut transcript)?;
+    let (row_weights, combined_rows) = iop::hash_weights(&mut transcript, original)?;
     let mut hash_claims = Vec::with_capacity(3);
     for (sumcheck, hash) in proof.hash.iter().zip(hashes) {
         let claimed = row_weights
@@ -299,8 +354,8 @@ fn verify_prefix(rect: Rect, hashes: &[Vec<F>; 3], proof: &CropProof) -> Result<
         });
     }
 
-    // Only the rectangle is absorbed before this draw, not the published
-    // pixels or the fingerprint, so these challenges depend only on the proof.
+    // The statement opened the transcript, so these challenges depend on the
+    // published pixels and cannot be fixed before choosing them.
     let crop_challenges = crop_challenges(&mut transcript, rect)?;
     Ok(VerifyPrefix {
         transcript,
@@ -315,7 +370,9 @@ fn verify_core(
     pcs: &MultilinearVerifierParam<Bls12_381>,
     published: &RgbImage,
     rect: Rect,
+    original: Size,
     hashes: &[Vec<F>; 3],
+    statement: &[u8; 32],
     proof: &CropProof,
 ) -> Result<()> {
     let commitments = &proof.commitments;
@@ -325,7 +382,7 @@ fn verify_core(
         hash_claims,
         range_claims,
         crop_challenges,
-    } = verify_prefix(rect, hashes, proof)?;
+    } = verify_prefix(rect, original, hashes, statement, proof)?;
     let mut crop_claims = Vec::with_capacity(3);
     for (sumcheck, pixels) in proof.crop.iter().zip(published.channels()) {
         let claimed = crop_challenges
@@ -406,14 +463,14 @@ fn verify_core(
         );
     }
 
-    let combined_rows = poly(combined_rows);
+    let combined_rows = image_poly(combined_rows);
     for (channel, claim) in hash_claims.iter().enumerate() {
         ensure!(
             claim.expected == evaluate(&combined_rows, &claim.point)? * image[3 * channel],
             "fingerprint check for channel {channel} rejected"
         );
     }
-    let crop_weights = poly(iop::crop_weights(rect, &crop_challenges));
+    let crop_weights = image_poly(iop::crop_weights(original, rect, &crop_challenges));
     for (channel, claim) in crop_claims.iter().enumerate() {
         ensure!(
             claim.expected == evaluate(&crop_weights, &claim.point)? * image[2 + 3 * channel],
@@ -626,7 +683,7 @@ mod tests {
             point: vec![F::zero()],
             rounds: vec![vec![F::one(); 3]],
         };
-        let mut transcript = new_transcript();
+        let mut transcript = new_transcript(&[0; 32]).unwrap();
         assert!(verify_sumcheck(F::zero(), &proof, &aux_info(1), &mut transcript).is_err());
     }
 
@@ -637,7 +694,7 @@ mod tests {
         let (prover, _) = Pcs::trim(&srs, None, Some(2)).unwrap();
         let values = [1u64, 2, 3, 4].map(F::from).to_vec();
         let polynomial = Arc::new(DenseMultilinearExtension::from_evaluations_vec(2, values));
-        let mut prover_transcript = new_transcript();
+        let mut prover_transcript = new_transcript(&[0; 32]).unwrap();
         let (proof, _, _) = <PolyIOP<F> as ProductCheck<Bls12_381, Pcs>>::prove(
             &prover,
             std::slice::from_ref(&polynomial),
@@ -646,14 +703,14 @@ mod tests {
         )
         .unwrap();
 
-        let mut upstream_transcript = new_transcript();
+        let mut upstream_transcript = new_transcript(&[0; 32]).unwrap();
         let upstream = <PolyIOP<F> as ProductCheck<Bls12_381, Pcs>>::verify(
             &proof,
             &aux_info(2),
             &mut upstream_transcript,
         )
         .unwrap();
-        let mut ours_transcript = new_transcript();
+        let mut ours_transcript = new_transcript(&[0; 32]).unwrap();
         let (alpha, expected) = verify_product_check(
             &proof.zero_check_proof.clone().into(),
             &proof.prod_x_comm,

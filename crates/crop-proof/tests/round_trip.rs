@@ -1,11 +1,11 @@
 use crop_proof::{
-    crop, prove, setup_with_rng, verify, Fingerprint, ProverParams, Rect, RgbImage, VerifierParams,
-    ORIGINAL,
+    crop, prove, setup_with_rng, verify, Fingerprint, ProverParams, Rect, RgbImage, Size,
+    VerifierParams,
 };
 use rand::{RngCore, SeedableRng};
 
 #[test]
-#[ignore = "proves over 2^19 pixels, about three minutes; run with --release --ignored"]
+#[ignore = "proves over 2^19 pixels, about half a minute; run with --release --ignored"]
 fn proves_verifies_and_rejects_tampering() {
     let mut rng = rand::rngs::StdRng::seed_from_u64(7);
     let params = tempfile::tempdir().unwrap();
@@ -13,12 +13,15 @@ fn proves_verifies_and_rejects_tampering() {
     let prover = ProverParams::load(params.path()).unwrap();
     let verifier = VerifierParams::load(params.path()).unwrap();
 
+    // The 4:3 original of a 12 MP photo: not a power of two, so the
+    // polynomials are padded.
+    let size = Size::fit(4032, 3024);
     let channels = std::array::from_fn(|_| {
-        let mut pixels = vec![0u8; ORIGINAL.pixels()];
+        let mut pixels = vec![0u8; size.pixels()];
         rng.fill_bytes(&mut pixels);
         pixels
     });
-    let original = RgbImage::new(ORIGINAL, channels).unwrap();
+    let original = RgbImage::new(size, channels).unwrap();
     // Not the left half, and not a power-of-two size.
     let rect = Rect {
         x: 137,
@@ -43,6 +46,25 @@ fn proves_verifies_and_rejects_tampering() {
     };
     assert!(verify(&verifier, &published, shifted, &fingerprint, &proof).is_err());
     assert!(prove(&prover, &original, &published, shifted, &fingerprint).is_err());
+
+    // Same elements, another size: one row fewer, and the transposed size,
+    // which reads the same bytes. The rectangle fits both.
+    for other_size in [
+        Size {
+            height: size.height - 1,
+            ..size
+        },
+        Size {
+            width: size.height,
+            height: size.width,
+        },
+    ] {
+        let other = Fingerprint {
+            size: other_size,
+            ..fingerprint.clone()
+        };
+        assert!(verify(&verifier, &published, rect, &other, &proof).is_err());
+    }
 
     let mut other = fingerprint.clone();
     other.r.swap(0, 1);

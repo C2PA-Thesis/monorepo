@@ -1,21 +1,45 @@
-// The lattice fingerprint of the 1024x512 original, computed on the phone
-// with crates/fingerprint built for wasm, spread over web workers.
+// The lattice fingerprint of the original, computed on the phone with
+// crates/fingerprint built for wasm, spread over web workers.
 
 import type { HashReply, HashRequest } from "./fingerprint.worker";
 import type { Fingerprint } from "./receipt";
 
 export const ALGORITHM = "hyperveritas-ajtai-chacha8-v1";
-export const WIDTH = 1024;
-export const HEIGHT = 512;
+/// The most pixels an original may have (crates/fingerprint MAX_PIXELS).
+export const MAX_PIXELS = 1 << 19;
 const ROWS = 128;
 const ELEMENT_BYTES = 32;
 
 export type Channels = [Uint8Array, Uint8Array, Uint8Array];
 
+export interface Size {
+  width: number;
+  height: number;
+}
+
+/// The size of the original for a photo: the photo itself if it fits in
+/// MAX_PIXELS, otherwise the largest size with its aspect ratio that does.
+/// The same float operations as Size::fit in crates/fingerprint.
+export function fit(width: number, height: number): Size {
+  if (width * height <= MAX_PIXELS) return { width, height };
+  const scale = Math.sqrt(MAX_PIXELS / (width * height));
+  const size = { width: Math.max(1, Math.floor(width * scale)), height: Math.max(1, Math.floor(height * scale)) };
+  while (size.width * size.height > MAX_PIXELS) {
+    if (size.width >= size.height) size.width--;
+    else size.height--;
+  }
+  return size;
+}
+
 export async function fingerprint(
   channels: Channels,
+  size: Size,
   onProgress: (done: number, total: number) => void,
 ): Promise<Fingerprint> {
+  const pixels = size.width * size.height;
+  if (pixels < 1 || pixels > MAX_PIXELS || channels.some((channel) => channel.length !== pixels)) {
+    throw new Error(`the planes do not match a ${size.width}x${size.height} original`);
+  }
   const wasm = await (await fetch("/fingerprint.wasm")).arrayBuffer();
   const count = Math.min(navigator.hardwareConcurrency || 4, ROWS);
   const perWorker = Math.ceil(ROWS / count);
@@ -36,7 +60,7 @@ export async function fingerprint(
     for (const { rowStart, reply } of replies) bytes.set(reply.rows[channel], rowStart * ELEMENT_BYTES);
     return Array.from({ length: ROWS }, (_, row) => elementHex(bytes.subarray(row * ELEMENT_BYTES, (row + 1) * ELEMENT_BYTES)));
   });
-  return { algorithm: ALGORITHM, size: { width: WIDTH, height: HEIGHT }, R: hex[0]!, G: hex[1]!, B: hex[2]! };
+  return { algorithm: ALGORITHM, size, R: hex[0]!, G: hex[1]!, B: hex[2]! };
 }
 
 function hashInWorker(wasm: ArrayBuffer, request: HashRequest): Promise<HashReply> {

@@ -7,18 +7,20 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use crop_proof::{RgbImage, Size, ORIGINAL};
+use crop_proof::{RgbImage, Size};
 use image::{imageops::FilterType, ImageFormat};
 
-/// The photo as the crop proof takes it: RGB, resized to exactly 1024x512.
+/// The photo as the crop proof takes it: RGB, the whole frame, scaled down
+/// to at most 2^19 pixels with its aspect ratio kept, as the app does.
 pub fn load_photo(path: &Path) -> Result<RgbImage> {
     let photo = image::open(path)
         .with_context(|| format!("reading {}", path.display()))?
         .to_rgb8();
+    let size = Size::fit(photo.width() as usize, photo.height() as usize);
     let resized = image::imageops::resize(
         &photo,
-        ORIGINAL.width as u32,
-        ORIGINAL.height as u32,
+        size.width as u32,
+        size.height as u32,
         FilterType::Lanczos3,
     );
     to_rgb(&resized)
