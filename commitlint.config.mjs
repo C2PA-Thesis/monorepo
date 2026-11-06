@@ -14,6 +14,7 @@ export default {
         'location-proof',
         'provenance',
         'scripts',
+        'deploy',
         'web',
         'zklp',
         'hyperveritas',

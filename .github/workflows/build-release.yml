@@ -1,0 +1,47 @@
+name: build-release
+
+on:
+  workflow_call:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    # The instance's OS, so the binaries link against its glibc.
+    container: amazonlinux:2023
+    timeout-minutes: 60
+    steps:
+      - name: Install the build tools
+        run: dnf install -y --setopt=install_weak_deps=False gcc gcc-c++ make git tar gzip findutils
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: location-proof/go.mod
+          cache-dependency-path: location-proof/go.sum
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install Rust
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain none --profile minimal
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Add the WebAssembly target for the fingerprint
+        run: rustup target add wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build the release
+        run: deploy/build.sh release.tgz
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release
+          path: release.tgz
+          retention-days: 7
+          if-no-files-found: error
