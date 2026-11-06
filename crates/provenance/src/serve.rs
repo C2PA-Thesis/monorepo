@@ -18,10 +18,10 @@
 //! the pairing secrets) is served to a request from either.
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs,
     io::Write,
-    net::SocketAddr,
+    net::{Ipv4Addr, SocketAddr},
     path::{Path, PathBuf},
     sync::{Arc, Mutex, MutexGuard, PoisonError},
     thread,
@@ -154,6 +154,33 @@ pub struct Lan {
     pub urls: Vec<String>,
     /// SHA-256 of the SubjectPublicKeyInfo DER, hex.
     pub pin: String,
+}
+
+/// The addresses the app's QR code names: `extra` first, then one per
+/// interface address. `extra` is for addresses no interface carries, like a
+/// cloud instance's public IP behind NAT. The app pins the key instead of
+/// checking the host name, so any host that reaches the listener works.
+pub fn app_urls(addresses: &[Ipv4Addr], port: u16, extra: &[String]) -> Result<Vec<String>> {
+    let mut urls = Vec::with_capacity(extra.len() + addresses.len());
+    for url in extra {
+        let host = url
+            .strip_prefix("https://")
+            .and_then(|rest| rest.split(['/', ':']).next())
+            .unwrap_or_default();
+        ensure!(
+            !host.is_empty() && !url.contains(char::is_whitespace),
+            "app URL {url:?} is not https://<host>[:port]"
+        );
+        urls.push(url.trim_end_matches('/').to_string());
+    }
+    urls.extend(
+        addresses
+            .iter()
+            .map(|address| format!("https://{address}:{port}")),
+    );
+    let mut seen = HashSet::new();
+    urls.retain(|url| seen.insert(url.clone()));
+    Ok(urls)
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1333,6 +1360,36 @@ mod tests {
             assert!(attempts.admit(false));
         }
         assert!(attempts.admit(true), "the cooldown never ended");
+    }
+
+    #[test]
+    fn app_urls_put_given_addresses_first_and_refuse_anything_but_https() {
+        let lan = [Ipv4Addr::new(172, 31, 5, 9)];
+        assert_eq!(
+            app_urls(&lan, 8792, &[]).unwrap(),
+            ["https://172.31.5.9:8792"]
+        );
+        assert_eq!(
+            app_urls(
+                &lan,
+                8792,
+                &[
+                    "https://3.14.15.92:8792/".to_string(),
+                    "https://172.31.5.9:8792".to_string(),
+                ]
+            )
+            .unwrap(),
+            ["https://3.14.15.92:8792", "https://172.31.5.9:8792"]
+        );
+        for bad in [
+            "http://3.14.15.92:8792",
+            "3.14.15.92:8792",
+            "https://",
+            "https://:8792",
+            "https://a b",
+        ] {
+            assert!(app_urls(&lan, 8792, &[bad.to_string()]).is_err(), "{bad}");
+        }
     }
 
     #[test]

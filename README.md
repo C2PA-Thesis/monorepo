@@ -266,7 +266,10 @@ is for the laptop.
 capture page. The TLS certificate is issued again at each start for the
 laptop's current LAN addresses from a key kept in `.provenance/tls/`; the app
 pins the SHA-256 of that key's SubjectPublicKeyInfo, so the pin survives a
-change of network. Browsers only allow the camera and geolocation over HTTPS,
+change of network. The app's QR code names those LAN addresses; `--app-url
+https://<host>:8792` (repeatable) adds one no interface carries, such as a
+cloud instance's public IP behind NAT, and the app tries it first. Browsers
+only allow the camera and geolocation over HTTPS,
 so the capture page reaches the laptop through `ngrok http 8791`;
 `--public-url` gives the tunnel's address to the presenter page for its QR
 code. That QR code holds the pairing code in the URL fragment, which the
