@@ -7,7 +7,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::{ensure, Result};
+use anyhow::{anyhow, ensure, Context, Result};
+use app_attest::jwt::DeviceCheckKey;
 use clap::{Parser, Subcommand};
 use console::style;
 use indicatif::{ProgressBar, ProgressStyle};
@@ -19,6 +20,7 @@ use provenance::{
     manifest, publish,
     publish::{describe_edit, Event, Stage},
     receipt::short,
+    register::{self, AppleMetric, MetricSource, Registration},
     serve::{self, Lan, Phase, Server, Status, TLS_PORT},
     verify::{self, Check, Verdict},
     Step, Workspace,
@@ -115,6 +117,23 @@ enum Command {
         /// Refuse a secure-enclave pairing that carries no App Attest attestation.
         #[arg(long, requires = "app_id")]
         require_attestation: bool,
+        /// Let phones register with App Attest through /api/v2/register,
+        /// without pairing. Any instance of the app can then add a key.
+        #[arg(long, requires = "app_id")]
+        open_registration: bool,
+        /// Id of the DeviceCheck key in PROVENANCE_DEVICECHECK_KEY, to ask
+        /// Apple for the risk metric at registration. Without it the metric
+        /// is not checked.
+        #[arg(
+            long,
+            env = "PROVENANCE_DEVICECHECK_KEY_ID",
+            requires = "open_registration"
+        )]
+        devicecheck_key_id: Option<String>,
+        /// Refuse a registration when Apple counts more attested keys on the
+        /// device in 30 days.
+        #[arg(long, default_value_t = register::MAX_RISK_METRIC, requires = "devicecheck_key_id")]
+        max_risk_metric: u32,
     },
     /// Verify a published PNG as a reader.
     Verify {
@@ -266,6 +285,9 @@ fn run(cli: Cli, ui: &Ui) -> Result<ExitCode> {
             no_publish,
             app_id,
             require_attestation,
+            open_registration,
+            devicecheck_key_id,
+            max_risk_metric,
         } => {
             let tls = match no_tls {
                 true => None,
@@ -275,6 +297,22 @@ fn run(cli: Cli, ui: &Ui) -> Result<ExitCode> {
                 .public_url(public_url)
                 .app_attest(app_id.clone(), require_attestation)?
                 .on_change(serve_listener(ui.json));
+            if open_registration {
+                let metric = match &devicecheck_key_id {
+                    None => None,
+                    Some(key_id) => {
+                        // Read from the environment so the key stays out of argv.
+                        let pem = std::env::var("PROVENANCE_DEVICECHECK_KEY").context(
+                            "--devicecheck-key-id needs the .p8 key in PROVENANCE_DEVICECHECK_KEY",
+                        )?;
+                        let team = app_id.as_deref().unwrap_or_default().split('.').next();
+                        let key = DeviceCheckKey::from_p8(&pem, key_id, team.unwrap_or_default())
+                            .map_err(|error| anyhow!(error))?;
+                        Some(Box::new(AppleMetric::new(key)) as Box<dyn MetricSource>)
+                    }
+                };
+                server = server.registration(Registration::new(metric, max_risk_metric))?;
+            }
             let app_urls = match &tls {
                 Some(tls) => serve::app_urls(&tls.addresses, tls_port, &extra_app_urls)?,
                 None => Vec::new(),
@@ -295,6 +333,8 @@ fn run(cli: Cli, ui: &Ui) -> Result<ExitCode> {
                     "pairing_code": server.pairing_code(), "pair_url": server.pair_url(),
                     "app_urls": app_urls, "pin": tls.as_ref().map(|tls| &tls.pin),
                     "app_id": app_id, "require_attestation": require_attestation,
+                    "open_registration": open_registration,
+                    "max_risk_metric": devicecheck_key_id.as_ref().map(|_| max_risk_metric),
                 }));
             } else {
                 let mut fields = vec![
@@ -321,6 +361,16 @@ fn run(cli: Cli, ui: &Ui) -> Result<ExitCode> {
                         (Some(app_id), true) => format!("{app_id}, required"),
                     },
                 ));
+                if open_registration {
+                    fields.push((
+                        "register",
+                        match &devicecheck_key_id {
+                            Some(_) => format!("open, risk metric at most {max_risk_metric}"),
+                            None => "open, risk metric not checked (no --devicecheck-key-id)"
+                                .to_string(),
+                        },
+                    ));
+                }
                 if let Some(pair_url) = server.pair_url() {
                     fields.insert(0, ("phone", pair_url));
                 }

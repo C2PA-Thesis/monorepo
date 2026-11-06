@@ -293,7 +293,12 @@ and verifies the result as a reader would. `--app-id TEAMID.BUNDLE_ID` (or
 sends when it pairs ([crates/app-attest](crates/app-attest/README.md));
 without it, attestations are not checked and the key pairs as declared.
 `--require-attestation` refuses a `secure-enclave` pairing that carries
-none.
+none. `--open-registration` lets an iPhone add its key without the QR code,
+through `/api/v2/challenge` and `/api/v2/register`, as the servers in
+[deploy](deploy/README.md) do. The app then has the server's address and pin
+built in. With `--devicecheck-key-id` and the `.p8` key in
+`PROVENANCE_DEVICECHECK_KEY`, registration also asks Apple for the risk
+metric and refuses a device above `--max-risk-metric` (10).
 
 The app's QR code holds JSON:
 `{"v":1,"urls":["https://<lan-ip>:8792",...],"pin":"<hex>","token":"<hex>","params":{"proving.key":"<sha256>","circuit.r1cs":"<sha256>"}}`.
@@ -316,6 +321,9 @@ served to anything but a Local request.
 | `GET /api/v2/pairing` | Local | The app's QR payload as JSON, with an `X-Expires-In` header in seconds. The Simulator reads it here instead of scanning |
 | `GET /api/v2/session` | Local | The same payload as `{"qr", "expires_in"}`, for clients that predate `/api/v2/pairing` |
 | `POST /api/v2/pair` | Direct | Adds the app's key when `token` is the current one and `signature` (base64 DER ECDSA P-256 SHA-256 over the token's UTF-8 bytes) verifies under `public_key` (PEM SPKI). Records `kind` (`secure-enclave` or `software`, as the app declares it) and `name`. An optional `attestation: {key_id, object}` (base64, from `DCAppAttestService`) over SHA-256 of `io.github.c2pa-thesis.pair.v2\n<token>\n<device id>` is verified when `--app-id` is set, and a failed one refuses the pairing and keeps the token. Answers `{device, kind, note}` |
+| `GET /api/v2/server` | | `{v, urls, params, registration}`: the QR payload without the token, for an app that registers instead of scanning |
+| `POST /api/v2/challenge` | | With `--open-registration`, 32 random bytes in base64, single use, for 5 minutes, at most 1000 pending (429 above). 404 without it |
+| `POST /api/v2/register` | | With `--open-registration`, adds the app's key when `challenge` is pending, `signature` verifies over the challenge's UTF-8 bytes, and `attestation` verifies over SHA-256 of `io.github.c2pa-thesis.register.v1\n<challenge>\n<device id>`. The challenge is spent on the first attempt. Refuses validation categories other than 2, 3 and 4, an App Attest key that registered another receipt key, and, with a DeviceCheck key, a risk metric above the ceiling. Answers `{device, kind, note}`. While registration is open, each device may upload 10 captures an hour and uploads are refused (429) while 4 wait for a proof |
 | `GET /api/params/location/{proving.key,circuit.r1cs}` | | The public Groth16 parameters the app proves with, with range requests |
 | `POST /api/v2/captures` | | Stores an app capture (`original_png`, `receipt`, `cell`, `resolution`, `crop`, `accuracy_meters`, `location_proof`, `location: {simulated, accessory}`) with no secrets, after checking it, and starts publishing it |
 | `POST /api/pair` | | Adds the capture page's key (`public_key`, P-256 PEM) when `code` matches the one printed. A key that is already trusted keeps its kind, name and pairing time |
@@ -520,7 +528,8 @@ lists the `c2pa.orientation` action, next to `c2pa.cropped`.
 - **Both setups are single-party.** Whoever runs `provenance setup` could keep
   the trapdoors and forge either proof. The app proves with parameters it
   downloads from the laptop, checked only against the digests in the QR code
-  the same laptop shows.
+  the same laptop shows, or that `GET /api/v2/server` returns over the
+  connection pinned to the key built into the app.
 - **The receipt signs neither the cell nor the resolution.** The device signs
   the fingerprint, the envelope, the time and its key id. The cell, the
   resolution and the crop rectangle sit unsigned in `capture.json` and in the
@@ -561,6 +570,20 @@ lists the `c2pa.orientation` action, next to `c2pa.cropped`.
   (§3), and this project assumes the same of whichever key is paired. The
   C2PA editor signs with the SDK sample certificate, which no trust list
   includes.
+- **With open registration, a trusted key is any instance of the app.** On a
+  server started with `--open-registration`, no one at the server approves a
+  key: an App Attest attestation over a single-use challenge and the receipt
+  key's id is enough. The receipt check then says that a build signed by the
+  team, on Apple hardware, registered the key, not that the key belongs to
+  one of the team's phones. Validation categories 2 (TestFlight), 3
+  (development) and 4 (App Store) register, in both App Attest environments,
+  so any build the team signs passes, modified or not. Apple's risk metric
+  counts "the number of attested keys associated with a given device over the
+  past 30 days" ([13], Interpret the metric), and registration refuses more
+  than 10. That limits how many keys one device registers; it says nothing
+  about the location or the photo. The server checks the metric once, at
+  registration, and does not refresh it. An attestation that carries no
+  validation category registers and is recorded without one.
 - **The crop proof, and so the original, stays on the laptop.** [3] reports a
   prover peak memory of 6.4 GB for HyperVerITAS PST on a full-system crop of
   a 2^19-pixel image (Table 3), the largest original this project takes. On
@@ -625,3 +648,4 @@ and the fingerprint and `r^T A` computations use every core. For PR #3,
 10. Apple. [Protecting keys with the Secure Enclave](https://developer.apple.com/documentation/security/protecting-keys-with-the-secure-enclave).
 11. Apple. [Establishing your app's integrity](https://developer.apple.com/documentation/devicecheck/establishing-your-app-s-integrity).
 12. Apple. [Supported capabilities (iOS)](https://developer.apple.com/help/account/reference/supported-capabilities-ios).
+13. Apple. [Assessing fraud risk](https://developer.apple.com/documentation/devicecheck/assessing-fraud-risk).
