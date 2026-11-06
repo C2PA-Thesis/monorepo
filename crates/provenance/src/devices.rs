@@ -13,8 +13,8 @@ use crate::receipt::{key_id, TrustedKeys};
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum DeviceKind {
-    /// The app, which says its key is in the phone's Secure Enclave. Nothing
-    /// checks that without App Attest, so it is shown as declared.
+    /// The app, which says its key is in the phone's Secure Enclave. Shown as
+    /// declared unless the sidecar carries a verified App Attest attestation.
     SecureEnclave,
     /// The app, with a key in the Keychain (the simulator has no Secure Enclave).
     Software,
@@ -51,6 +51,35 @@ pub struct DeviceInfo {
     pub name: String,
     /// RFC 3339, the laptop's clock.
     pub paired_at: String,
+    /// Set when the pairing carried an App Attest attestation that verified.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attestation: Option<Attested>,
+}
+
+impl DeviceInfo {
+    /// The kind as `provenance devices` shows it.
+    pub fn shown(&self) -> String {
+        match &self.attestation {
+            Some(attested) => format!("attested: {} ({})", self.kind.title(), attested.environment),
+            None => self.kind.shown().to_string(),
+        }
+    }
+}
+
+/// What the laptop checked of an App Attest attestation when the key paired.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Attested {
+    /// `development` or `production`, from the aaguid.
+    pub environment: String,
+    /// Team ID and bundle id that the RP ID matched.
+    pub app_id: String,
+    /// The App Attest key id, base64, as `generateKey` returns it.
+    pub key_id: String,
+    pub validation_category: Option<u32>,
+    pub bundle_version: Option<String>,
+    /// RFC 3339, the laptop's clock.
+    pub verified_at: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -182,6 +211,7 @@ mod tests {
             kind,
             name: "test".to_string(),
             paired_at: paired_at.to_string(),
+            attestation: None,
         }
     }
 
@@ -219,6 +249,34 @@ mod tests {
         assert!(!dir.path().join(format!("{id}.json")).exists());
         assert!(devices.revoke(&id[..8]).is_err());
         assert!(devices.is_trusted(&old.id().unwrap()));
+    }
+
+    #[test]
+    fn shows_an_attested_key_and_reads_old_sidecars() {
+        let mut attested = info(DeviceKind::SecureEnclave, "2026-11-05T12:00:00Z");
+        assert_eq!(attested.shown(), "declared: secure-enclave");
+        attested.attestation = Some(Attested {
+            environment: "development".to_string(),
+            app_id: "ABCDE12345.io.github.c2pa-thesis.capture".to_string(),
+            key_id: "zgSY9YSD+7TaDXssY6WlOPVS1K3Lmk+pFhlcSWE+ZV0=".to_string(),
+            validation_category: Some(3),
+            bundle_version: Some("1".to_string()),
+            verified_at: "2026-11-05T12:00:00Z".to_string(),
+        });
+        assert_eq!(attested.shown(), "attested: secure-enclave (development)");
+
+        let dir = tempfile::tempdir().unwrap();
+        let devices = Devices::new(dir.path().to_path_buf());
+        let id = devices
+            .add(&DeviceKey::generate().public(), &attested)
+            .unwrap();
+        assert_eq!(devices.info(&id).unwrap(), attested);
+
+        let old =
+            r#"{"kind": "secure-enclave", "name": "phone", "paired_at": "2026-10-30T12:00:00Z"}"#;
+        let old: DeviceInfo = serde_json::from_str(old).unwrap();
+        assert_eq!(old.attestation, None);
+        assert!(!serde_json::to_string(&old).unwrap().contains("attestation"));
     }
 
     #[test]

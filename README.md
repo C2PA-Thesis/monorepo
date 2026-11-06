@@ -229,11 +229,14 @@ The coordinate is a test input. The cell holds if the signing device computed th
 ```
 
 `provenance devices` prints one line per trusted key: its id, its kind
-(`declared: secure-enclave` or `software` for the app, `browser` for the
-capture page, `laptop` for the demo's key, `unknown` for keys paired before
-kinds were recorded), its name and when it was paired. The app declares its
-own kind, and nothing checks it, so a Secure Enclave key shows as declared. Revoking a key makes files it
-signed fail the device receipt check on this laptop.
+(`attested: secure-enclave (development)` or `(production)`, `declared:
+secure-enclave` or `software` for the app, `browser` for the capture page,
+`laptop` for the demo's key, `unknown` for keys paired before kinds were
+recorded), its name and when it was paired. A Secure Enclave key shows as
+attested only when its pairing carried an App Attest attestation that this
+laptop verified; otherwise the kind is the app's own word and shows as
+declared. Revoking a key makes files it signed fail the device receipt check
+on this laptop.
 
 `provenance demo --photo PATH --at LAT,LON --cell CELL` uses another photo and
 simulated coordinate; nothing reads GPS from the photo. The demo publishes the
@@ -285,7 +288,12 @@ so the capture page reaches the laptop through `ngrok http 8791`;
 code. That QR code holds the pairing code in the URL fragment, which the
 browser does not send to any server. Unless `--no-publish` is given, the
 server publishes each accepted upload in the background, one proof at a time,
-and verifies the result as a reader would.
+and verifies the result as a reader would. `--app-id TEAMID.BUNDLE_ID` (or
+`PROVENANCE_APP_ID`) makes it check the App Attest attestation an iPhone
+sends when it pairs ([crates/app-attest](crates/app-attest/README.md));
+without it, attestations are not checked and the key pairs as declared.
+`--require-attestation` refuses a `secure-enclave` pairing that carries
+none.
 
 The app's QR code holds JSON:
 `{"v":1,"urls":["https://<lan-ip>:8792",...],"pin":"<hex>","token":"<hex>","params":{"proving.key":"<sha256>","circuit.r1cs":"<sha256>"}}`.
@@ -307,7 +315,7 @@ served to anything but a Local request.
 | --- | --- | --- |
 | `GET /api/v2/pairing` | Local | The app's QR payload as JSON, with an `X-Expires-In` header in seconds. The Simulator reads it here instead of scanning |
 | `GET /api/v2/session` | Local | The same payload as `{"qr", "expires_in"}`, for clients that predate `/api/v2/pairing` |
-| `POST /api/v2/pair` | Direct | Adds the app's key when `token` is the current one and `signature` (base64 DER ECDSA P-256 SHA-256 over the token's UTF-8 bytes) verifies under `public_key` (PEM SPKI). Records `kind` (`secure-enclave` or `software`, as the app declares it, not checked) and `name` |
+| `POST /api/v2/pair` | Direct | Adds the app's key when `token` is the current one and `signature` (base64 DER ECDSA P-256 SHA-256 over the token's UTF-8 bytes) verifies under `public_key` (PEM SPKI). Records `kind` (`secure-enclave` or `software`, as the app declares it) and `name`. An optional `attestation: {key_id, object}` (base64, from `DCAppAttestService`) over SHA-256 of `io.github.c2pa-thesis.pair.v2\n<token>\n<device id>` is verified when `--app-id` is set, and a failed one refuses the pairing and keeps the token. Answers `{device, kind, note}` |
 | `GET /api/params/location/{proving.key,circuit.r1cs}` | | The public Groth16 parameters the app proves with, with range requests |
 | `POST /api/v2/captures` | | Stores an app capture (`original_png`, `receipt`, `cell`, `resolution`, `crop`, `accuracy_meters`, `location_proof`, `location: {simulated, accessory}`) with no secrets, after checking it, and starts publishing it |
 | `POST /api/pair` | | Adds the capture page's key (`public_key`, P-256 PEM) when `code` matches the one printed. A key that is already trusted keeps its kind, name and pairing time |
@@ -533,17 +541,22 @@ lists the `c2pa.orientation` action, next to `c2pa.cropped`.
   on an iPhone signs with a Secure Enclave key, which cannot be extracted:
   "Not having a mechanism to transfer plain-text key data into or out of the
   Secure Enclave is fundamental to its security" ([10], Overview). But the
-  laptop receives only a public key and the `kind` the app declares, and
-  nothing lets it or a reader check that the key is in an enclave. The
-  presenter page and `provenance devices` therefore show it as declared. Only
-  Apple's App Attest would let a third party verify it: it uses "Apple
-  servers to certify that the key belongs to a valid instance of your app"
-  ([11], Overview). It needs "an App ID that you
-  register on the" Apple Developer website (same section), and a free
-  Personal Team has no such registration: its "App IDs, devices,
-  certificates, and provisioning profiles are managed directly in Xcode"
-  ([12], Enable a personal team in Xcode). This project does not use App
-  Attest. The pairing token or code is all that ties a key to this laptop.
+  laptop receives a public key and the `kind` the app declares. With
+  `serve --app-id`, an iPhone built by a paid Apple Developer Program team
+  also sends an App Attest attestation, which uses "Apple servers to certify
+  that the key belongs to a valid instance of your app" ([11], Overview).
+  The attested key is App Attest's own, not the receipt key: the app attests
+  a hash of the pairing token and the receipt key's id, so the laptop
+  verifies that an instance of this App ID on Apple hardware asked to pair
+  that receipt key. That the receipt key itself is in the enclave follows
+  from the app's code, not from the attestation, and any build signed by the
+  team attests the same, modified or not. The attestation stays on the
+  laptop: a reader of the published file sees no part of it, so for readers
+  the key is still the app's word. A free Personal Team cannot use App
+  Attest: Apple lists the capability for the Apple Developer Program and
+  Enterprise, not for the free account ([12]). What the laptop checks and
+  what it does not is in [crates/app-attest](crates/app-attest/README.md).
+  The pairing token or code is all that ties a key to this laptop.
   [2] assumes "the attacker cannot extract the signing key from the camera"
   (§3), and this project assumes the same of whichever key is paired. The
   C2PA editor signs with the SDK sample certificate, which no trust list
@@ -611,4 +624,4 @@ and the fingerprint and `r^T A` computations use every core. For PR #3,
 9. Uber Technologies. [H3: a hexagonal hierarchical geospatial indexing system](https://h3geo.org), and its [table of cell statistics](https://h3geo.org/docs/core-library/restable/).
 10. Apple. [Protecting keys with the Secure Enclave](https://developer.apple.com/documentation/security/protecting-keys-with-the-secure-enclave).
 11. Apple. [Establishing your app's integrity](https://developer.apple.com/documentation/devicecheck/establishing-your-app-s-integrity).
-12. Apple. [Developer account overview](https://developer.apple.com/support/compare-memberships/).
+12. Apple. [Supported capabilities (iOS)](https://developer.apple.com/help/account/reference/supported-capabilities-ios).

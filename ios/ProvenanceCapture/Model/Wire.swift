@@ -45,15 +45,34 @@ struct PairRequest: Encodable, Sendable {
     let signature: String
     let kind: String
     let name: String
+    /// Left out of the JSON when nil.
+    var attestation: AppAttestation? = nil
 
     enum CodingKeys: String, CodingKey {
-        case token, signature, kind, name
+        case token, signature, kind, name, attestation
         case publicKey = "public_key"
+    }
+}
+
+/// What `attestKey` returned, for `POST /api/v2/pair`.
+struct AppAttestation: Encodable, Equatable, Sendable {
+    /// As `generateKey` returns it, already base64.
+    let keyId: String
+    /// The attestation object, base64.
+    let object: String
+
+    enum CodingKeys: String, CodingKey {
+        case object
+        case keyId = "key_id"
     }
 }
 
 struct Paired: Decodable, Sendable {
     let device: String
+    /// The kind as the laptop shows it, such as "attested: secure-enclave (development)".
+    var kind: String? = nil
+    /// Why the laptop did not check an attestation it got.
+    var note: String? = nil
 }
 
 struct Region: Decodable, Equatable, Sendable {

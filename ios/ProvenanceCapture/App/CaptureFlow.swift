@@ -251,15 +251,25 @@ final class CaptureFlow {
         do {
             let token = payload.token
             let signature = try await Task.detached { try key.sign(Data(token.utf8)) }.value
-            let request = PairRequest(
+            var request = PairRequest(
                 token: token, publicKey: key.pem, signature: signature.base64EncodedString(), kind: key.kind.rawValue,
                 name: UIDevice.current.name)
+            var attestNote: String?
+            if key.kind == .secureEnclave {
+                pairStatus = "Asking Apple to attest this app…"
+                switch await PairingAttestation.attest(token: token, device: key.id) {
+                case .attested(let attestation): request.attestation = attestation
+                case .unavailable(let reason): attestNote = reason
+                }
+                pairStatus = "Pairing…"
+            }
             let (base, paired) = try await reach(candidates(payload), pin: payload.pin, request: request, device: key.id)
             guard paired.device == key.id else {
                 throw CaptureError("the laptop registered key \(Verdict.short(paired.device)), not this phone's")
             }
             let pairing = Pairing(
                 base: base, urls: candidates(payload), pin: payload.pin, device: paired.device, kind: key.kind,
+                shownKind: paired.kind, attestNote: paired.note ?? attestNote,
                 params: payload.params, pairedAt: .now, paramsReady: false)
             pairing.save()
             use(pairing)

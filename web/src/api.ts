@@ -78,6 +78,8 @@ export interface Status {
   phase: Phase;
   device: string;
   device_kind: DeviceKind | null;
+  /// The App Attest environment, when the key paired with an attestation that verified.
+  device_attested: "development" | "production" | null;
   captured_at: string;
   /// The original's size, from the signed fingerprint.
   original: { width: number; height: number };
