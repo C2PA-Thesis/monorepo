@@ -1,0 +1,38 @@
+name: app-attest
+
+on:
+  push:
+    paths: &paths
+      - 'crates/app-attest/**'
+      # The pairing checks that call the verifier.
+      - 'crates/provenance/src/serve.rs'
+      - 'crates/provenance/src/devices.rs'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - '.github/workflows/app-attest.yml'
+  pull_request:
+    paths: *paths
+  workflow_dispatch:
+
+jobs:
+  verifier:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Lint
+        run: |
+          cargo fmt --check -p app-attest
+          cargo clippy -p app-attest --all-targets --all-features -- -D warnings
+
+      # Apple's sample attestation at a fixed time, then forged ones that
+      # must each fail one check.
+      - name: Verifier tests
+        run: cargo test -p app-attest --all-features
+
+      - name: Pairing with an attestation
+        run: cargo test -p provenance --lib -- attest

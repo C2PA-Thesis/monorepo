@@ -86,6 +86,10 @@ struct Pairing: Codable, Equatable, Sendable {
     var pin: String
     var device: String
     var kind: DeviceKeyKind
+    /// The kind as the laptop recorded it. Nil for pairings saved before it was kept.
+    var shownKind: String? = nil
+    /// Why the key paired without an App Attest attestation, when it did.
+    var attestNote: String? = nil
     var params: [String: String]
     var pairedAt: Date
     var paramsReady: Bool

@@ -1,0 +1,23 @@
+[package]
+name = "app-attest"
+description = "Verify an Apple App Attest attestation object against Apple's root"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+ciborium = "0.2"
+rcgen = { version = "0.14", optional = true }
+sha2.workspace = true
+x509-parser = { version = "0.18", features = ["verify"] }
+
+[features]
+# Forges attestations under a test root, for tests in other crates.
+testing = ["dep:rcgen"]
+
+[dev-dependencies]
+base64 = "0.22"
+rcgen = "0.14"
+serde.workspace = true
+serde_json.workspace = true

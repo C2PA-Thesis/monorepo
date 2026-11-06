@@ -17,6 +17,28 @@ final class WireTests: XCTestCase {
         XCTAssertEqual(parsed.params["circuit.r1cs"], paramHash)
     }
 
+    /// Pinned in crates/provenance/src/serve.rs too (`client_data_is_fixed`).
+    func testTheAttestedClientDataMatchesTheLaptop() {
+        let hash = PairingAttestation.clientDataHash(token: "0123456789abcdef0123456789abcdef", device: String(repeating: "ab", count: 32))
+        XCTAssertEqual(hash.hex, "16506113a77c759bbec2f3084dd656b07268fbf4f5df890834bf3aa7f92981bc")
+    }
+
+    func testThePairRequestCarriesTheAttestationOnlyWhenThereIsOne() throws {
+        var request = PairRequest(token: "t", publicKey: "k", signature: "s", kind: "secure-enclave", name: "n")
+        let bare = try JSONSerialization.jsonObject(with: JSONEncoder().encode(request)) as! [String: Any]
+        XCTAssertEqual(Set(bare.keys), ["token", "public_key", "signature", "kind", "name"])
+        request.attestation = AppAttestation(keyId: "a2V5", object: "b2JqZWN0")
+        let attested = try JSONSerialization.jsonObject(with: JSONEncoder().encode(request)) as! [String: Any]
+        XCTAssertEqual(attested["attestation"] as? [String: String], ["key_id": "a2V5", "object": "b2JqZWN0"])
+    }
+
+    func testReadsWhatTheLaptopSaysAboutTheKey() throws {
+        let old = try JSONDecoder().decode(Paired.self, from: Data(#"{"device":"ab"}"#.utf8))
+        XCTAssertNil(old.kind)
+        let attested = try JSONDecoder().decode(Paired.self, from: Data(#"{"device":"ab","kind":"attested: secure-enclave (development)"}"#.utf8))
+        XCTAssertEqual(attested.kind, "attested: secure-enclave (development)")
+    }
+
     func testRejectsBadPairingPayloads() {
         XCTAssertThrowsError(try PairingPayload.parse("hello"))
         XCTAssertThrowsError(try PairingPayload.parse(payload(token: "short")))

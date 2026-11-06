@@ -8,6 +8,7 @@ publish.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+app-attest = { path = "../app-attest" }
 axum = "0.8"
 axum-server = { version = "0.8", features = ["tls-rustls-no-provider"] }
 base64 = "0.22"
@@ -33,6 +34,8 @@ tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.7", features = ["fs", "set-header"] }
 
 [dev-dependencies]
+# Forged attestations under a test root, for the pairing tests.
+app-attest = { path = "../app-attest", features = ["testing"] }
 # The forgers of the security analysis, for the end-to-end attack tests.
 crop-proof = { path = "../crop-proof", features = ["attack-hooks"] }
 http-body-util = "0.1"
