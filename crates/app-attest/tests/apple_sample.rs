@@ -2,7 +2,11 @@
 //! Validation Guide. Its credential certificate is valid from 2026-04-20
 //! 18:13:12 to 2026-04-23 18:13:12 UTC, so it is checked at a fixed time.
 
-use app_attest::{apple_root, verify, Environment, Error, Expected};
+use app_attest::{
+    apple_root,
+    receipt::{apple_root_g3, verify_receipt, verify_receipt_with_root, ReceiptKind},
+    verify, Environment, Error, Expected,
+};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use sha2::{Digest, Sha256};
 
@@ -137,4 +141,63 @@ fn refuses_a_truncated_or_padded_object() {
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// 2027-03-01T00:00:00Z, after the receipt signer expires on 2027-02-18.
+const SIGNER_EXPIRED: i64 = 1_803_859_200;
+
+fn sample_receipt() -> (Vec<u8>, Vec<u8>, String) {
+    let (sample, object, key_id) = sample();
+    let app_id = format!("{}.{}", sample.team_id, sample.bundle_id);
+    let attestation = verify(
+        &object,
+        &Expected {
+            app_id: &app_id,
+            key_id: &key_id,
+            client_data_hash: sample.client_data_hash.as_bytes(),
+        },
+        INSIDE,
+    )
+    .unwrap();
+    (attestation.receipt, attestation.public_key, app_id)
+}
+
+#[test]
+fn bundled_receipt_root_is_apple_root_g3() {
+    // SHA-256 of https://www.apple.com/certificateauthority/AppleRootCA-G3.cer,
+    // checked with OpenSSL on 2026-11-05.
+    assert_eq!(
+        hex(&Sha256::digest(apple_root_g3())),
+        "63343abfb89a6a03ebb57e9b3f5fa7be7c4f5c756f3017b3a8c488c3653e9179"
+    );
+}
+
+#[test]
+fn verifies_the_sample_receipt() {
+    let (der, public_key, app_id) = sample_receipt();
+    let receipt = verify_receipt(&der, INSIDE).unwrap();
+    assert_eq!(receipt.kind, ReceiptKind::Attest);
+    assert_eq!(receipt.app_id, app_id);
+    assert_eq!(receipt.environment.as_deref(), Some("production"));
+    // 2026-04-21T18:13:12Z.
+    assert_eq!(receipt.created, 1_776_795_192);
+    assert_eq!(receipt.risk_metric, None);
+    assert!(receipt.attests(&public_key));
+}
+
+#[test]
+fn refuses_the_sample_receipt_after_its_signer_expires_or_under_another_root() {
+    let (der, _, _) = sample_receipt();
+    assert!(matches!(
+        verify_receipt(&der, SIGNER_EXPIRED),
+        Err(Error::Chain(_))
+    ));
+    assert!(matches!(
+        verify_receipt_with_root(&der, INSIDE, &apple_root()),
+        Err(Error::Chain(_))
+    ));
+    let mut flipped = der.clone();
+    let at = flipped.len() / 3;
+    flipped[at] ^= 1;
+    assert!(verify_receipt(&flipped, INSIDE).is_err());
 }

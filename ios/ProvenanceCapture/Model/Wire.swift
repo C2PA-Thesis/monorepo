@@ -54,7 +54,7 @@ struct PairRequest: Encodable, Sendable {
     }
 }
 
-/// What `attestKey` returned, for `POST /api/v2/pair`.
+/// What `attestKey` returned, for `POST /api/v2/pair` and `/api/v2/register`.
 struct AppAttestation: Encodable, Equatable, Sendable {
     /// As `generateKey` returns it, already base64.
     let keyId: String
@@ -64,6 +64,53 @@ struct AppAttestation: Encodable, Equatable, Sendable {
     enum CodingKeys: String, CodingKey {
         case object
         case keyId = "key_id"
+    }
+}
+
+/// `GET /api/v2/server`: the QR payload without the token. It comes over the
+/// pinned connection, so the digests are as good as the QR code's.
+struct ServerInfo: Decodable, Equatable, Sendable {
+    let v: Int
+    let urls: [String]
+    let params: [String: String]
+    let registration: Bool
+
+    func validate() throws {
+        guard v == 1 else { throw CaptureError("server version \(v) is not supported; update the app") }
+        for name in PairingPayload.paramNames where !HexText.isLowercase(params[name] ?? "", count: 64) {
+            throw CaptureError("the server sent no SHA-256 for \(name)")
+        }
+        guard registration else { throw CaptureError("this server does not register phones") }
+    }
+
+    var serverURLs: [URL] {
+        urls.compactMap(URL.init(string:)).filter { $0.scheme == "https" && $0.host != nil }
+    }
+}
+
+/// `POST /api/v2/challenge`.
+struct RegistrationChallenge: Decodable, Sendable {
+    let challenge: String
+    let expiresIn: Int
+
+    enum CodingKeys: String, CodingKey {
+        case challenge
+        case expiresIn = "expires_in"
+    }
+}
+
+/// `POST /api/v2/register`. The signature is over the challenge.
+struct RegisterRequest: Encodable, Sendable {
+    let challenge: String
+    let publicKey: String
+    let signature: String
+    let kind: String
+    let name: String
+    let attestation: AppAttestation
+
+    enum CodingKeys: String, CodingKey {
+        case challenge, signature, kind, name, attestation
+        case publicKey = "public_key"
     }
 }
 

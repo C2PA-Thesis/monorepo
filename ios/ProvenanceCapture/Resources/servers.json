@@ -1,0 +1,6 @@
+{
+  "servers": [
+    { "name": "Prod", "urls": [], "pin": "" },
+    { "name": "Dev", "urls": [], "pin": "" }
+  ]
+}

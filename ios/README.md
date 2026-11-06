@@ -244,6 +244,36 @@ Not verified on a device: whether the paid team's App ID needs the App Attest
 capability turned on for `generateKey` to work. If it fails, add the
 capability under Signing and Capabilities.
 
+## Registering with a server
+
+A device build can connect to the team's servers without a QR code. Their
+addresses and TLS pins are built in, from `Resources/servers.json`, which
+starts empty: an entry without an https address or a 64-digit pin is left out,
+and with none left the app only offers the QR code, as before. To fill it,
+take each environment's `Address` stack output and the pin the deploy prints
+([deploy](../deploy/README.md), Registration).
+
+With servers listed, the connect screen offers "Use the Prod server" (the
+first entry) and "Connect another way" (the others, scanning, typing a code).
+The Connection sheet shows the server and offers to switch. Registering
+(`CaptureFlow.register`):
+
+1. `GET /api/v2/server` over the pinned connection gives the parameter
+   digests, which the QR code gives when pairing.
+2. `POST /api/v2/challenge` gives a single-use challenge. The receipt key
+   signs it.
+3. A new App Attest key is attested over
+   `SHA256("io.github.c2pa-thesis.register.v1\n" + challenge + "\n" + device id)`.
+   Apple asks: "Don't reuse a key among multiple users on a device"
+   ([Establishing your app's integrity](https://developer.apple.com/documentation/devicecheck/establishing-your-app-s-integrity),
+   Create a key pair). A phone registers once per server and install.
+4. `POST /api/v2/register` with the key, the signature and the attestation.
+   Then the parameters download as after a pairing.
+
+Registration needs App Attest, so the Simulator does not offer it, and a
+device that cannot attest is refused by the server instead of being shown
+as declared.
+
 ## Pinning
 
 The laptop's certificate is self-signed, so the app does not evaluate the
@@ -348,7 +378,11 @@ lists them.
 - The App Attest client data hash for a fixed token and device id equals
   the one pinned in `crates/provenance/src/serve.rs`, the pairing request
   leaves out `attestation` when there is none, and the laptop's `kind` and
-  `note` are read when present.
+  `note` are read when present. The registration hash equals the one pinned
+  in `crates/provenance/src/register.rs`, the register request has the
+  server's keys, `GET /api/v2/server` is read and refused when it does not
+  register or lacks a digest, `servers.json` entries without an address or
+  pin are left out, and the bundled file loads.
 - `NativeTests` run the linked libraries through `NativeBridge`: the Rust
   fingerprint of `fingerprint_test_image` at 1024x512 and at 836x627 hashes
   to the digests pinned in `crates/fingerprint/src/lib.rs`, planes of the
@@ -364,6 +398,9 @@ runner.
 
 ## Not verified yet
 
+- Registering from a device with a server: the whole flow, Apple's answer
+  with the risk metric, and how the connect screen reads with servers
+  listed. `servers.json` is empty until the deploy.
 - App Attest on a device: `generateKey` and `attestKey` with the paid team,
   the development aaguid, and the laptop verifying the result. The device
   build compiles that code; the Simulator never runs it.

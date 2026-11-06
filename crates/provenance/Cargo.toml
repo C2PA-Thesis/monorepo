@@ -32,6 +32,8 @@ time = { version = "0.3", features = ["formatting"] }
 tokio = { version = "1", features = ["rt-multi-thread", "net", "macros"] }
 tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.7", features = ["fs", "set-header"] }
+# Apple's risk metric endpoint. rustls with ring, like the rest.
+ureq = { version = "3", default-features = false, features = ["rustls"] }
 
 [dev-dependencies]
 # Forged attestations under a test root, for the pairing tests.

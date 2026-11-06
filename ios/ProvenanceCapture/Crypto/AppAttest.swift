@@ -24,12 +24,36 @@ enum PairingAttestation {
     /// A fresh App Attest key per pairing: the app makes no assertions later,
     /// so no key id needs to be kept.
     static func attest(token: String, device: String) async -> Outcome {
+        await AppAttest.attest(clientDataHash: clientDataHash(token: token, device: device))
+    }
+}
+
+/// App Attest for registering with a known server, over the server's
+/// challenge and the receipt key.
+enum RegistrationAttestation {
+    /// The same bytes as `registration_client_data` in crates/provenance/src/register.rs.
+    static func clientData(challenge: String, device: String) -> Data {
+        Data("io.github.c2pa-thesis.register.v1\n\(challenge)\n\(device)".utf8)
+    }
+
+    static func clientDataHash(challenge: String, device: String) -> Data {
+        Data(SHA256.hash(data: clientData(challenge: challenge, device: device)))
+    }
+
+    /// One key per registration. A phone registers once per server and
+    /// install, which keeps Apple's count of keys on the device low.
+    static func attest(challenge: String, device: String) async -> PairingAttestation.Outcome {
+        await AppAttest.attest(clientDataHash: clientDataHash(challenge: challenge, device: device))
+    }
+}
+
+enum AppAttest {
+    static func attest(clientDataHash hash: Data) async -> PairingAttestation.Outcome {
         #if targetEnvironment(simulator)
             return .unavailable("the Simulator has no App Attest")
         #else
             let service = DCAppAttestService.shared
             guard service.isSupported else { return .unavailable("this device does not support App Attest") }
-            let hash = clientDataHash(token: token, device: device)
             do {
                 let keyId = try await service.generateKey()
                 let object: Data

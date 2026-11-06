@@ -18,6 +18,7 @@ pub mod location;
 pub mod manifest;
 pub mod publish;
 pub mod receipt;
+pub mod register;
 pub mod serve;
 pub mod tls;
 pub mod verify;

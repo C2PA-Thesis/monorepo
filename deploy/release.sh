@@ -7,9 +7,40 @@ release=$(cd "$(dirname "$0")/.." && pwd)
 root=${PROVENANCE_ROOT:-/opt/provenance}
 data=${PROVENANCE_DATA:-/var/lib/provenance}
 user=provenance
+# The data volume env.yml attaches. Absent off EC2, and on stacks from before it.
+device=${PROVENANCE_DATA_DEVICE:-/dev/sdf}
+
+# Mounts the data volume at $data, formatting it the first time and moving
+# over what an earlier release left on the root volume.
+mount_data() {
+  if [ ! -b "$device" ]; then
+    echo "no data volume at $device; data stays on the root volume"
+    return
+  fi
+  mountpoint -q "$data" && return
+  if [ -z "$(blkid -o value -s TYPE "$device" || true)" ]; then
+    mkfs.xfs -q "$device"
+    if [ -d "$data" ] && [ -n "$(ls -A "$data")" ]; then
+      systemctl stop provenance || true
+      local fresh
+      fresh=$(mktemp -d)
+      mount "$device" "$fresh"
+      cp -a "$data/." "$fresh/"
+      umount "$fresh"
+      rmdir "$fresh"
+      mv "$data" "$data.root-volume"
+    fi
+  fi
+  mkdir -p "$data"
+  local uuid
+  uuid=$(blkid -o value -s UUID "$device")
+  grep -q "UUID=$uuid " /etc/fstab || echo "UUID=$uuid $data xfs defaults,nofail 0 2" >>/etc/fstab
+  mount "$data"
+}
 
 host_setup() {
   id "$user" >/dev/null 2>&1 || useradd --system --home-dir "$data" --shell /sbin/nologin "$user"
+  mount_data
   install -d -o "$user" -g "$user" "$data" "$data/home" "$data/captures"
   # The crop proof peaks at 5.7 GB on an 8 GiB instance.
   if [ "$(swapon --noheadings | wc -l)" -eq 0 ]; then
@@ -36,7 +67,8 @@ activate() {
   systemctl restart provenance
 }
 
-# The listener answers, then a whole capture is proved, published and verified.
+# The listener answers, registration hands out challenges, then a whole
+# capture is proved, published and verified.
 check() {
   local code="" out
   for _ in $(seq 60); do
@@ -46,6 +78,11 @@ check() {
   done
   if [ "$code" != 400 ]; then
     echo "the TLS listener did not answer"
+    journalctl -u provenance --no-pager -n 30 || true
+    return 1
+  fi
+  if ! curl -sk -X POST https://127.0.0.1:8792/api/v2/challenge | grep -q '"challenge"'; then
+    echo "registration did not hand out a challenge"
     journalctl -u provenance --no-pager -n 30 || true
     return 1
   fi
