@@ -62,6 +62,7 @@ impl Forger {
 }
 
 pub const ATTACKS: &[Attack] = &[
+    // If accepted, anyone could attach a receipt the device never signed.
     Attack {
         name: "signature",
         summary: "flip one bit of the device signature",
@@ -74,6 +75,25 @@ pub const ATTACKS: &[Attack] = &[
             Ok(())
         },
     },
+    // If accepted, anyone with a key of their own could act as a camera.
+    Attack {
+        name: "untrusted-device",
+        summary: "sign the same fields with a key that was never paired",
+        expected: Expected::Rejected(Check::Device),
+        needs_other_capture: false,
+        tamper: |evidence, _| {
+            let receipt = &evidence.assertion.receipt;
+            evidence.assertion.receipt = Receipt::sign(
+                receipt.fingerprint.clone(),
+                receipt.envelope.clone(),
+                receipt.captured_at.clone(),
+                &DeviceKey::generate(),
+            )?;
+            Ok(())
+        },
+    },
+    // If accepted, the proofs could point at a fingerprint other than the one the
+    // device signed.
     Attack {
         name: "fingerprint",
         summary: "swap two fingerprint values without re-signing",
@@ -84,6 +104,8 @@ pub const ATTACKS: &[Attack] = &[
             Ok(())
         },
     },
+    // If accepted, a genuine crop proof could be reused under another signed
+    // fingerprint, so it would no longer say which original it crops.
     Attack {
         name: "resigned-fingerprint",
         summary: "swap two fingerprint values and re-sign with the device key",
@@ -94,6 +116,8 @@ pub const ATTACKS: &[Attack] = &[
             evidence.assertion.receipt.resign(&forger.device)
         },
     },
+    // If accepted, the published photo could be edited after proving and keep its
+    // provenance.
     Attack {
         name: "pixel",
         summary: "change one published pixel",
@@ -106,6 +130,7 @@ pub const ATTACKS: &[Attack] = &[
             Ok(())
         },
     },
+    // If accepted, the crop could misstate which part of the original it shows.
     Attack {
         name: "rectangle",
         summary: "claim the same pixels are one column to the right",
@@ -116,6 +141,7 @@ pub const ATTACKS: &[Attack] = &[
             Ok(())
         },
     },
+    // If accepted, the photo could be shown in an orientation nobody proved.
     Attack {
         name: "turn",
         summary: "turn the published pixels half a turn and claim that turn",
@@ -128,6 +154,8 @@ pub const ATTACKS: &[Attack] = &[
             Ok(())
         },
     },
+    // If accepted, the photo could be placed in a cell its location proof never
+    // covered.
     Attack {
         name: "region",
         summary: "claim another cell for the same location proof",
@@ -138,6 +166,7 @@ pub const ATTACKS: &[Attack] = &[
             Ok(())
         },
     },
+    // If accepted, a photo could borrow the place of any other genuine capture.
     Attack {
         name: "cross-photo-location",
         summary: "attach the location proof of another photo taken elsewhere",
@@ -150,6 +179,8 @@ pub const ATTACKS: &[Attack] = &[
             Ok(())
         },
     },
+    // If accepted, a crop could borrow the device, time and place of another
+    // genuine capture.
     Attack {
         name: "cross-photo-receipt",
         summary: "attach the receipt and location proof of another photo, keeping this crop proof",
@@ -163,6 +194,8 @@ pub const ATTACKS: &[Attack] = &[
             Ok(())
         },
     },
+    // Accepted on purpose: whoever holds the device key chooses the coordinate.
+    // The location proof only checks the coordinate the device signed.
     Attack {
         name: "signed-elsewhere",
         summary: "with the device key, sign this photo at Tokyo and prove that cell",
@@ -184,6 +217,8 @@ pub const ATTACKS: &[Attack] = &[
             Ok(())
         },
     },
+    // If accepted, a cell this small would almost give away the coordinate the
+    // location proof hides.
     Attack {
         name: "fine-cell",
         summary: "publish the honest coordinate in a resolution-13 cell, about 44 m^2",

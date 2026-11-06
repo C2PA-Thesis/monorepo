@@ -52,6 +52,36 @@ func TestAttackForgedHintsNoLongerProveAgainstTheSealedEnvelope(t *testing.T) {
 	}
 }
 
+// If this proved, the capture point could sit outside the cell the reader is
+// shown. The honest coordinate, hints and envelope go to the circuit with the
+// neighboring cell, skipping the prover's own inside check.
+func TestCoordinateOutsideTheCellDoesNotProve(t *testing.T) {
+	params := t.TempDir()
+	if _, err := Setup(params); err != nil {
+		t.Fatal(err)
+	}
+	lat, lng, salt, hints, err := honestSecrets.parse()
+	if err != nil {
+		t.Fatal(err)
+	}
+	envelope, err := loc2index32.NativeEnvelope(lat, lng, salt, hints)
+	if err != nil {
+		t.Fatal(err)
+	}
+	neighbor, err := RegionOf("87c2e3021ffffff")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = proveUnchecked(params, neighbor, lat, lng, salt, envelope, hints)
+	if err == nil {
+		t.Fatal("a coordinate outside the cell proved it")
+	}
+	if !strings.Contains(err.Error(), "not satisfied") {
+		t.Fatalf("refused for another reason: %v", err)
+	}
+}
+
 // Passes while the circuit trusts whoever seals the envelope: hints of another
 // coordinate, sealed into a new envelope, prove and verify for that cell. The
 // device signature on the envelope is what refuses it, outside the circuit.
