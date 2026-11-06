@@ -17,7 +17,7 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use crop_proof::{Fingerprint, Rect, RgbImage};
+use crop_proof::{Fingerprint, Rect, RgbImage, Turn};
 use rand::{rngs::OsRng, RngCore};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
@@ -91,11 +91,18 @@ pub struct Summary {
     pub resolution: u8,
     /// The rectangle of the original that gets published.
     pub crop: Rect,
+    /// Quarter turns clockwise applied after the crop.
+    #[serde(default, skip_serializing_if = "is_no_turn")]
+    pub turn: Turn,
     /// Horizontal accuracy the device reported for its fix. Recorded, not signed.
     pub accuracy_meters: Option<f64>,
     /// Where the app's location fix came from. Recorded, not signed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub location: Option<LocationSource>,
+}
+
+pub(crate) fn is_no_turn(turn: &Turn) -> bool {
+    *turn == Turn::NONE
 }
 
 /// What the phone's location service said about its fix.
@@ -159,6 +166,7 @@ impl Capture {
                 cell: region.cell,
                 resolution: region.resolution,
                 crop,
+                turn: Turn::NONE,
                 accuracy_meters: None,
                 location: None,
             },

@@ -17,7 +17,7 @@ use provenance::{
     demo::{self, DEMO_PLACE},
     devices::Device,
     manifest, publish,
-    publish::{Event, Stage},
+    publish::{describe_edit, Event, Stage},
     receipt::short,
     serve::{self, Lan, Phase, Server, Status, TLS_PORT},
     verify::{self, Check, Verdict},
@@ -56,6 +56,9 @@ enum Command {
     },
     /// Capture a photo with the laptop's device key, publish its left half with both proofs, and verify it.
     Demo {
+        /// Quarter turns clockwise applied to the published half, 0 to 3.
+        #[arg(long, default_value_t = 0, value_parser = clap::value_parser!(u8).range(0..4))]
+        turn: u8,
         /// Photo to capture. Defaults to the C2PA SDK sample.
         #[arg(long)]
         photo: Option<PathBuf>,
@@ -185,6 +188,7 @@ fn run(cli: Cli, ui: &Ui) -> Result<ExitCode> {
             ));
         }
         Command::Demo {
+            turn,
             photo,
             at,
             cell,
@@ -218,9 +222,16 @@ fn run(cli: Cli, ui: &Ui) -> Result<ExitCode> {
                 ],
             );
             let started = Instant::now();
-            demo::run(&workspace, &photo, coordinate, &cell, &out, &mut |event| {
-                ui.stage(event, &demo::STAGES)
-            })?;
+            let turn = crop_proof::Turn::new(turn)?;
+            demo::run(
+                &workspace,
+                &photo,
+                coordinate,
+                &cell,
+                turn,
+                &out,
+                &mut |event| ui.stage(event, &demo::STAGES),
+            )?;
             ui.published(&out, started);
             ui.note("\nThe coordinate is a test input. The cell holds if the signing device computed the trigonometric hints honestly; see Known limits in the README.");
         }
@@ -387,7 +398,7 @@ fn serve_listener(json: bool) -> impl Fn(&Status) + Send + Sync + 'static {
                 status.device_kind.map_or("a", |kind| kind.title()),
                 short(&status.device),
                 status.capture.cell,
-                status.capture.crop
+                describe_edit(status.capture.crop, status.capture.turn)
             ),
             Phase::Publishing => println!("  {} {id}  proving", style("…").dim()),
             Phase::Accepted => println!("  {} {id}  published and verified", style("✓").green()),
@@ -605,7 +616,7 @@ impl Ui {
                 if let Some(claim) = &verdict.claim {
                     println!(
                         "  these pixels are the {} of an original that device {} signed,\n  together with an envelope whose sealed hints map to cell {}, at {} (device time)",
-                        claim.crop,
+                        describe_edit(claim.crop, claim.turn),
                         short(&claim.device),
                         claim.cell,
                         claim.captured_at

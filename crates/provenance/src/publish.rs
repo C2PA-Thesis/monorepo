@@ -8,7 +8,7 @@ use std::{
 
 use anyhow::{ensure, Context, Result};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
-use crop_proof::{crop, ProverParams};
+use crop_proof::{edit, ProverParams};
 use serde::Serialize;
 
 use crate::{
@@ -74,13 +74,14 @@ pub fn run(
     let tool = workspace.location_tool();
     let cell = &capture.summary.cell;
     let rect = capture.summary.crop;
+    let turn = capture.summary.turn;
     fs::create_dir_all(out).with_context(|| format!("creating {}", out.display()))?;
 
     let crop_png = out.join("crop.png");
     let published = stage(on, Stage::Crop, || {
-        let published = crop(&capture.original, rect)?;
+        let published = edit(&capture.original, rect, turn)?;
         image::write_png(&published, &crop_png)?;
-        Ok((published, format!("kept {rect}")))
+        Ok((published, format!("kept {}", describe_edit(rect, turn))))
     })?;
 
     let location_proof = stage(on, Stage::LocationProof, || match &capture.witness {
@@ -119,6 +120,7 @@ pub fn run(
             &capture.original,
             &published,
             rect,
+            turn,
             &capture.receipt.fingerprint,
         )?;
         Ok((
@@ -133,6 +135,7 @@ pub fn run(
             capture.receipt.clone(),
             cell.clone(),
             rect,
+            turn,
             location_proof,
             image_proof,
         );
@@ -160,4 +163,14 @@ pub fn stage<T>(
         seconds: started.elapsed().as_secs_f64(),
     });
     Ok(value)
+}
+
+/// The crop and, when there is one, the turn, as the stages and the reader
+/// print them.
+pub fn describe_edit(rect: crop_proof::Rect, turn: crop_proof::Turn) -> String {
+    if turn == crop_proof::Turn::NONE {
+        rect.to_string()
+    } else {
+        format!("{rect} turned {turn}")
+    }
 }

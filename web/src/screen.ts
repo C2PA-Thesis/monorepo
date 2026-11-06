@@ -7,6 +7,7 @@ import QRCode from "qrcode";
 import "./style.css";
 import "./screen.css";
 import * as api from "./api";
+import { turnSize } from "./crop";
 import { $, h, icon, short, svg, time, when } from "./dom";
 import { CellMap } from "./map";
 import { Timeline } from "./timeline";
@@ -264,6 +265,7 @@ function buildDetail(status: api.Status) {
   };
   const { crop } = status.capture;
   const { width, height } = status.original;
+  const published = turnSize(crop, status.capture.turn ?? 0);
   const overlay = h("div", {
     class: "overlay",
     style: `left:${(crop.x / width) * 100}%;top:${(crop.y / height) * 100}%;width:${(crop.width / width) * 100}%;height:${(crop.height / height) * 100}%`,
@@ -287,7 +289,7 @@ function buildDetail(status: api.Status) {
       parts.actions,
     ),
     board(
-      [figure("Original · private", original, width, height), figure("Published", parts.published!, crop.width, crop.height)],
+      [figure("Original · private", original, width, height), figure("Published", parts.published!, published.width, published.height)],
       parts.steps!,
       h("div", { class: "card pad region" }, parts.verdict, map.element, parts.outcome),
     ),

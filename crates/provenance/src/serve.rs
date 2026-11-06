@@ -41,7 +41,7 @@ use axum::{
     Json, Router,
 };
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
-use crop_proof::{Fingerprint, Rect, RgbImage, Size};
+use crop_proof::{Fingerprint, Rect, RgbImage, Size, Turn};
 use p256::ecdsa::{signature::Verifier as _, Signature};
 use rand::{rngs::OsRng, Rng, RngCore};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -232,6 +232,9 @@ pub struct Upload {
     pub resolution: u8,
     /// The rectangle the photographer chose to publish.
     pub crop: Rect,
+    /// Quarter turns clockwise the photographer applied after the crop.
+    #[serde(default)]
+    pub turn: Turn,
     pub accuracy_meters: Option<f64>,
 }
 
@@ -246,6 +249,8 @@ pub struct ProofUpload {
     pub cell: String,
     pub resolution: u8,
     pub crop: Rect,
+    #[serde(default)]
+    pub turn: Turn,
     pub accuracy_meters: Option<f64>,
     pub location_proof: PhoneProof,
     #[serde(default)]
@@ -600,6 +605,7 @@ impl Server {
                 cell: upload.cell,
                 resolution: upload.resolution,
                 crop: upload.crop,
+                turn: upload.turn,
                 accuracy_meters: upload.accuracy_meters,
                 location: None,
             },
@@ -648,6 +654,7 @@ impl Server {
                 cell: upload.cell,
                 resolution: upload.resolution,
                 crop: upload.crop,
+                turn: upload.turn,
                 accuracy_meters: upload.accuracy_meters,
                 location: upload.location,
             },

@@ -7,7 +7,7 @@ mod support;
 
 use crop_proof::{
     forge::{substitute_crop, CROP, RECT},
-    verify, RgbImage,
+    verify, RgbImage, Turn,
 };
 use support::honest;
 
@@ -15,7 +15,15 @@ use support::honest;
 #[ignore = "proves over 2^19 pixels; run with --release --features attack-hooks -- --ignored"]
 fn fiat_shamir_substituted_crop_is_rejected() {
     let h = honest::build(7);
-    verify(&h.verifier, &h.crop, RECT, &h.fingerprint, &h.proof).unwrap();
+    verify(
+        &h.verifier,
+        &h.crop,
+        RECT,
+        Turn::NONE,
+        &h.fingerprint,
+        &h.proof,
+    )
+    .unwrap();
 
     // A smooth gradient, unrelated to the noise-like honest crop.
     let gradient = std::array::from_fn(|c| {
@@ -30,7 +38,14 @@ fn fiat_shamir_substituted_crop_is_rejected() {
     let forged = substitute_crop(&h.fingerprint, RECT, &h.proof, &h.crop, &target).unwrap();
     assert_ne!(forged, h.crop);
 
-    let error = verify(&h.verifier, &forged, RECT, &h.fingerprint, &h.proof)
-        .expect_err("the verifier accepted another image with the honest proof");
+    let error = verify(
+        &h.verifier,
+        &forged,
+        RECT,
+        Turn::NONE,
+        &h.fingerprint,
+        &h.proof,
+    )
+    .expect_err("the verifier accepted another image with the honest proof");
     println!("rejected: {error:#}");
 }

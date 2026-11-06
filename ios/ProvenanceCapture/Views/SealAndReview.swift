@@ -88,7 +88,7 @@ struct PhotoScreen: View {
             Spacer()
             VStack(alignment: .leading, spacing: 24) {
                 Heading(title: "Your photo is certified")
-                PublishedImage(image: flow.preview, crop: flow.crop)
+                PublishedImage(image: flow.preview, crop: flow.crop, turn: flow.turn)
                     .frame(maxWidth: .infinity)
                     .onTapGesture { cropping = true }
                     .accessibilityAddTraits(.isButton)
@@ -111,7 +111,7 @@ struct PhotoScreen: View {
             .padding(.bottom, 12)
         }
         .background(Theme.paper.ignoresSafeArea())
-        .fullScreenCover(isPresented: $cropping) { CropEditor(image: flow.preview, size: flow.originalSize, crop: $flow.crop) }
+        .fullScreenCover(isPresented: $cropping) { CropEditor(image: flow.preview, size: flow.originalSize, crop: $flow.crop, turn: $flow.turn) }
         .confirmationDialog("Discard this photo?", isPresented: $discarding, titleVisibility: .visible) {
             Button("Discard", role: .destructive) { flow.retake() }
         } message: {

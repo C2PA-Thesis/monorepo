@@ -6,7 +6,7 @@ import "./style.css";
 import "./phone.css";
 import * as api from "./api";
 import { base64, framing, type Framing } from "./camera";
-import { cropSelector, PRESETS, type CropSelector, type Rect } from "./crop";
+import { cropSelector, PRESETS, turnSize, unturnRect, type CropSelector, type Rect, type Turn } from "./crop";
 import { $, area, cellShort, h, icon, rect, short, svg, when } from "./dom";
 import { envelope, freshSalt, hints } from "./envelope";
 import { fingerprint, type Size } from "./fingerprint";
@@ -44,11 +44,17 @@ const mono = (text: string) => h("span", { class: "mono" }, text);
 async function main() {
   $("map-slot").append(map.element);
   $("presets").append(
+    h(
+      "button",
+      { type: "button", class: "chip", id: "rotate", onclick: () => crop.rotate() },
+      svg(icon.rotate),
+      h("span", { id: "rotate-text" }, "Rotate"),
+    ),
     ...PRESETS.map((preset) =>
-      h("button", { type: "button", class: "chip", onclick: () => crop.set(preset.rect(crop.size())) }, preset.name),
+      h("button", { type: "button", class: "chip", "data-preset": preset.name, onclick: () => crop.set(presetRect(preset)) }, preset.name),
     ),
   );
-  crop = cropSelector($("stage"), $("crop-box"), onCrop);
+  crop = cropSelector($("stage"), $<HTMLCanvasElement>("preview"), $("crop-box"), onCrop);
   watchGps();
   wireControls();
   await pairing();
@@ -161,12 +167,19 @@ async function onPhoto(file: File) {
 
 // 3. Crop
 
-function onCrop(chosen: Rect, size: Size) {
-  $("frame-summary").textContent = rect(chosen);
-  for (const chip of $("presets").children) {
-    const preset = PRESETS.find((each) => each.name === chip.textContent);
-    chip.setAttribute("aria-pressed", String(!!preset && sameRect(preset.rect(size), chosen)));
+function onCrop(chosen: Rect, size: Size, turn: Turn) {
+  $("frame-summary").textContent = rect(chosen, turn);
+  $("rotate-text").textContent = turn ? `${turn * 90}°` : "Rotate";
+  $("rotate").setAttribute("aria-label", turn ? `Rotate clockwise, turned ${turn * 90}°` : "Rotate clockwise");
+  for (const chip of $("presets").querySelectorAll<HTMLElement>("[data-preset]")) {
+    const preset = PRESETS.find((each) => each.name === chip.dataset.preset)!;
+    chip.setAttribute("aria-pressed", String(sameRect(presetRect(preset, size, turn), chosen)));
   }
+}
+
+/// A preset of the frame as the preview shows it, back in the original's pixels.
+function presetRect(preset: (typeof PRESETS)[number], size = crop.size(), turn = crop.turn()): Rect {
+  return unturnRect(preset.rect(turnSize(size, turn)), size, turn);
 }
 
 const sameRect = (a: Rect, b: Rect) => a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
@@ -246,6 +259,7 @@ async function submit() {
       cell: region.cell,
       resolution: Number($<HTMLInputElement>("resolution").value),
       crop: crop.get(),
+      turn: crop.turn(),
       accuracy_meters: coords.accuracy,
     });
     local.done();

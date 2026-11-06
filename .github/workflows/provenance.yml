@@ -66,6 +66,9 @@ jobs:
       - name: Publish and verify the sample photo
         run: ./target/release/provenance demo
 
+      - name: Publish and verify it turned a quarter turn
+        run: ./target/release/provenance demo --turn 1 --out out/turned
+
       - name: Run every attack and check its expected outcome
         run: ./target/release/provenance attack
 

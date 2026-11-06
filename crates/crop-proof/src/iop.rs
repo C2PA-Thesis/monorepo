@@ -16,7 +16,7 @@ use subroutines::{
 };
 use transcript::IOPTranscript;
 
-use crate::{Pcs, Rect, Size, F, NUM_VARS};
+use crate::{Pcs, Rect, Size, Turn, F, NUM_VARS};
 
 pub(crate) type Poly = Arc<DenseMultilinearExtension<F>>;
 pub(crate) type SumCheckProof = <PolyIOP<F> as SumCheck<F>>::SumCheckProof;
@@ -82,13 +82,16 @@ pub(crate) fn hash_weights(
     Ok((weights, combined))
 }
 
-/// `S^T r` for the crop selection S: original pixel (rect.x + x, rect.y + y)
-/// maps to published pixel (x, y).
-pub(crate) fn crop_weights(original: Size, rect: Rect, r: &[F]) -> Vec<F> {
+/// `S^T r` for the selection S of the edit: published pixel (u, v) is pixel
+/// (x, y) of the rectangle before the turn, which is original pixel
+/// (rect.x + x, rect.y + y).
+pub(crate) fn crop_weights(original: Size, rect: Rect, turn: Turn, r: &[F]) -> Vec<F> {
+    let published = turn.size(rect.size());
     let mut weights = vec![F::zero(); original.pixels()];
-    for y in 0..rect.height {
-        for x in 0..rect.width {
-            weights[(rect.y + y) * original.width + rect.x + x] = r[y * rect.width + x];
+    for v in 0..published.height {
+        for u in 0..published.width {
+            let (x, y) = turn.source(rect.size(), u, v);
+            weights[(rect.y + y) * original.width + rect.x + x] = r[v * published.width + u];
         }
     }
     weights
@@ -332,4 +335,50 @@ fn sorted_counts(pixels: &[u8]) -> (Vec<F>, Vec<F>) {
         }
     }
     (counts, shifted)
+}
+
+#[cfg(test)]
+mod tests {
+    use ark_ff::UniformRand;
+    use rand::SeedableRng;
+
+    use super::*;
+    use crate::{edit, RgbImage};
+
+    #[test]
+    fn weights_select_the_turned_rectangle() {
+        let mut rng = rand::rngs::StdRng::seed_from_u64(3);
+        let original = Size {
+            width: 7,
+            height: 5,
+        };
+        let channels =
+            std::array::from_fn(|c| (0..original.pixels()).map(|i| (i * 3 + c) as u8).collect());
+        let image = RgbImage::new(original, channels).unwrap();
+        let rect = Rect {
+            x: 2,
+            y: 1,
+            width: 4,
+            height: 3,
+        };
+        for quarters in 0..4 {
+            let turn = Turn::new(quarters).unwrap();
+            let published = edit(&image, rect, turn).unwrap();
+            let r: Vec<F> = (0..rect.size().pixels())
+                .map(|_| F::rand(&mut rng))
+                .collect();
+            let weights = crop_weights(original, rect, turn, &r);
+            for channel in 0..3 {
+                let over_original = weights
+                    .iter()
+                    .zip(&image.channels()[channel])
+                    .fold(F::zero(), |sum, (w, &p)| sum + *w * F::from(p));
+                let over_published = r
+                    .iter()
+                    .zip(&published.channels()[channel])
+                    .fold(F::zero(), |sum, (w, &p)| sum + *w * F::from(p));
+                assert_eq!(over_original, over_published, "turn {turn}");
+            }
+        }
+    }
 }

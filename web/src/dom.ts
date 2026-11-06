@@ -28,8 +28,9 @@ export function short(hex: string): string {
   return digits.length <= 10 ? hex : `${prefix}${digits.slice(0, 4)}…${digits.slice(-4)}`;
 }
 
-export function rect(crop: { x: number; y: number; width: number; height: number }): string {
-  return `${crop.width}×${crop.height} at (${crop.x}, ${crop.y})`;
+/// The rectangle in the original's pixels, and the turn applied after it when there is one.
+export function rect(crop: { x: number; y: number; width: number; height: number }, turn = 0): string {
+  return `${crop.width}×${crop.height} at (${crop.x}, ${crop.y})${turn ? `, turned ${turn * 90}°` : ""}`;
 }
 
 export function area(km2: number): string {
@@ -66,6 +67,7 @@ export function time(rfc3339: string): string {
 export const icon = {
   check: `<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4.5 10.5l3.5 3.5 7.5-8" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
   again: `<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M15.5 10a5.5 5.5 0 1 1-1.6-3.9M15.5 3.5v3h-3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+  rotate: `<svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3.5" y="9" width="9" height="7.5" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 5.5h3.5a4.5 4.5 0 0 1 4.5 4.5v1.5M14 9.5l2 2 2-2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
   cross: `<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5.5 5.5l9 9m0-9l-9 9" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/></svg>`,
 };
 
