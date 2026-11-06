@@ -12,7 +12,7 @@
       }
     },
     {
-      "label": "edu.utdt.td8.zkloc",
+      "label": "io.github.c2pa-thesis.zkloc",
       "data": {
         "schema_version": "0.1.0-draft",
         "status": "PLACEHOLDER: filler values, no real cryptography yet",

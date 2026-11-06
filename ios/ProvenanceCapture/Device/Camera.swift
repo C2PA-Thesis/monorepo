@@ -6,7 +6,7 @@ import SwiftUI
 final class Camera: NSObject, @unchecked Sendable {
     // The session and its outputs are only touched on `queue`.
     let session = AVCaptureSession()
-    private let queue = DispatchQueue(label: "edu.utdt.td8.capture.camera")
+    private let queue = DispatchQueue(label: "io.github.c2pa-thesis.capture.camera")
     private let photoOutput = AVCapturePhotoOutput()
     private let metadataOutput = AVCaptureMetadataOutput()
     private var configured = false

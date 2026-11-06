@@ -13,7 +13,10 @@ with additional information into a digitally signed entity called a claim"
 ([8], §1.3). Anyone can define assertions under their own namespace:
 "Entity-specific namespaces shall begin with the Internet domain name for the
 entity similar to how Java packages are defined" ([8], §6.2.1). This project
-defines `edu.utdt.td8.zkloc`.
+defines `io.github.c2pa-thesis.zkloc`, under `c2pa-thesis.github.io`, the
+domain GitHub gives the project's organization. Files published before used
+`edu.utdt.td8.zkloc`, under the university's domain, which is not ours to use;
+the reader still reads them.
 
 **VerITAS** lets an editor change a signed photo without breaking its
 provenance. It "uses succinct zero-knowledge arguments to enable the editor to
@@ -363,7 +366,7 @@ rejection.
 
 | Check | Rejects the file when | Exit status |
 | --- | --- | --- |
-| C2PA manifest | c2pa-rs reports it neither Valid nor Trusted, it lacks exactly one `edu.utdt.td8.zkloc` assertion, or the assertion is not version 5 or 6 | 10 |
+| C2PA manifest | c2pa-rs reports it neither Valid nor Trusted, it lacks exactly one `io.github.c2pa-thesis.zkloc` or `edu.utdt.td8.zkloc` assertion, or the assertion is not version 5 or 6 | 10 |
 | Device receipt | the receipt is not signed by a trusted device key | 11 |
 | Crop proof | the file's pixels are not the claimed rectangle, turned as claimed, of the image the receipt fingerprints | 12 |
 | Location proof | the claimed cell's resolution is outside 4 to 9, or the proof does not verify for the receipt's envelope and the claimed cell | 13 |
@@ -374,7 +377,7 @@ A demo run on a 4032x3024 photo, whose original is 836x627:
 provenance verify
   file      out/signed.png
 
-  ✓ C2PA manifest      0.0s  reading the C2PA manifest and validating its claim signature → valid, with one edu.utdt.td8.zkloc assertion
+  ✓ C2PA manifest      0.0s  reading the C2PA manifest and validating its claim signature → valid, with one io.github.c2pa-thesis.zkloc assertion
   ✓ device receipt     0.0s  checking the device signature over fingerprint 4df3…6170 and envelope 0x2589…15b3 → signed by trusted device 4dd6…cc04 at 2026-11-02T19:34:41Z
   ✓ crop proof         1.6s  verifying that the published pixels are the 418x627 at (0, 0) of the original with fingerprint 4df3…6170 → proof accepted
   ✓ location proof     0.1s  verifying that the hints sealed in envelope 0x2589…15b3 map to cell 87c2e3020ffffff → proof accepted
@@ -390,7 +393,7 @@ checks after it show as not run. `--json` prints one object per check event,
 then the verdict. A file from before this version stops at the first check:
 
 ```text
-  ✗ C2PA manifest      0.0s  reading the C2PA manifest and validating its claim signature → the edu.utdt.td8.zkloc assertion is version 4, and this reader only reads version 5 (full-frame originals and crop proofs bound to their statement)
+  ✗ C2PA manifest      0.0s  reading the C2PA manifest and validating its claim signature → the edu.utdt.td8.zkloc assertion is version 4, and this reader only reads versions 5 and 6 (full-frame originals and crop proofs bound to their statement)
 ```
 
 Short identifiers show the first and last four hex digits. The fingerprint's is
@@ -436,7 +439,8 @@ the coordinate gives. The circuit side of forged hints is covered in the fork
 
 ## Assertion
 
-`edu.utdt.td8.zkloc`, version 6. Version 6 adds `turn`. With no turn the crop
+`io.github.c2pa-thesis.zkloc`, version 6, or `edu.utdt.td8.zkloc` for files
+published before the label changed. Version 6 adds `turn`. With no turn the crop
 proof hashes the same statement as in version 5, so the reader also accepts
 version 5 files, which have no turn. Version 5 lets the original be any size
 up to 2^19 pixels and makes the crop proof hash its whole statement into the
