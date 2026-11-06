@@ -1676,7 +1676,7 @@ mod tests {
                 .err()
                 .unwrap();
             assert!(
-                error.to_string().contains("Apple's App Attest root"),
+                error.to_string().contains("pinned Apple root"),
                 "{error}"
             );
             assert_eq!(
