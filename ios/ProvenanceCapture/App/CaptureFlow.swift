@@ -279,6 +279,60 @@ final class CaptureFlow {
         }
     }
 
+    /// Registers with a server compiled into the app, without a QR code. The
+    /// pin comes from the build, the parameter digests from the server over
+    /// the pinned connection, and trust from App Attest.
+    func register(with server: KnownServer) async {
+        guard let key, !pairingBusy else { return }
+        pairingBusy = true
+        defer { pairingBusy = false }
+        pairFailed = false
+        pairStatus = "Connecting to \(server.name)…"
+        let api = LaptopAPI(bases: server.serverURLs, pin: server.pin)
+        defer { api.invalidate() }
+        do {
+            guard key.kind == .secureEnclave else {
+                throw CaptureError("registering needs the Secure Enclave and App Attest; scan a laptop's code instead")
+            }
+            let info = try await api.server()
+            try info.validate()
+            let challenge = try await api.challenge().challenge
+            let signature = try await Task.detached { try key.sign(Data(challenge.utf8)) }.value
+            pairStatus = "Asking Apple to attest this app…"
+            let attestation: AppAttestation
+            switch await RegistrationAttestation.attest(challenge: challenge, device: key.id) {
+            case .attested(let attested): attestation = attested
+            case .unavailable(let reason): throw CaptureError("\(server.name) needs App Attest, and \(reason)")
+            }
+            pairStatus = "Registering…"
+            let paired = try await api.register(
+                RegisterRequest(
+                    challenge: challenge, publicKey: key.pem, signature: signature.base64EncodedString(),
+                    kind: key.kind.rawValue, name: UIDevice.current.name, attestation: attestation))
+            guard paired.device == key.id else {
+                throw CaptureError("\(server.name) registered key \(Verdict.short(paired.device)), not this phone's")
+            }
+            var urls = server.serverURLs
+            for url in info.serverURLs where !urls.contains(url) { urls.append(url) }
+            let pairing = Pairing(
+                base: api.http.base, urls: urls, pin: server.pin, device: paired.device, kind: key.kind,
+                shownKind: paired.kind, attestNote: paired.note, server: server.name,
+                params: info.params, pairedAt: .now, paramsReady: false)
+            pairing.save()
+            use(pairing)
+            await fetchParams()
+        } catch {
+            fail("Could not register with \(server.name): \(describe(error))")
+        }
+    }
+
+    /// Forgets the current connection and registers with `server` instead.
+    func switchTo(_ server: KnownServer) async {
+        guard !pairingBusy, !paramsBusy else { return }
+        pairAgain()
+        await register(with: server)
+    }
+
     /// Forgets the pairing, also one whose parameters never downloaded, and keeps the key.
     func pairAgain() {
         guard !pairingBusy, !paramsBusy else { return }

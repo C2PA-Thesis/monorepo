@@ -115,6 +115,8 @@ struct CameraAccessScreen: View {
 struct PairScreen: View {
     @Bindable var flow: CaptureFlow
     @State private var typing = false
+    @State private var choosing = false
+    private let servers = KnownServers.available
 
     var body: some View {
         OnboardingPage(title: title, subtitle: subtitle) {
@@ -131,6 +133,13 @@ struct PairScreen: View {
             actions
         }
         .sheet(isPresented: $typing) { CodeSheet(flow: flow, done: { typing = false }) }
+        .confirmationDialog("Connect another way", isPresented: $choosing, titleVisibility: .visible) {
+            ForEach(servers.dropFirst()) { server in
+                Button("Use the \(server.name) server") { Task { await flow.register(with: server) } }
+            }
+            Button("Scan a laptop's code") { flow.showScanner = true }
+            Button("Enter a laptop's code") { typing = true }
+        }
         .task {
             // The Simulator shares the Mac's network, so it connects without a code.
             if CaptureFlow.isSimulator, flow.pairing == nil, !flow.pairFailed, flow.key != nil { await flow.fetchFromMac() }
@@ -141,7 +150,7 @@ struct PairScreen: View {
     }
 
     private var title: String {
-        guard flow.pairFailed else { return "Connect your laptop" }
+        guard flow.pairFailed else { return servers.isEmpty ? "Connect your laptop" : "Connect to a server" }
         if flow.pairNeedsSettings { return "Capture can't see your laptop" }
         if flow.pairing != nil { return "Couldn't get ready" }
         return "Couldn't connect"
@@ -149,12 +158,15 @@ struct PairScreen: View {
 
     private var subtitle: String {
         guard flow.pairFailed else {
-            return CaptureFlow.isSimulator
-                ? "This Mac does the heavy lifting when you publish."
-                : "It does the heavy lifting when you publish. Open Capture on it and scan the code."
+            if CaptureFlow.isSimulator { return "This Mac does the heavy lifting when you publish." }
+            if let server = servers.first {
+                return "It does the heavy lifting when you publish. Use the \(server.name) server, or scan the code on your laptop."
+            }
+            return "It does the heavy lifting when you publish. Open Capture on it and scan the code."
         }
         if flow.pairNeedsSettings { return "Turn on Local Network for Capture in Settings." }
         if flow.pairing != nil { return "Keep your laptop on and try again." }
+        if !servers.isEmpty { return "Check your connection and try again, or scan a laptop's code." }
         return CaptureFlow.isSimulator
             ? "Start Capture on this Mac, then try again."
             : "Check your laptop is on the same Wi-Fi with Capture open."
@@ -178,6 +190,12 @@ struct PairScreen: View {
                 Button(flow.pairFailed ? "Try again" : "Connect to this Mac") { Task { await flow.fetchFromMac() } }
                     .buttonStyle(.primary)
                 Color.clear.frame(height: 44)
+            } else if let server = servers.first {
+                Button(flow.pairFailed ? "Try again" : "Use the \(server.name) server") {
+                    Task { await flow.register(with: server) }
+                }
+                .buttonStyle(.primary)
+                Button("Connect another way") { choosing = true }.buttonStyle(.quiet)
             } else {
                 Button {
                     flow.showScanner = true
