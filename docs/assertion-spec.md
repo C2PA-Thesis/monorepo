@@ -99,7 +99,7 @@ proof and the location proof together.
 | Field       | Type     | Description |
 |-------------|----------|-------------|
 | `algorithm` | string   | Must be `"hyperveritas-ajtai-chacha8-v1"`. |
-| `size`      | object   | `{"width": <W>, "height": <H>}` — the original's dimensions.  The product W × H must not exceed 2^19 (524 288). |
+| `size`      | object   | `{"width": <W>, "height": <H>}` -- the original's dimensions.  The product W × H must not exceed 2^19 (524 288). |
 | `R`         | string[] | 128 BLS12-381 scalar field elements, hex-encoded with `0x` prefix (64 hex digits each). Red channel. |
 | `G`         | string[] | Same, green channel. |
 | `B`         | string[] | Same, blue channel. |
@@ -209,12 +209,12 @@ The decoded bytes follow this layout:
 Each frame is a little-endian `u64` byte count followed by that many
 bytes.  The frames, in order:
 
-1. **Commitments** — 12 KZG commitments (3 image channels + 9 auxiliary polynomials for range and crop checks).
-2. **Hash sumchecks** — 3 sumchecks (one per channel), each: one frame of challenge-point field elements, then a `u32` round count, then one frame per round.
-3. **Range sumchecks** — 3 sumchecks, same structure, 20 variables (NUM_VARS + 1).
-4. **Crop sumchecks** — 3 sumchecks, same structure, 19 variables.
-5. **Image batch opening** — one sumcheck (19 vars) + one frame of 9 evaluations + one KZG proof frame.
-6. **Range batch opening** — one sumcheck (20 vars) + one frame of 33 evaluations + one KZG proof frame.
+1. **Commitments** -- 12 KZG commitments (3 image channels + 9 auxiliary polynomials for range and crop checks).
+2. **Hash sumchecks** -- 3 sumchecks (one per channel), each: one frame of challenge-point field elements, then a `u32` round count, then one frame per round.
+3. **Range sumchecks** -- 3 sumchecks, same structure, 20 variables (NUM_VARS + 1).
+4. **Crop sumchecks** -- 3 sumchecks, same structure, 19 variables.
+5. **Image batch opening** -- one sumcheck (19 vars) + one frame of 9 evaluations + one KZG proof frame.
+6. **Range batch opening** -- one sumcheck (20 vars) + one frame of 33 evaluations + one KZG proof frame.
 
 Each sumcheck's challenge point has as many elements as its variable
 count (19 or 20).  Round polynomials have degree at most 3, so each
@@ -294,7 +294,7 @@ key signs the receipt; the editor key signs the C2PA manifest.
 |-----------|--------|-------|
 | `c2pa-rs` (Reader) | `Valid` | Parses and validates the claim signature.  Deserializes the custom assertion. |
 | `c2patool` 0.27.16 | `validation_state: Valid` | One informational issue: `signingCredential.untrusted` (expected, sample certs). |
-| verify.contentauthenticity.org | `Unrecognized` | Manifest parsed; certificate not on trust list.  **Custom assertion not displayed** — Adobe renders only assertions it knows. |
+| verify.contentauthenticity.org | `Unrecognized` | Manifest parsed; certificate not on trust list.  **Custom assertion not displayed** -- Adobe renders only assertions it knows. |
 
 The `signingCredential.untrusted` status is expected: the pipeline
 signs with the c2pa-rs SDK sample certificates, which are not on any
