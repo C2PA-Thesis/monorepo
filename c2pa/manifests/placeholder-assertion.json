@@ -1,44 +1,41 @@
 {
   "claim_version": 1,
   "claim_generator_info": [
-    { "name": "td8-zkloc-pipeline", "version": "0.1.0" }
+    { "name": "provenance", "version": "0.1.0" }
   ],
-  "title": "Test capture with a placeholder ZKLoc assertion",
+  "title": "Test capture with io.github.c2pa-thesis.zkloc v6 assertion",
   "assertions": [
     {
       "label": "c2pa.actions",
       "data": {
-        "actions": [ { "action": "c2pa.created", "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/digitalCapture" } ]
+        "actions": [
+          { "action": "c2pa.created", "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/digitalCapture" },
+          { "action": "c2pa.cropped" }
+        ]
       }
     },
     {
-      "label": "edu.utdt.td8.zkloc",
+      "label": "io.github.c2pa-thesis.zkloc",
       "data": {
-        "schema_version": "0.1.0-draft",
-        "status": "PLACEHOLDER: filler values, no real cryptography yet",
-        "commitment": {
-          "alg": "TBD",
-          "covers": ["pixels", "coordinate", "timestamp"],
-          "value": "0x0000000000000000000000000000000000000000000000000000000000000000"
+        "version": 6,
+        "receipt": {
+          "fingerprint": {
+            "algorithm": "hyperveritas-ajtai-chacha8-v1",
+            "size": { "width": 1024, "height": 512 },
+            "R": ["0x0000000000000000000000000000000000000000000000000000000000000001"],
+            "G": ["0x0000000000000000000000000000000000000000000000000000000000000001"],
+            "B": ["0x0000000000000000000000000000000000000000000000000000000000000001"]
+          },
+          "envelope": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "captured_at": "2026-09-14T20:42:05Z",
+          "device": "3fb100000000000000000000000000000000000000000000000000000000ef01",
+          "signature": "MEUCIQC+placeholder+base64+DER+ECDSA+P256=="
         },
-        "location_proof": {
-          "scheme": "h3",
-          "resolution": 7,
-          "cell": "871f0d48affffff",
-          "proof_system": "TBD",
-          "field": "TBD",
-          "proof": null
-        },
-        "transformation_proof": {
-          "ops": ["c2pa.crop"],
-          "proof_system": "TBD",
-          "field": "TBD",
-          "proof": null
-        },
-        "binding": {
-          "claim": "both proofs refer to the same commitment",
-          "checked_by_verifier": false
-        }
+        "cell": "87c2e3020ffffff",
+        "crop": { "x": 0, "y": 0, "width": 512, "height": 512 },
+        "turn": 0,
+        "location_proof": "placeholder+base64+BN254+Groth16+196+bytes==",
+        "image_proof": "placeholder+base64+HyperVerITAS+PST+proof=="
       }
     }
   ]
