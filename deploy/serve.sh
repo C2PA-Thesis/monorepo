@@ -8,8 +8,8 @@
 set -euo pipefail
 release=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
 data=${PROVENANCE_DATA:-/var/lib/provenance}
-bundle=io.github.c2pa-thesis.capture
-# Not yet confirmed as the paid team's ID; SSM's team-id wins when present.
+bundle=io.github.c2pa-thesis.capture-app
+# The paid team. SSM's team-id wins when present.
 team=678K8MRCKG
 imds=http://169.254.169.254/latest
 args=(--open-registration)
