@@ -18,6 +18,18 @@ struct LaptopAPI: Sendable {
         try HTTP.decode(Paired.self, try await http.post("/api/v2/pair", json: request))
     }
 
+    func server() async throws -> ServerInfo {
+        try HTTP.decode(ServerInfo.self, try await http.get("/api/v2/server"))
+    }
+
+    func challenge() async throws -> RegistrationChallenge {
+        try HTTP.decode(RegistrationChallenge.self, try await http.post("/api/v2/challenge", data: Data(), type: "application/json"))
+    }
+
+    func register(_ request: RegisterRequest) async throws -> Paired {
+        try HTTP.decode(Paired.self, try await http.post("/api/v2/register", json: request))
+    }
+
     /// Whether the laptop trusts the key with this id. Carries no secret, so it is safe to repeat.
     func trusted(_ device: String) async throws -> Bool {
         struct Trust: Decodable { let trusted: Bool }
@@ -90,6 +102,8 @@ struct Pairing: Codable, Equatable, Sendable {
     var shownKind: String? = nil
     /// Why the key paired without an App Attest attestation, when it did.
     var attestNote: String? = nil
+    /// The known server this phone registered with, or nil for a laptop it paired with.
+    var server: String? = nil
     var params: [String: String]
     var pairedAt: Date
     var paramsReady: Bool

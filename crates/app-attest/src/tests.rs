@@ -34,7 +34,7 @@ fn accepts_a_valid_one() {
     assert_eq!(attestation.environment, Environment::Development);
     assert_eq!(attestation.validation_category, Some(3));
     assert_eq!(attestation.bundle_version.as_deref(), Some("1"));
-    assert_eq!(attestation.receipt, b"test receipt");
+    assert!(!attestation.receipt.is_empty());
 }
 
 #[test]

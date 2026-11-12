@@ -4,8 +4,9 @@ on:
   push:
     paths: &paths
       - 'crates/app-attest/**'
-      # The pairing checks that call the verifier.
+      # The pairing and registration checks that call the verifier.
       - 'crates/provenance/src/serve.rs'
+      - 'crates/provenance/src/register.rs'
       - 'crates/provenance/src/devices.rs'
       - 'Cargo.toml'
       - 'Cargo.lock'
@@ -36,3 +37,7 @@ jobs:
 
       - name: Pairing with an attestation
         run: cargo test -p provenance --lib -- attest
+
+      # Forged attestations, and a fake Apple answering with forged receipts.
+      - name: Registration
+        run: cargo test -p provenance --lib -- register

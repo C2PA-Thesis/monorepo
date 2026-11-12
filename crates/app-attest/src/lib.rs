@@ -8,6 +8,8 @@ use ciborium::value::Value;
 use sha2::{Digest, Sha256};
 use x509_parser::{certificate::X509Certificate, prelude::FromDer, time::ASN1Time};
 
+pub mod jwt;
+pub mod receipt;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
 
@@ -77,13 +79,14 @@ pub enum Error {
     CredentialId,
     CoseKey,
     Category(u32),
+    Receipt(&'static str),
 }
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Error::Format(what) => write!(f, "the attestation object is malformed: {what}"),
-            Error::Chain(what) => write!(f, "the certificate chain does not lead to Apple's App Attest root: {what}"),
+            Error::Chain(what) => write!(f, "the certificate chain does not lead to the pinned Apple root: {what}"),
             Error::Nonce => write!(f, "the nonce in the credential certificate does not match the authenticator data and client data hash"),
             Error::KeyId => write!(f, "the credential certificate's key does not hash to the key id"),
             Error::AppId => write!(f, "the RP ID is not the hash of the expected App ID"),
@@ -92,6 +95,7 @@ impl fmt::Display for Error {
             Error::CredentialId => write!(f, "the credential id is not the key id"),
             Error::CoseKey => write!(f, "the COSE key in the authenticator data is not the certificate's key"),
             Error::Category(category) => write!(f, "validation category {category} is not accepted"),
+            Error::Receipt(what) => write!(f, "the receipt does not verify: {what}"),
         }
     }
 }
@@ -248,7 +252,7 @@ fn check_chain<'a>(
 ) -> Result<X509Certificate<'a>, Error> {
     if x5c.len() < 2 {
         return Err(Error::Chain(
-            "x5c needs the credential and intermediate certificates",
+            "the chain needs a leaf and an intermediate certificate",
         ));
     }
     let at = ASN1Time::from_timestamp(now).map_err(|_| Error::Chain("bad time"))?;

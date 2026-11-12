@@ -25,7 +25,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{Arc, Mutex, MutexGuard, PoisonError},
     thread,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant},
 };
 
 use anyhow::{anyhow, bail, ensure, Context, Result};
@@ -42,7 +42,7 @@ use axum::{
 };
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use crop_proof::{Fingerprint, Rect, RgbImage, Size, Turn};
-use p256::ecdsa::{signature::Verifier as _, Signature};
+use p256::ecdsa::{signature::Verifier as _, Signature, VerifyingKey};
 use rand::{rngs::OsRng, Rng, RngCore};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -60,6 +60,10 @@ use crate::{
     location::{check_resolution, LocationProof, Outline, Region, PROVER_FILES},
     publish,
     receipt::{key_id, parse_public_key, Receipt, TrustedKeys},
+    register::{
+        registration_client_data, unix_now, Challenge, RegisterRequest, Registration, ServerInfo,
+        TooMany, MAX_QUEUED,
+    },
     verify::Verdict,
     Workspace,
 };
@@ -117,6 +121,8 @@ pub struct Server {
     /// The laptop's own key id, which signs the demo's captures.
     laptop: Option<String>,
     attest: AttestPolicy,
+    /// Set when phones may register without pairing.
+    registration: Option<Registration>,
 }
 
 /// How app pairings with an App Attest attestation are checked.
@@ -391,6 +397,7 @@ impl Server {
                 required: false,
                 root: app_attest::apple_root(),
             },
+            registration: None,
         }
     }
 
@@ -421,6 +428,17 @@ impl Server {
     pub fn app_attest_root(mut self, root: Vec<u8>) -> Self {
         self.attest.root = root;
         self
+    }
+
+    /// Lets phones register through `/api/v2/register` without pairing.
+    /// Needs the App ID, from [`Server::app_attest`].
+    pub fn registration(mut self, registration: Registration) -> Result<Self> {
+        ensure!(
+            self.attest.app_id.is_some(),
+            "open registration needs the App ID (--app-id)"
+        );
+        self.registration = Some(registration);
+        Ok(self)
     }
 
     /// Publishes and verifies every accepted upload in the background.
@@ -472,6 +490,9 @@ impl Server {
             .route("/api/v2/pairing", get(app_pairing))
             .route("/api/v2/session", get(app_session))
             .route("/api/v2/pair", post(app_pair))
+            .route("/api/v2/server", get(server_info))
+            .route("/api/v2/challenge", post(challenge))
+            .route("/api/v2/register", post(register))
             .route("/api/v2/captures", post(proof_upload))
             .route("/api/params/location/{file}", get(params))
             .route("/api/devices/{id}", get(device))
@@ -563,12 +584,7 @@ impl Server {
             "kind must be secure-enclave or software"
         );
         let key = parse_public_key(&request.public_key)?;
-        let possession = BASE64
-            .decode(&request.signature)
-            .ok()
-            .and_then(|der| Signature::from_der(&der).ok())
-            .is_some_and(|signature| key.verify(request.token.as_bytes(), &signature).is_ok());
-        let checked = match possession {
+        let checked = match possesses(&key, &request.signature, &request.token) {
             false => Err("the signature over the token does not match the public key".to_string()),
             true => self.check_attestation(&request, &key_id(&key)?),
         };
@@ -618,36 +634,125 @@ impl Server {
         let Some(app_id) = &self.attest.app_id else {
             return Ok(None);
         };
+        let verified =
+            self.verify_attestation(sent, app_id, &pairing_client_data(&request.token, device))?;
+        attested(app_id, &sent.key_id, &verified, None).map(Some)
+    }
+
+    /// Steps 1 to 11 of Apple's "Verify the attestation", over SHA-256 of
+    /// `client_data`.
+    fn verify_attestation(
+        &self,
+        sent: &AppAttestation,
+        app_id: &str,
+        client_data: &[u8],
+    ) -> Result<app_attest::Attestation, String> {
         let key_id = BASE64
             .decode(&sent.key_id)
             .map_err(|_| "the App Attest key id is not base64".to_string())?;
         let object = BASE64
             .decode(&sent.object)
             .map_err(|_| "the App Attest attestation is not base64".to_string())?;
-        let client_data_hash = Sha256::digest(pairing_client_data(&request.token, device));
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_err(|_| "the laptop's clock is before 1970".to_string())?
-            .as_secs() as i64;
-        let verified = app_attest::verify_with_root(
+        let client_data_hash = Sha256::digest(client_data);
+        app_attest::verify_with_root(
             &object,
             &app_attest::Expected {
                 app_id,
                 key_id: &key_id,
                 client_data_hash: &client_data_hash,
             },
-            now,
+            unix_now(),
             &self.attest.root,
         )
-        .map_err(|error| format!("the App Attest attestation does not verify: {error}"))?;
-        Ok(Some(Attested {
-            environment: verified.environment.as_str().to_string(),
-            app_id: app_id.clone(),
-            key_id: sent.key_id.clone(),
-            validation_category: verified.validation_category,
-            bundle_version: verified.bundle_version,
-            verified_at: capture::now().map_err(|error| error.to_string())?,
-        }))
+        .map_err(|error| format!("the App Attest attestation does not verify: {error}"))
+    }
+
+    /// Trusts a phone that registered with a challenge from
+    /// [`Registration::challenge`], without pairing.
+    fn register(&self, request: RegisterRequest) -> Result<Paired> {
+        let registration = self
+            .registration
+            .as_ref()
+            .context("this server does not register devices")?;
+        // Spent on the first attempt, whatever its outcome.
+        ensure!(
+            registration.take(&request.challenge),
+            "the challenge is unknown, used or expired; ask for a new one"
+        );
+        ensure!(
+            request.kind == DeviceKind::SecureEnclave,
+            "only a secure-enclave key registers"
+        );
+        let key = parse_public_key(&request.public_key)?;
+        ensure!(
+            possesses(&key, &request.signature, &request.challenge),
+            "the signature over the challenge does not match the public key"
+        );
+        let device = key_id(&key)?;
+        let app_id = self
+            .attest
+            .app_id
+            .as_deref()
+            .context("registration needs the App ID")?;
+        let sent = &request.attestation;
+        let verified = self
+            .verify_attestation(
+                sent,
+                app_id,
+                &registration_client_data(&request.challenge, &device),
+            )
+            .map_err(|error| anyhow!(error))?;
+        registration
+            .check_category(&verified)
+            .map_err(|error| anyhow!(error))?;
+        // "make sure that the public key doesn't already have an association
+        // with another user" (Validating apps..., Store the public key and receipt).
+        let devices = self.workspace.devices();
+        let reused = devices.list()?.into_iter().any(|other| {
+            other.id != device
+                && other
+                    .info
+                    .and_then(|info| info.attestation)
+                    .is_some_and(|attested| attested.key_id == sent.key_id)
+        });
+        ensure!(
+            !reused,
+            "this App Attest key already registered another receipt key"
+        );
+        let risk_metric = registration
+            .risk_metric(app_id, &verified, unix_now())
+            .map_err(|error| anyhow!(error))?;
+        let info = DeviceInfo {
+            kind: DeviceKind::SecureEnclave,
+            name: device_name(&request.name),
+            paired_at: capture::now()?,
+            attestation: Some(
+                attested(app_id, &sent.key_id, &verified, risk_metric)
+                    .map_err(|error| anyhow!(error))?,
+            ),
+        };
+        let device = devices.add(&key, &info)?;
+        Ok(Paired {
+            device,
+            kind: Some(info.shown()),
+            note: risk_metric
+                .is_none()
+                .then(|| "this server does not check Apple's risk metric".to_string()),
+        })
+    }
+
+    /// `GET /api/v2/server`.
+    fn server_info(&self) -> Result<ServerInfo> {
+        let lan = self
+            .lan
+            .as_ref()
+            .context("the TLS listener for the app is not running")?;
+        Ok(ServerInfo {
+            v: 1,
+            urls: lan.urls.clone(),
+            params: self.param_digests()?,
+            registration: self.registration.is_some(),
+        })
     }
 
     fn pairing(&self) -> MutexGuard<'_, Pairing> {
@@ -716,6 +821,9 @@ impl Server {
     /// unauthenticated request through the tunnel should not get for free.
     fn signed_original(&self, original_png: &str, receipt: &Receipt) -> Result<RgbImage> {
         receipt.verify(&TrustedKeys::load(&self.workspace.trusted_keys_dir())?)?;
+        if let Some(registration) = &self.registration {
+            registration.admit_upload(&receipt.device)?;
+        }
         let png = BASE64
             .decode(original_png)
             .context("original_png is not base64")?;
@@ -814,6 +922,19 @@ impl Server {
         let id = capture_id(&capture.receipt);
         let dir = self.captures.join(&id);
         ensure!(!dir.exists(), "capture {id} already exists");
+        if self.publishes && self.registration.is_some() {
+            let running = self
+                .jobs()
+                .values()
+                .filter(|status| status.phase.is_running())
+                .count();
+            if running >= MAX_QUEUED {
+                return Err(TooMany(format!(
+                    "{running} captures are waiting for a proof; try again in a few minutes"
+                ))
+                .into());
+            }
+        }
         capture.write(&dir)?;
         if self.publishes {
             self.start(&id).map_err(|rejection| rejection.error)?;
@@ -1173,6 +1294,34 @@ async fn app_pair(
     Ok(Json(server.app_pair(request)?))
 }
 
+async fn server_info(State(server): State<Arc<Server>>) -> ApiResult<ServerInfo> {
+    Ok(Json(blocking(move || server.server_info()).await?))
+}
+
+async fn challenge(State(server): State<Arc<Server>>) -> ApiResult<Challenge> {
+    match &server.registration {
+        Some(registration) => Ok(Json(registration.challenge()?)),
+        None => Err(not_registering()),
+    }
+}
+
+async fn register(
+    State(server): State<Arc<Server>>,
+    JsonBody(request): JsonBody<RegisterRequest>,
+) -> ApiResult<Paired> {
+    if server.registration.is_none() {
+        return Err(not_registering());
+    }
+    // Apple's risk metric is a network call.
+    Ok(Json(blocking(move || server.register(request)).await?))
+}
+
+fn not_registering() -> ApiError {
+    ApiError::not_found(
+        "this server does not register devices; pair with the QR code instead".to_string(),
+    )
+}
+
 async fn proof_upload(
     State(server): State<Arc<Server>>,
     JsonBody(upload): JsonBody<ProofUpload>,
@@ -1411,6 +1560,33 @@ fn random_token() -> String {
     hex::encode(bytes)
 }
 
+/// Whether `signature` (base64 DER) is `key`'s over `message`.
+fn possesses(key: &VerifyingKey, signature: &str, message: &str) -> bool {
+    BASE64
+        .decode(signature)
+        .ok()
+        .and_then(|der| Signature::from_der(&der).ok())
+        .is_some_and(|signature| key.verify(message.as_bytes(), &signature).is_ok())
+}
+
+/// What the sidecar records of a verified attestation.
+fn attested(
+    app_id: &str,
+    key_id: &str,
+    verified: &app_attest::Attestation,
+    risk_metric: Option<u32>,
+) -> Result<Attested, String> {
+    Ok(Attested {
+        environment: verified.environment.as_str().to_string(),
+        app_id: app_id.to_string(),
+        key_id: key_id.to_string(),
+        validation_category: verified.validation_category,
+        bundle_version: verified.bundle_version.clone(),
+        verified_at: capture::now().map_err(|error| error.to_string())?,
+        risk_metric,
+    })
+}
+
 fn equal_in_constant_time(a: &[u8], b: &[u8]) -> bool {
     a.len() == b.len() && a.iter().zip(b).fold(0, |diff, (x, y)| diff | (x ^ y)) == 0
 }
@@ -1447,10 +1623,12 @@ impl ApiError {
 
 impl<E: Into<anyhow::Error>> From<E> for ApiError {
     fn from(error: E) -> Self {
-        Self {
-            status: StatusCode::BAD_REQUEST,
-            error: error.into(),
-        }
+        let error = error.into();
+        let status = match error.is::<TooMany>() {
+            true => StatusCode::TOO_MANY_REQUESTS,
+            false => StatusCode::BAD_REQUEST,
+        };
+        Self { status, error }
     }
 }
 
@@ -1675,10 +1853,7 @@ mod tests {
                 ))
                 .err()
                 .unwrap();
-            assert!(
-                error.to_string().contains("Apple's App Attest root"),
-                "{error}"
-            );
+            assert!(error.to_string().contains("pinned Apple root"), "{error}");
             assert_eq!(
                 current_token(&server),
                 token,
@@ -1755,6 +1930,360 @@ mod tests {
                 .is_err());
             assert!(make().app_attest(None, true).is_err());
             assert!(make().app_attest(Some(APP_ID.to_string()), true).is_ok());
+        }
+    }
+
+    mod register {
+        use app_attest::{
+            receipt::verify_receipt_with_root,
+            testing::{Forge, Options, ReceiptOptions},
+            Environment,
+        };
+        use axum::http::Request as HttpRequest;
+        use p256::{
+            ecdsa::{signature::Signer, SigningKey},
+            pkcs8::{EncodePublicKey, LineEnding},
+        };
+
+        use super::*;
+        use crate::register::{MetricSource, MAX_RISK_METRIC, RECEIPT_MAX_AGE};
+
+        const APP_ID: &str = "ABCDE12345.io.github.c2pa-thesis.capture";
+
+        /// Apple's endpoint, answering with a receipt forged under the test root.
+        struct FakeApple {
+            forge: Arc<Forge>,
+            metric: u32,
+            app_id: String,
+            age: i64,
+        }
+
+        impl MetricSource for FakeApple {
+            fn fetch(&self, receipt: &[u8], _: Environment) -> Result<Vec<u8>, String> {
+                let now = unix_now();
+                let attest = verify_receipt_with_root(receipt, now, self.forge.root())
+                    .map_err(|error| error.to_string())?;
+                let mut options =
+                    ReceiptOptions::new(&self.app_id, &attest.attested_certificate, now - self.age);
+                options.risk_metric = Some(self.metric);
+                Ok(self.forge.receipt(&options))
+            }
+        }
+
+        fn apple(forge: &Arc<Forge>, metric: u32) -> FakeApple {
+            FakeApple {
+                forge: Arc::clone(forge),
+                metric,
+                app_id: APP_ID.to_string(),
+                age: 5,
+            }
+        }
+
+        fn server(home: &std::path::Path, forge: &Arc<Forge>, apple: Option<FakeApple>) -> Server {
+            fs::create_dir_all(home.join("trusted")).unwrap();
+            let metric = apple.map(|apple| Box::new(apple) as Box<dyn MetricSource>);
+            Server::new(Workspace::new(home), home.join("captures"))
+                .app_attest(Some(APP_ID.to_string()), false)
+                .unwrap()
+                .app_attest_root(forge.root().to_vec())
+                .registration(
+                    Registration::new(metric, MAX_RISK_METRIC).receipt_root(forge.root().to_vec()),
+                )
+                .unwrap()
+        }
+
+        struct Phone {
+            key: SigningKey,
+            device: String,
+        }
+
+        impl Phone {
+            fn new() -> Self {
+                let key = SigningKey::random(&mut OsRng);
+                let device = key_id(key.verifying_key()).unwrap();
+                Self { key, device }
+            }
+
+            fn request(&self, challenge: &str, attestation: AppAttestation) -> RegisterRequest {
+                let signature: Signature = self.key.sign(challenge.as_bytes());
+                RegisterRequest {
+                    challenge: challenge.to_string(),
+                    public_key: self
+                        .key
+                        .verifying_key()
+                        .to_public_key_pem(LineEnding::LF)
+                        .unwrap(),
+                    signature: BASE64.encode(signature.to_der()),
+                    kind: DeviceKind::SecureEnclave,
+                    name: "Test iPhone".to_string(),
+                    attestation,
+                }
+            }
+
+            /// A registration as the app makes it.
+            fn register(
+                &self,
+                server: &Server,
+                forge: &Forge,
+                category: Option<u32>,
+            ) -> Result<Paired> {
+                let challenge = challenge(server);
+                let client_data = registration_client_data(&challenge, &self.device);
+                server.register(self.request(&challenge, attest(forge, &client_data, category)))
+            }
+        }
+
+        fn attest(forge: &Forge, client_data: &[u8], category: Option<u32>) -> AppAttestation {
+            let mut options = Options::new(APP_ID, &Sha256::digest(client_data));
+            options.validation_category = category;
+            let forged = forge.attest(&options);
+            AppAttestation {
+                key_id: BASE64.encode(&forged.key_id),
+                object: BASE64.encode(&forged.object),
+            }
+        }
+
+        fn challenge(server: &Server) -> String {
+            server
+                .registration
+                .as_ref()
+                .unwrap()
+                .challenge()
+                .unwrap()
+                .challenge
+        }
+
+        fn refused(result: Result<Paired>) -> String {
+            result
+                .err()
+                .expect("the registration went through")
+                .to_string()
+        }
+
+        #[test]
+        fn registers_with_a_challenge_and_records_the_metric() {
+            let home = tempfile::tempdir().unwrap();
+            let forge = Arc::new(Forge::new());
+            let server = server(home.path(), &forge, Some(apple(&forge, 2)));
+            let phone = Phone::new();
+            let paired = phone.register(&server, &forge, Some(3)).unwrap();
+            assert_eq!(paired.device, phone.device);
+            assert_eq!(
+                paired.kind.as_deref(),
+                Some("attested: secure-enclave (development)")
+            );
+            assert!(paired.note.is_none());
+            let attested = server
+                .workspace
+                .devices()
+                .info(&phone.device)
+                .unwrap()
+                .attestation
+                .unwrap();
+            assert_eq!(attested.risk_metric, Some(2));
+            assert_eq!(attested.validation_category, Some(3));
+            assert!(server.workspace.devices().is_trusted(&phone.device));
+        }
+
+        #[test]
+        fn a_challenge_is_spent_by_a_refused_attempt() {
+            let home = tempfile::tempdir().unwrap();
+            let forge = Arc::new(Forge::new());
+            let server = server(home.path(), &forge, None);
+            let phone = Phone::new();
+            let other = Phone::new();
+            let challenge = challenge(&server);
+            let attestation = attest(
+                &forge,
+                &registration_client_data(&challenge, &phone.device),
+                Some(3),
+            );
+            // Signed by another key.
+            let mut request = phone.request(&challenge, attestation);
+            request.signature = other
+                .request(&challenge, attest(&forge, b"", None))
+                .signature;
+            assert!(refused(server.register(request)).contains("signature over the challenge"));
+            let attestation = attest(
+                &forge,
+                &registration_client_data(&challenge, &phone.device),
+                Some(3),
+            );
+            assert!(
+                refused(server.register(phone.request(&challenge, attestation)))
+                    .contains("unknown, used or expired")
+            );
+            assert!(!server.workspace.devices().is_trusted(&phone.device));
+        }
+
+        #[test]
+        fn an_attestation_for_pairing_or_another_key_is_refused() {
+            let home = tempfile::tempdir().unwrap();
+            let forge = Arc::new(Forge::new());
+            let server = server(home.path(), &forge, None);
+            let phone = Phone::new();
+            let other = Phone::new();
+            for client_data in [
+                |c: &str, d: &str| pairing_client_data(c, d),
+                |c: &str, _: &str| registration_client_data(c, &"0".repeat(64)),
+            ] {
+                let challenge = challenge(&server);
+                let attestation = attest(&forge, &client_data(&challenge, &phone.device), Some(3));
+                assert!(
+                    refused(server.register(phone.request(&challenge, attestation)))
+                        .contains("does not verify")
+                );
+            }
+            let challenge = challenge(&server);
+            let attestation = attest(
+                &forge,
+                &registration_client_data(&challenge, &other.device),
+                Some(3),
+            );
+            assert!(
+                refused(server.register(phone.request(&challenge, attestation)))
+                    .contains("does not verify")
+            );
+            // Under another root.
+            let challenge = self::challenge(&server);
+            let attestation = attest(
+                &Forge::new(),
+                &registration_client_data(&challenge, &phone.device),
+                Some(3),
+            );
+            assert!(
+                refused(server.register(phone.request(&challenge, attestation)))
+                    .contains("pinned Apple root")
+            );
+        }
+
+        #[test]
+        fn categories_follow_the_policy() {
+            let home = tempfile::tempdir().unwrap();
+            let forge = Arc::new(Forge::new());
+            let server = server(home.path(), &forge, None);
+            for category in [Some(2), Some(3), Some(4), None] {
+                let paired = Phone::new().register(&server, &forge, category).unwrap();
+                assert!(paired.note.unwrap().contains("risk metric"));
+            }
+            for category in [1, 5, 6, 10] {
+                let error = refused(Phone::new().register(&server, &forge, Some(category)));
+                assert!(error.contains(&format!("category {category}")), "{error}");
+            }
+        }
+
+        #[test]
+        fn an_app_attest_key_registers_one_receipt_key() {
+            let home = tempfile::tempdir().unwrap();
+            let forge = Arc::new(Forge::new());
+            let server = server(home.path(), &forge, None);
+            let phone = Phone::new();
+            let challenge = challenge(&server);
+            let attestation = attest(
+                &forge,
+                &registration_client_data(&challenge, &phone.device),
+                Some(3),
+            );
+            // Another receipt key already registered with that App Attest key.
+            let earlier = Phone::new();
+            let mut info = DeviceInfo {
+                kind: DeviceKind::SecureEnclave,
+                name: "earlier".to_string(),
+                paired_at: capture::now().unwrap(),
+                attestation: None,
+            };
+            let mut attested = server
+                .workspace
+                .devices()
+                .info(
+                    &Phone::new()
+                        .register(&server, &forge, Some(3))
+                        .unwrap()
+                        .device,
+                )
+                .unwrap()
+                .attestation
+                .unwrap();
+            attested.key_id = attestation.key_id.clone();
+            info.attestation = Some(attested);
+            server
+                .workspace
+                .devices()
+                .add(earlier.key.verifying_key(), &info)
+                .unwrap();
+            assert!(
+                refused(server.register(phone.request(&challenge, attestation)))
+                    .contains("already registered another receipt key")
+            );
+        }
+
+        #[test]
+        fn the_risk_metric_is_checked() {
+            let home = tempfile::tempdir().unwrap();
+            let forge = Arc::new(Forge::new());
+            let phone = Phone::new();
+
+            let server = self::server(
+                home.path(),
+                &forge,
+                Some(apple(&forge, MAX_RISK_METRIC + 1)),
+            );
+            assert!(refused(phone.register(&server, &forge, Some(3))).contains("attested keys"));
+
+            let mut stale = apple(&forge, 1);
+            stale.age = RECEIPT_MAX_AGE + 30;
+            let server = self::server(home.path(), &forge, Some(stale));
+            assert!(refused(phone.register(&server, &forge, Some(3))).contains("five minutes"));
+
+            let mut other_app = apple(&forge, 1);
+            other_app.app_id = "ABCDE12345.io.example.other".to_string();
+            let server = self::server(home.path(), &forge, Some(other_app));
+            assert!(refused(phone.register(&server, &forge, Some(3))).contains("not ABCDE12345"));
+
+            let other_root = Arc::new(Forge::new());
+            let foreign = FakeApple {
+                forge: Arc::clone(&forge),
+                metric: 1,
+                app_id: APP_ID.to_string(),
+                age: 5,
+            };
+            let server = Server::new(Workspace::new(home.path()), home.path().join("captures"))
+                .app_attest(Some(APP_ID.to_string()), false)
+                .unwrap()
+                .app_attest_root(forge.root().to_vec())
+                .registration(
+                    Registration::new(Some(Box::new(foreign)), MAX_RISK_METRIC)
+                        .receipt_root(other_root.root().to_vec()),
+                )
+                .unwrap();
+            assert!(refused(phone.register(&server, &forge, Some(3))).contains("Apple's receipt"));
+            assert!(!server.workspace.devices().is_trusted(&phone.device));
+        }
+
+        #[test]
+        fn closed_registration_answers_404_and_needs_an_app_id() {
+            let home = tempfile::tempdir().unwrap();
+            let make = || Server::new(Workspace::new(home.path()), home.path().join("captures"));
+            assert!(make()
+                .registration(Registration::new(None, MAX_RISK_METRIC))
+                .is_err());
+            let router = Arc::new(make()).router(None);
+            let response = tokio::runtime::Runtime::new().unwrap().block_on(
+                router.oneshot(
+                    HttpRequest::post("/api/v2/challenge")
+                        .body(Body::empty())
+                        .unwrap(),
+                ),
+            );
+            assert_eq!(response.unwrap().status(), StatusCode::NOT_FOUND);
+        }
+
+        #[test]
+        fn too_many_maps_to_429() {
+            let error: ApiError = anyhow::Error::from(TooMany("slow down".into())).into();
+            assert_eq!(error.status, StatusCode::TOO_MANY_REQUESTS);
+            let error: ApiError = anyhow!("bad").into();
+            assert_eq!(error.status, StatusCode::BAD_REQUEST);
         }
     }
 

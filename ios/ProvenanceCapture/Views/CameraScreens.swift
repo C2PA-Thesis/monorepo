@@ -255,6 +255,7 @@ private struct LocationChip: View {
 struct ConnectionSheet: View {
     let flow: CaptureFlow
     @State private var confirming = false
+    private let servers = KnownServers.available
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -269,7 +270,7 @@ struct ConnectionSheet: View {
                 .accessibilityLabel("Close")
             }
             VStack(spacing: 0) {
-                row("Laptop", value: flow.pairing.map { "Connected since \($0.pairedAt.formatted(date: .abbreviated, time: .omitted))" } ?? "Not connected", ok: flow.isPaired)
+                row(flow.pairing?.server == nil ? "Laptop" : "Server", value: connectionText, ok: flow.isPaired)
                 Divider().overlay(Theme.line)
                 if let pairing = flow.pairing {
                     row("Key", value: keyText(pairing), ok: pairing.shownKind?.hasPrefix("attested") == true || pairing.kind == .software)
@@ -280,19 +281,26 @@ struct ConnectionSheet: View {
             .padding(.horizontal, 16)
             .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.Radius.md))
             Spacer(minLength: 0)
-            Button("Connect to another laptop") { confirming = true }.buttonStyle(.ghost)
+            Button(servers.isEmpty ? "Connect to another laptop" : "Connect somewhere else") { confirming = true }
+                .buttonStyle(.ghost)
         }
         .padding(24)
         .background(Theme.paper.ignoresSafeArea())
         .presentationDetents([.medium])
         .presentationCornerRadius(Theme.Radius.lg)
-        .confirmationDialog("Connect to another laptop?", isPresented: $confirming, titleVisibility: .visible) {
+        .confirmationDialog("Connect somewhere else?", isPresented: $confirming, titleVisibility: .visible) {
+            ForEach(servers.filter { $0.name != flow.pairing?.server }) { server in
+                Button("Switch to \(server.name)") {
+                    dismiss()
+                    Task { await flow.switchTo(server) }
+                }
+            }
             Button("Disconnect and scan again", role: .destructive) {
                 dismiss()
                 flow.pairAgain()
             }
         } message: {
-            Text("This iPhone forgets the current laptop.")
+            Text("This iPhone forgets the current connection.")
         }
     }
 
@@ -308,6 +316,12 @@ struct ConnectionSheet: View {
         }
         guard let note = pairing.attestNote, !shown.hasPrefix("attested") else { return text }
         return "\(text). \(note.prefix(1).uppercased() + note.dropFirst())"
+    }
+
+    private var connectionText: String {
+        guard let pairing = flow.pairing else { return "Not connected" }
+        let since = "since \(pairing.pairedAt.formatted(date: .abbreviated, time: .omitted))"
+        return pairing.server.map { "\($0), registered \(since)" } ?? "Connected \(since)"
     }
 
     private var locationText: String {

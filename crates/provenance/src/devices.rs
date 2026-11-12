@@ -80,6 +80,10 @@ pub struct Attested {
     pub bundle_version: Option<String>,
     /// RFC 3339, the laptop's clock.
     pub verified_at: String,
+    /// Apple's count of attested keys on the device in 30 days, when the key
+    /// registered on a server with a DeviceCheck key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub risk_metric: Option<u32>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -262,6 +266,7 @@ mod tests {
             validation_category: Some(3),
             bundle_version: Some("1".to_string()),
             verified_at: "2026-11-05T12:00:00Z".to_string(),
+            risk_metric: Some(1),
         });
         assert_eq!(attested.shown(), "attested: secure-enclave (development)");
 

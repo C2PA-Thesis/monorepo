@@ -23,6 +23,46 @@ final class WireTests: XCTestCase {
         XCTAssertEqual(hash.hex, "16506113a77c759bbec2f3084dd656b07268fbf4f5df890834bf3aa7f92981bc")
     }
 
+    /// Pinned in crates/provenance/src/register.rs too (`registration_client_data_is_pinned`).
+    func testTheRegistrationClientDataMatchesTheServer() {
+        let hash = RegistrationAttestation.clientDataHash(
+            challenge: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", device: String(repeating: "ab", count: 32))
+        XCTAssertEqual(hash.hex, "aa957f1bc74a76d9efaab134e994051e74b58b8a87e0d0c6fae61983cc768543")
+    }
+
+    func testTheRegisterRequestUsesTheServersKeys() throws {
+        let request = RegisterRequest(
+            challenge: "c", publicKey: "k", signature: "s", kind: "secure-enclave", name: "n",
+            attestation: AppAttestation(keyId: "a2V5", object: "b2JqZWN0"))
+        let json = try JSONSerialization.jsonObject(with: JSONEncoder().encode(request)) as! [String: Any]
+        XCTAssertEqual(Set(json.keys), ["challenge", "public_key", "signature", "kind", "name", "attestation"])
+    }
+
+    func testReadsTheServerInfoAndRefusesOneThatDoesNotRegister() throws {
+        let body = #"{"v":1,"urls":["https://3.14.15.92:8792"],"params":{"proving.key":"\#(paramHash)","circuit.r1cs":"\#(paramHash)"},"registration":true}"#
+        let info = try JSONDecoder().decode(ServerInfo.self, from: Data(body.utf8))
+        XCTAssertNoThrow(try info.validate())
+        XCTAssertEqual(info.serverURLs, [URL(string: "https://3.14.15.92:8792")!])
+        let closed = try JSONDecoder().decode(
+            ServerInfo.self, from: Data(body.replacingOccurrences(of: "true", with: "false").utf8))
+        XCTAssertThrowsError(try closed.validate())
+        let noDigest = try JSONDecoder().decode(
+            ServerInfo.self, from: Data(body.replacingOccurrences(of: paramHash, with: "cd").utf8))
+        XCTAssertThrowsError(try noDigest.validate())
+    }
+
+    func testKnownServersSkipEntriesTheDeployHasNotFilled() {
+        let file = #"{"servers":[{"name":"Prod","urls":["https://3.14.15.92:8792"],"pin":"\#(pin)"},{"name":"Dev","urls":[],"pin":""},{"name":"Bad","urls":["http://1.2.3.4"],"pin":"\#(pin)"}]}"#
+        XCTAssertEqual(KnownServers.parse(Data(file.utf8)).map(\.name), ["Prod"])
+        XCTAssertEqual(KnownServers.parse(Data("not json".utf8)), [])
+    }
+
+    func testTheBundledServerListLoads() {
+        // Empty until the deploy fills in addresses and pins.
+        XCTAssertNotNil(Bundle.main.url(forResource: "servers", withExtension: "json"))
+        XCTAssertTrue(KnownServers.all.allSatisfy(\.isUsable))
+    }
+
     func testThePairRequestCarriesTheAttestationOnlyWhenThereIsOne() throws {
         var request = PairRequest(token: "t", publicKey: "k", signature: "s", kind: "secure-enclave", name: "n")
         let bare = try JSONSerialization.jsonObject(with: JSONEncoder().encode(request)) as! [String: Any]
