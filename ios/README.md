@@ -216,8 +216,8 @@ instance of this App ID, on Apple hardware, asked to pair this receipt key
 with this token. That the receipt key is in the Secure Enclave follows from
 the app's code. Any build signed by the team attests the same.
 
-When the device cannot attest, the app pairs without it and says why on the
-Connection sheet (Key row), and the laptop shows the key as declared. A
+When the device cannot attest, the app pairs without it, and the laptop shows
+the key as declared. A
 laptop started with `--require-attestation` refuses that pairing. Reasons:
 
 - The Simulator never calls App Attest. Apple's page for `isSupported` does
@@ -253,9 +253,9 @@ Registration).
 
 The app registers with the first entry as soon as it reaches the connect
 screen, with nothing to tap: the person only confirms with Face ID, because
-the receipt key signs the challenge. A failure offers "Try again". The
-Connection sheet shows the server and offers to switch to another entry or
-to forget the registration and connect again. Registering
+the receipt key signs the challenge. A failure offers "Try again". Once
+registered, the camera shows nothing about the connection: a request that
+fails says so where it failed and offers to try again. Registering
 (`CaptureFlow.register`):
 
 1. `GET /api/v2/server` over the pinned connection gives the parameter

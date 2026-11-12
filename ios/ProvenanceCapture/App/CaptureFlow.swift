@@ -319,13 +319,6 @@ final class CaptureFlow {
         }
     }
 
-    /// Forgets the current connection and registers with `server` instead.
-    func switchTo(_ server: KnownServer) async {
-        guard !pairingBusy, !paramsBusy else { return }
-        pairAgain()
-        await register(with: server)
-    }
-
     /// Forgets the pairing, also one whose parameters never downloaded, and keeps the key.
     func pairAgain() {
         guard !pairingBusy, !paramsBusy else { return }

@@ -11,7 +11,6 @@ struct CameraHome: View {
     @State private var ready = CaptureFlow.isSimulator
     @State private var shooting = false
     @State private var flash = false
-    @State private var showConnection = false
     @State private var showGallery = false
     @State private var picked: PhotosPickerItem?
     @State private var flipping = false
@@ -36,7 +35,6 @@ struct CameraHome: View {
             }
         }
         .onDisappear { camera.stop() }
-        .sheet(isPresented: $showConnection) { ConnectionSheet(flow: flow) }
         .sheet(isPresented: $showGallery) { GalleryScreen(flow: flow) }
         .onChange(of: picked) { _, item in
             guard let item else { return }
@@ -52,17 +50,6 @@ struct CameraHome: View {
         HStack {
             LocationChip(location: flow.location)
             Spacer()
-            Button { showConnection = true } label: {
-                Image(systemName: "laptopcomputer").font(.system(size: 15, weight: .medium))
-                    .frame(width: 40, height: 40)
-                    .background(.white.opacity(0.12), in: Circle())
-                    .overlay(alignment: .topTrailing) {
-                        Circle().fill(Theme.verify).frame(width: 8, height: 8)
-                            .overlay(Circle().strokeBorder(.black, lineWidth: 1.5))
-                    }
-            }
-            .foregroundStyle(.white)
-            .accessibilityLabel("Laptop connection")
         }
         .padding(.horizontal, 16)
         .frame(height: 60)
@@ -250,101 +237,3 @@ private struct LocationChip: View {
         }
     }
 #endif
-
-/// Which laptop this iPhone sends to, and a way to connect to another.
-struct ConnectionSheet: View {
-    let flow: CaptureFlow
-    @State private var confirming = false
-    private let servers = KnownServers.available
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            HStack {
-                Text("Connection").font(Typeface.title).tight(26).foregroundStyle(Theme.ink)
-                Spacer()
-                Button { dismiss() } label: {
-                    Image(systemName: "xmark").font(.system(size: 13, weight: .bold)).foregroundStyle(Theme.soft)
-                        .frame(width: 32, height: 32).background(Theme.surface, in: Circle())
-                }
-                .accessibilityLabel("Close")
-            }
-            VStack(spacing: 0) {
-                row(flow.pairing?.server == nil ? "Laptop" : "Server", value: connectionText, ok: flow.isPaired)
-                Divider().overlay(Theme.line)
-                if let pairing = flow.pairing {
-                    row("Key", value: keyText(pairing), ok: pairing.shownKind?.hasPrefix("attested") == true || pairing.kind == .software)
-                    Divider().overlay(Theme.line)
-                }
-                row("Location", value: locationText, ok: flow.location.access == .granted)
-            }
-            .padding(.horizontal, 16)
-            .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.Radius.md))
-            Spacer(minLength: 0)
-            Button("Connect again") { confirming = true }
-                .buttonStyle(.ghost)
-        }
-        .padding(24)
-        .background(Theme.paper.ignoresSafeArea())
-        .presentationDetents([.medium])
-        .presentationCornerRadius(Theme.Radius.lg)
-        .confirmationDialog("Connect again?", isPresented: $confirming, titleVisibility: .visible) {
-            ForEach(servers.filter { $0.name != flow.pairing?.server }) { server in
-                Button("Switch to \(server.name)") {
-                    dismiss()
-                    Task { await flow.switchTo(server) }
-                }
-            }
-            Button("Forget and connect again", role: .destructive) {
-                dismiss()
-                flow.pairAgain()
-            }
-        } message: {
-            Text("This iPhone forgets the current connection and sets itself up again.")
-        }
-    }
-
-    /// What the laptop recorded about this key, and why it is not attested when it is not.
-    private func keyText(_ pairing: Pairing) -> String {
-        let shown = pairing.shownKind ?? pairing.kind.rawValue
-        let text: String = switch shown {
-        case let attested where attested.hasPrefix("attested"):
-            "Secure Enclave, attested by Apple" + (attested.contains("(development)") ? " (development)" : "")
-        case "declared: secure-enclave": "Secure Enclave, declared by the app"
-        case "software": "Software key (Simulator)"
-        default: shown
-        }
-        guard let note = pairing.attestNote, !shown.hasPrefix("attested") else { return text }
-        return "\(text). \(note.prefix(1).uppercased() + note.dropFirst())"
-    }
-
-    private var connectionText: String {
-        guard let pairing = flow.pairing else { return "Not connected" }
-        let since = "since \(pairing.pairedAt.formatted(date: .abbreviated, time: .omitted))"
-        return pairing.server.map { "\($0), registered \(since)" } ?? "Connected \(since)"
-    }
-
-    private var locationText: String {
-        switch flow.location.access {
-        case .granted: "Precise"
-        case .approximate: "Approximate. Turn on Precise Location in Settings"
-        case .denied: "Off"
-        case .notAsked: "Not asked yet"
-        }
-    }
-
-    private func row(_ label: String, value: String, ok: Bool) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 12) {
-            Image(systemName: ok ? "checkmark.circle.fill" : "circle").foregroundStyle(ok ? Theme.verify : Theme.faint)
-                .font(.system(size: 15))
-            VStack(alignment: .leading, spacing: 2) {
-                Text(label).font(Typeface.headline).foregroundStyle(Theme.ink)
-                Text(value).font(Typeface.sans(14, relativeTo: .subheadline)).foregroundStyle(Theme.soft)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer(minLength: 0)
-        }
-        .padding(.vertical, 14)
-        .accessibilityElement(children: .combine)
-    }
-}
