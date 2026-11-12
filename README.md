@@ -427,6 +427,7 @@ mirrored, taken at Tokyo Station.
 | Attack | Tampering | Outcome |
 | --- | --- | --- |
 | `signature` | flip one bit of the device signature | rejected by the device receipt |
+| `untrusted-device` | sign the same fields with a key that was never paired | rejected by the device receipt |
 | `fingerprint` | swap two fingerprint values | rejected by the device receipt |
 | `resigned-fingerprint` | swap two fingerprint values and re-sign with the device key | rejected by the crop proof |
 | `pixel` | change one published pixel | rejected by the crop proof |
@@ -445,7 +446,8 @@ file (`crates/provenance/tests/forged_crops.rs`): a third party replaces the
 published crop and re-signs the manifest with the sample key. With the honest
 crop proof (A2) the reader rejects it at the crop proof, since the proof's
 challenges now depend on the published pixels. With a forged crop proof (A3)
-the reader accepts it.
+the reader also rejects it at the crop proof, since the range check commits the
+sorted vector H before drawing its challenges.
 
 The prover side of a wrong cell is covered in `location-proof/main_test.go`:
 the honest prover refuses a cell that does not contain the coordinate, and

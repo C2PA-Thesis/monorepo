@@ -7,11 +7,13 @@
 //! meets other challenges and the verifier rejects it.
 //!
 //! A3 (`forge_crop_proof`): a dishonest prover for the range-check bug.
-//! The range check draws its challenges `offset` and `mix` before the sorted
-//! vector H is committed, so a prover can pick H after seeing them and
+//! The range check drew its challenges `offset` and `mix` before the sorted
+//! vector H was committed, so a prover could pick H after seeing them and
 //! satisfy the product check for channel values outside 0..=255. Without that
 //! bound, the fingerprint `A x = h` has solutions with huge entries, and any
-//! published crop can be proven against an honest fingerprint.
+//! published crop could be proven against an honest fingerprint. H is now
+//! committed first, so the forger has to pick H before the challenges exist
+//! and the verifier rejects its range check.
 //!
 //! Both forgers work on crops without a turn. Only built with the
 //! `attack-hooks` feature. The honest prover is untouched.
@@ -294,12 +296,11 @@ fn prove_forged(
     )?;
 
     for range in &ranges {
-        let counts = check(
-            Pcs::commit(pcs, &range.counts),
-            "committing to range counts",
-        )?;
-        append(&mut transcript, b"hCom(x)", &counts)?;
-        commitments.extend([counts, range.proof.prod_x_comm, range.proof.frac_comm]);
+        commitments.extend([
+            range.counts_commitment,
+            range.proof.prod_x_comm,
+            range.proof.frac_comm,
+        ]);
     }
 
     let OpeningPoints { points, .. } = iop::opening_points(
@@ -362,8 +363,12 @@ fn forged_range(
         )?,
     ];
 
-    let offset = challenge(transcript, b"alpha")?;
-    let mix = challenge(transcript, b"alpha")?;
+    // H must be picked after seeing offset and mix, but the transcript now
+    // takes H first. The best the forger can do is pick H for the challenges
+    // the transcript would give without it, which the verifier never draws.
+    let mut guess = transcript.clone();
+    let offset = challenge(&mut guess, b"alpha")?;
+    let mix = challenge(&mut guess, b"alpha")?;
 
     let target: F = left[0]
         .evaluations
@@ -374,9 +379,13 @@ fn forged_range(
     let (counts, shifted) = sorted_vector_for_product(target, offset, mix)?;
 
     let size = 1 << (NUM_VARS + 1);
+    let right = [poly(counts), poly(shifted)];
+    let counts_commitment = check(Pcs::commit(pcs, &right[0]), "committing to range counts")?;
+    append(transcript, b"hCom(x)", &counts_commitment)?;
+    let offset = challenge(transcript, b"alpha")?;
+    let mix = challenge(transcript, b"alpha")?;
     let constant =
         DenseMultilinearExtension::from_evaluations_vec(NUM_VARS + 1, vec![offset; size]);
-    let right = [poly(counts), poly(shifted)];
     let f = &(left[0].as_ref() + &constant) + &scale(&left[1], mix);
     let g = &(right[0].as_ref() + &constant) + &scale(&right[1], mix);
     let (proof, product, fraction) = check(
@@ -391,6 +400,7 @@ fn forged_range(
     Ok(RangeCheck {
         proof,
         counts: right[0].clone(),
+        counts_commitment,
         product,
         fraction,
     })

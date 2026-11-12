@@ -1,6 +1,6 @@
-//! Security analysis, attack A3. These tests pass while the range check draws
-//! its challenges before the sorted vector H is committed. The fix must make
-//! `forged_crop_of_another_picture_is_accepted` fail.
+//! Security analysis, attack A3. The range check drew its challenges before
+//! the sorted vector H was committed, so a forger could pick H after seeing
+//! them. H is now committed first, and the forged crop is rejected.
 
 use ark_bls12_381::Fr as F;
 use ark_ff::UniformRand;
@@ -13,7 +13,7 @@ use rand::{RngCore, SeedableRng};
 
 #[test]
 #[ignore = "proves over 2^19 pixels; run with --release --features attack-hooks -- --ignored"]
-fn forged_crop_of_another_picture_is_accepted() {
+fn forged_crop_of_another_picture_is_rejected() {
     let mut rng = rand::rngs::StdRng::seed_from_u64(7);
     let params = tempfile::tempdir().unwrap();
     setup_with_rng(params.path(), &mut rng).unwrap();
@@ -50,17 +50,13 @@ fn forged_crop_of_another_picture_is_accepted() {
     .unwrap();
     let forged = forge_crop_proof(&prover, &fingerprint, RECT, &gray, &target).unwrap();
 
-    verify(&verifier, &target, RECT, Turn::NONE, &fingerprint, &forged)
-        .expect("the verifier accepts the gradient as a crop of the signed original");
-    assert!(verify(
-        &verifier,
-        &crop(&original, RECT).unwrap(),
-        RECT,
-        Turn::NONE,
-        &fingerprint,
-        &forged
-    )
-    .is_err());
+    // If accepted, any picture could pass as a crop of a signed original.
+    let error = verify(&verifier, &target, RECT, Turn::NONE, &fingerprint, &forged)
+        .expect_err("the verifier accepted the gradient as a crop of the signed original");
+    assert!(
+        error.to_string().contains("range check"),
+        "rejected for another reason: {error}"
+    );
 }
 
 #[test]
