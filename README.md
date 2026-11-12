@@ -419,6 +419,7 @@ mirrored, taken at Tokyo Station.
 | Attack | Tampering | Outcome |
 | --- | --- | --- |
 | `signature` | flip one bit of the device signature | rejected by the device receipt |
+| `untrusted-device` | sign the same fields with a key that was never paired | rejected by the device receipt |
 | `fingerprint` | swap two fingerprint values | rejected by the device receipt |
 | `resigned-fingerprint` | swap two fingerprint values and re-sign with the device key | rejected by the crop proof |
 | `pixel` | change one published pixel | rejected by the crop proof |
