@@ -161,6 +161,7 @@ impl Workspace {
                     kind: DeviceKind::Laptop,
                     name: "this laptop".to_string(),
                     paired_at: capture::now()?,
+                    attestation: None,
                 };
                 devices.add(&device.public(), &info).map(drop)
             },

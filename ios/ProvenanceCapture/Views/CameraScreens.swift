@@ -271,6 +271,10 @@ struct ConnectionSheet: View {
             VStack(spacing: 0) {
                 row("Laptop", value: flow.pairing.map { "Connected since \($0.pairedAt.formatted(date: .abbreviated, time: .omitted))" } ?? "Not connected", ok: flow.isPaired)
                 Divider().overlay(Theme.line)
+                if let pairing = flow.pairing {
+                    row("Key", value: keyText(pairing), ok: pairing.shownKind?.hasPrefix("attested") == true || pairing.kind == .software)
+                    Divider().overlay(Theme.line)
+                }
                 row("Location", value: locationText, ok: flow.location.access == .granted)
             }
             .padding(.horizontal, 16)
@@ -290,6 +294,20 @@ struct ConnectionSheet: View {
         } message: {
             Text("This iPhone forgets the current laptop.")
         }
+    }
+
+    /// What the laptop recorded about this key, and why it is not attested when it is not.
+    private func keyText(_ pairing: Pairing) -> String {
+        let shown = pairing.shownKind ?? pairing.kind.rawValue
+        let text: String = switch shown {
+        case let attested where attested.hasPrefix("attested"):
+            "Secure Enclave, attested by Apple" + (attested.contains("(development)") ? " (development)" : "")
+        case "declared: secure-enclave": "Secure Enclave, declared by the app"
+        case "software": "Software key (Simulator)"
+        default: shown
+        }
+        guard let note = pairing.attestNote, !shown.hasPrefix("attested") else { return text }
+        return "\(text). \(note.prefix(1).uppercased() + note.dropFirst())"
     }
 
     private var locationText: String {

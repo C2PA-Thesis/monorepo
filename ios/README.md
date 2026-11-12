@@ -34,9 +34,11 @@ only passes for devices that laptop has paired.
 The differences:
 
 - The device key lives in the Secure Enclave and every signature asks for
-  Face ID, Touch ID or the passcode. The app declares this when it pairs;
-  without App Attest nothing proves it to the laptop or to readers, so the
-  laptop shows the kind as "declared: secure-enclave".
+  Face ID, Touch ID or the passcode. The app declares this when it pairs,
+  and on an iPhone it also sends an App Attest attestation (see
+  [App Attest](#app-attest)). A laptop started with `--app-id` verifies it
+  and shows the kind as "attested: secure-enclave"; otherwise it shows
+  "declared: secure-enclave". Readers of the published file see neither.
 - The location proof is made on the phone. The coordinate and the salt never
   leave it; the laptop receives the proof, not the secrets.
 - After pairing, every request goes over TLS pinned to the laptop's
@@ -72,7 +74,8 @@ the project.
 
 | | Simulator | Device |
 |---|---|---|
-| Device key | software P-256 key in the Keychain (`kind: software`) | Secure Enclave, `.privateKeyUsage` and `.userPresence` (`kind: secure-enclave`, declared by the app, not attested) |
+| Device key | software P-256 key in the Keychain (`kind: software`) | Secure Enclave, `.privateKeyUsage` and `.userPresence` (`kind: secure-enclave`) |
+| App Attest | none: the app does not call it, and the laptop shows `software` | an attestation at each pairing, verified by a laptop with `--app-id`; needs a paid team (see [App Attest](#app-attest)) |
 | Pairing | fetches the payload from `http://127.0.0.1:8791/api/v2/pairing`, or paste it | scans the QR code on the presenter page, or paste it |
 | Photo | bundled `sample.jpg`, or the photo library | the app's own camera session, no photo library |
 | Location | Xcode's simulated location or a GPX file, sent with `simulated: true` | GPS; a fix that iOS marks as simulated by software is refused |
@@ -143,6 +146,13 @@ on the laptop. These are the steps.
    refused, turn it on in Settings, Privacy and Security, Local Network,
    Capture.
 
+To have the laptop verify App Attest, sign with the paid team and start the
+laptop with that team's App ID: `provenance serve --app-id
+<team id>.<bundle id>` (or `PROVENANCE_APP_ID`), for example
+`PROVENANCE_APP_ID=<team id>.io.github.c2pa-thesis.capture scripts/serve.sh`. The
+Team ID is under Membership details in the developer account. With a
+Personal Team the app still pairs, as declared.
+
 A Personal Team's provisioning profile lasts 7 days: "Provisioning profiles
 that enable apps to be installed on a device will expire 7 days from
 issuance" ([Developer account overview](https://developer.apple.com/support/compare-memberships/),
@@ -186,6 +196,53 @@ While it follows a capture, the app polls `GET /api/captures/{id}`. It shows
 an error and stops when the answer cannot be read, when the laptop has not
 answered for 60 seconds, or when the capture is still running after 15
 minutes.
+
+## App Attest
+
+On a device, before it sends `POST /api/v2/pair`, the app creates an App
+Attest key (`DCAppAttestService.generateKey`) and asks Apple to attest it
+with `clientDataHash = SHA256("io.github.c2pa-thesis.pair.v2\n" + token +
+"\n" + device id)`, the single-use token from the QR code and the id of the
+receipt key (`Crypto/AppAttest.swift`). The attestation goes in the pairing
+request as `attestation: {key_id, object}`. A new App Attest key is made at
+each pairing: the app makes no assertions afterwards, so it keeps no key id.
+Apple recommends to "limit new key generation" ([Establishing your app's
+integrity](https://developer.apple.com/documentation/devicecheck/establishing-your-app-s-integrity),
+Start over on reinstallation) to help detect fraud, which this project does
+not assess.
+
+The attested key is App Attest's own, not the receipt key. What the laptop
+verifies, and what it does not, is in
+[crates/app-attest](../crates/app-attest/README.md). In short: that an
+instance of this App ID, on Apple hardware, asked to pair this receipt key
+with this token. That the receipt key is in the Secure Enclave follows from
+the app's code. Any build signed by the team attests the same.
+
+When the device cannot attest, the app pairs without it and says why on the
+Connection sheet (Key row), and the laptop shows the key as declared. A
+laptop started with `--require-attestation` refuses that pairing. Reasons:
+
+- The Simulator never calls App Attest. Apple's page for `isSupported` does
+  not say what it returns there; it says that on a Mac "the value is false"
+  ([isSupported](https://developer.apple.com/documentation/devicecheck/dcappattestservice/issupported)).
+- A free Personal Team: Apple lists App Attest for the Apple Developer
+  Program and Enterprise, not for the free account
+  ([Supported capabilities (iOS)](https://developer.apple.com/help/account/reference/supported-capabilities-ios)).
+  What `attestKey` does with such a build is not verified.
+- No internet on the phone: `attestKey` "accesses a remote Apple server"
+  ([Establishing your app's integrity](https://developer.apple.com/documentation/devicecheck/establishing-your-app-s-integrity),
+  Certify the key pairs as valid). On `serverUnavailable` the app retries
+  once after 2 seconds with the same key and hash, as Apple asks. The laptop
+  needs no internet.
+
+The project has no App Attest entitlement. Builds from Xcode use the
+development environment without it: "If you omit the entitlement during
+development, your app uses the App Attest sandbox servers by default"
+([App Attest Environment](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.developer.devicecheck.appattest-environment)).
+A TestFlight or App Store build would use production, as the same page says.
+Not verified on a device: whether the paid team's App ID needs the App Attest
+capability turned on for `generateKey` to work. If it fails, add the
+capability under Signing and Capabilities.
 
 ## Pinning
 
@@ -288,6 +345,10 @@ lists them.
   it is not zero.
 - Rendering the sample photo (1024x683) gives an opaque 886x591 bitmap whose
   PNG decodes back to the same bytes.
+- The App Attest client data hash for a fixed token and device id equals
+  the one pinned in `crates/provenance/src/serve.rs`, the pairing request
+  leaves out `attestation` when there is none, and the laptop's `kind` and
+  `note` are read when present.
 - `NativeTests` run the linked libraries through `NativeBridge`: the Rust
   fingerprint of `fingerprint_test_image` at 1024x512 and at 836x627 hashes
   to the digests pinned in `crates/fingerprint/src/lib.rs`, planes of the
@@ -302,6 +363,10 @@ without signing, then runs the tests on the first iPhone Simulator of the
 runner.
 
 ## Not verified yet
+
+- App Attest on a device: `generateKey` and `attestKey` with the paid team,
+  the development aaguid, and the laptop verifying the result. The device
+  build compiles that code; the Simulator never runs it.
 
 - Anything on a device: the Secure Enclave key, the camera, the QR scanner,
   the local network prompt and the retry after it, pinned TLS to a LAN

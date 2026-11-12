@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/app-attest",
     "crates/crop-proof",
     "crates/fingerprint",
     "crates/fingerprint-ffi",
