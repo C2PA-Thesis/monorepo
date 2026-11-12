@@ -80,8 +80,6 @@ final class CaptureFlow {
     private(set) var paramsStatus: String?
     /// The parameter download is running.
     private(set) var paramsBusy = false
-    var showScanner = false
-    var pasted = ""
 
     // Welcome
     private(set) var welcomed = UserDefaults.standard.bool(forKey: CaptureFlow.welcomedKey)
@@ -161,9 +159,6 @@ final class CaptureFlow {
     /// Something runs that the pair screen waits for.
     var pairWorking: Bool { !pairFailed && (key == nil || pairingBusy || paramsBusy) }
 
-    /// The failure is a permission only Settings can give back.
-    var pairNeedsSettings: Bool { pairFailed && pairStatus == Self.localNetworkHelp }
-
     func finishWelcome() {
         welcomed = true
         UserDefaults.standard.set(true, forKey: Self.welcomedKey)
@@ -209,7 +204,7 @@ final class CaptureFlow {
     }
 
     /// The Simulator asks the Mac's own `provenance serve` for the payload.
-    func fetchFromMac() async {
+    private func fetchFromMac() async {
         pairStatus = "Connecting…"
         pairFailed = false
         pairingBusy = true
@@ -225,20 +220,17 @@ final class CaptureFlow {
         await pair(with: payload)
     }
 
-    func pairPasted() async {
-        do {
-            await pair(with: try PairingPayload.parse(pasted, requireAddress: !Self.isSimulator))
-        } catch {
-            fail(describe(error))
-        }
-    }
-
-    func scanned(_ code: String) async {
-        showScanner = false
-        do {
-            await pair(with: try PairingPayload.parse(code, requireAddress: !Self.isSimulator))
-        } catch {
-            fail(describe(error))
+    /// Connects without asking: an iPhone registers with the first server
+    /// built into the app, and the Simulator, which has no App Attest, pairs
+    /// with the Mac's own `provenance serve`.
+    func connect() async {
+        guard key != nil, pairing == nil, !pairingBusy else { return }
+        if Self.isSimulator {
+            await fetchFromMac()
+        } else if let server = KnownServers.available.first {
+            await register(with: server)
+        } else {
+            fail("this build has no server in servers.json")
         }
     }
 
@@ -297,6 +289,7 @@ final class CaptureFlow {
             let info = try await api.server()
             try info.validate()
             let challenge = try await api.challenge().challenge
+            pairStatus = "Confirm with Face ID…"
             let signature = try await Task.detached { try key.sign(Data(challenge.utf8)) }.value
             pairStatus = "Asking Apple to attest this app…"
             let attestation: AppAttestation
@@ -361,19 +354,17 @@ final class CaptureFlow {
 
     /// Tries every announced address in turn, round after round, until one
     /// answers or the time is up. Each try is short, so a dead address (a VPN
-    /// or bridge interface) costs seconds, and the rounds cover the time the
-    /// local network prompt stays open. The token is single use, so an address
+    /// or bridge interface) costs seconds. The token is single use, so an address
     /// is first asked a question that carries no token, and the token is sent
     /// again only when the request with it never connected. A request that
     /// connected and then timed out or dropped may have spent the token.
     private func reach(_ urls: [URL], pin: String, request: PairRequest, device: String) async throws -> (URL, Paired) {
         guard !urls.isEmpty else { throw CaptureError("the pairing code names no address") }
-        let seconds = Self.isSimulator ? 10 : 90
+        let seconds = 10
         let deadline = Date.now.addingTimeInterval(TimeInterval(seconds))
         let apis = urls.map { LaptopAPI(bases: [$0], pin: pin, patience: .pairing) }
         defer { apis.forEach { $0.invalidate() } }
         var last: URLError?
-        var denied = false
         rounds: while true {
             for (url, api) in zip(urls, apis) {
                 let host = url.host() ?? ""
@@ -389,26 +380,22 @@ final class CaptureFlow {
                         // The laptop may have registered the key and only the answer was lost.
                         if (try? await api.trusted(device)) == true { return (url, Paired(device: device)) }
                         throw CaptureError(
-                            "the laptop at \(host) stopped answering after the pairing request reached it (\(describe(error))). The QR code is single use and may be spent: show a new one on the laptop and scan it again")
+                            "the laptop at \(host) stopped answering after the pairing request reached it (\(describe(error))). The pairing token is single use and may be spent: try again")
                     }
                 } catch let error as URLError where error.code == .cancelled {
                     throw CaptureError("the laptop at \(host) does not hold the pinned certificate")
                 } catch let error as URLError where HTTP.isConnectionFailure(error) {
                     last = error
-                    denied = denied || HTTP.localNetworkDenied(error)
                 }
                 if Date.now >= deadline { break rounds }
             }
-            pairStatus = denied ? Self.localNetworkHelp : "Looking for the laptop…"
+            pairStatus = "Looking for the laptop…"
             try await Task.sleep(for: .seconds(2))
         }
-        if denied { throw CaptureError(Self.localNetworkHelp) }
         let reason = last.map { " (\(describe($0)))" } ?? ""
         throw CaptureError(
             "no laptop answered within \(seconds) s\(reason). Check that this phone is on the laptop's network and provenance serve runs")
     }
-
-    static let localNetworkHelp = "Turn on Local Network in Settings › Capture, then pair again."
 
     private func fetchParams() async {
         guard var pairing, let api, !paramsBusy else { return }

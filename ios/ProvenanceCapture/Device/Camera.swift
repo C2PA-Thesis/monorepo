@@ -8,14 +8,10 @@ final class Camera: NSObject, @unchecked Sendable {
     let session = AVCaptureSession()
     private let queue = DispatchQueue(label: "io.github.c2pa-thesis.capture.camera")
     private let photoOutput = AVCapturePhotoOutput()
-    private let metadataOutput = AVCaptureMetadataOutput()
     private var configured = false
     private var input: AVCaptureDeviceInput?
     private var rotation: AVCaptureDevice.RotationCoordinator?
     private var pending: CheckedContinuation<Data, any Error>?
-    private var onCode: (@MainActor @Sendable (String) -> Void)?
-
-    enum Mode { case photo, qr }
 
     static func authorize() async throws {
         switch AVCaptureDevice.authorizationStatus(for: .video) {
@@ -29,14 +25,13 @@ final class Camera: NSObject, @unchecked Sendable {
 
     static let blocked = CaptureError("Camera access is blocked. Allow it in Settings › Privacy & Security › Camera.")
 
-    /// Starts the back camera for photos, or for QR codes calling `onCode` with each payload.
-    func start(_ mode: Mode, onCode: (@MainActor @Sendable (String) -> Void)? = nil) async throws {
+    /// Starts the back camera for photos.
+    func start() async throws {
         try await Self.authorize()
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
             queue.async {
                 do {
-                    try self.configure(mode)
-                    self.onCode = onCode
+                    try self.configure()
                     if !self.session.isRunning { self.session.startRunning() }
                     continuation.resume()
                 } catch {
@@ -98,7 +93,7 @@ final class Camera: NSObject, @unchecked Sendable {
         }
     }
 
-    private func configure(_ mode: Mode) throws {
+    private func configure() throws {
         guard !configured else { return }
         guard let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back) else {
             throw CaptureError("this device has no back camera")
@@ -107,22 +102,16 @@ final class Camera: NSObject, @unchecked Sendable {
         self.input = input
         session.beginConfiguration()
         defer { session.commitConfiguration() }
-        session.sessionPreset = mode == .photo ? .photo : .high
+        session.sessionPreset = .photo
         guard session.canAddInput(input) else { throw CaptureError("the camera is busy") }
         session.addInput(input)
-        switch mode {
-        case .photo where session.canAddOutput(photoOutput):
-            session.addOutput(photoOutput)
-        case .qr where session.canAddOutput(metadataOutput):
-            session.addOutput(metadataOutput)
-            metadataOutput.setMetadataObjectsDelegate(self, queue: queue)
-            metadataOutput.metadataObjectTypes = [.qr]
-        default:
+        guard session.canAddOutput(photoOutput) else {
             // Leaves the session empty, so the next start begins again from the input.
             session.removeInput(input)
             self.input = nil
-            throw CaptureError(mode == .photo ? "the camera cannot take photos" : "the camera cannot read QR codes")
+            throw CaptureError("the camera cannot take photos")
         }
+        session.addOutput(photoOutput)
         rotation = AVCaptureDevice.RotationCoordinator(device: device, previewLayer: nil)
         configured = true
     }
@@ -163,16 +152,6 @@ extension Camera: AVCapturePhotoCaptureDelegate {
                 continuation?.resume(throwing: CaptureError("the camera returned no image"))
             }
         }
-    }
-}
-
-extension Camera: AVCaptureMetadataOutputObjectsDelegate {
-    func metadataOutput(
-        _ output: AVCaptureMetadataOutput, didOutput metadataObjects: [AVMetadataObject], from connection: AVCaptureConnection
-    ) {
-        let codes = metadataObjects.compactMap { ($0 as? AVMetadataMachineReadableCodeObject)?.stringValue }
-        guard let code = codes.first, let onCode else { return }
-        Task { @MainActor in onCode(code) }
     }
 }
 

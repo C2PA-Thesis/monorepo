@@ -28,7 +28,7 @@ struct CameraHome: View {
         .task {
             guard !CaptureFlow.isSimulator else { return }
             do {
-                try await camera.start(.photo)
+                try await camera.start()
                 ready = true
             } catch {
                 cameraBlocked = (error as? CaptureError) == Camera.blocked
@@ -281,26 +281,26 @@ struct ConnectionSheet: View {
             .padding(.horizontal, 16)
             .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.Radius.md))
             Spacer(minLength: 0)
-            Button(servers.isEmpty ? "Connect to another laptop" : "Connect somewhere else") { confirming = true }
+            Button("Connect again") { confirming = true }
                 .buttonStyle(.ghost)
         }
         .padding(24)
         .background(Theme.paper.ignoresSafeArea())
         .presentationDetents([.medium])
         .presentationCornerRadius(Theme.Radius.lg)
-        .confirmationDialog("Connect somewhere else?", isPresented: $confirming, titleVisibility: .visible) {
+        .confirmationDialog("Connect again?", isPresented: $confirming, titleVisibility: .visible) {
             ForEach(servers.filter { $0.name != flow.pairing?.server }) { server in
                 Button("Switch to \(server.name)") {
                     dismiss()
                     Task { await flow.switchTo(server) }
                 }
             }
-            Button("Disconnect and scan again", role: .destructive) {
+            Button("Forget and connect again", role: .destructive) {
                 dismiss()
                 flow.pairAgain()
             }
         } message: {
-            Text("This iPhone forgets the current connection.")
+            Text("This iPhone forgets the current connection and sets itself up again.")
         }
     }
 
@@ -346,56 +346,5 @@ struct ConnectionSheet: View {
         }
         .padding(.vertical, 14)
         .accessibilityElement(children: .combine)
-    }
-}
-
-/// Reads the pairing QR code the laptop shows.
-struct ScannerScreen: View {
-    let scanned: (String) -> Void
-    let cancel: () -> Void
-    @State private var camera = Camera()
-    @State private var error: String?
-    @State private var done = false
-
-    var body: some View {
-        ZStack {
-            Color.black.ignoresSafeArea()
-            CameraPreview(session: camera.session).ignoresSafeArea()
-            RoundedRectangle(cornerRadius: Theme.Radius.lg).strokeBorder(.white, lineWidth: 3).frame(width: 248, height: 248)
-                .allowsHitTesting(false)
-            VStack {
-                HStack {
-                    Button(action: cancel) {
-                        Image(systemName: "xmark").font(.system(size: 15, weight: .semibold))
-                            .frame(width: 40, height: 40).background(.white.opacity(0.14), in: Circle())
-                    }
-                    .foregroundStyle(.white)
-                    .accessibilityLabel("Cancel")
-                    Spacer()
-                }
-                .padding(16)
-                Spacer()
-                Text(error ?? "Point at the code on your laptop")
-                    .font(Typeface.callout).foregroundStyle(.white).multilineTextAlignment(.center)
-                    .padding(.horizontal, 18).padding(.vertical, 12)
-                    .background(.black.opacity(0.55), in: Capsule())
-                    .padding(.bottom, 48)
-                    .padding(.horizontal, 24)
-            }
-        }
-        .preferredColorScheme(.dark)
-        .task {
-            do {
-                try await camera.start(.qr) { code in
-                    guard !done else { return }
-                    done = true
-                    camera.stop()
-                    scanned(code)
-                }
-            } catch {
-                self.error = describe(error)
-            }
-        }
-        .onDisappear { camera.stop() }
     }
 }
