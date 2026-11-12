@@ -2,9 +2,9 @@
 //! file `provenance demo` published, replaces the crop, re-signs the C2PA
 //! manifest with the public sample key (B2) and gives it to the reader's
 //! verifier. The A2 forgery is rejected by the crop proof check, since the
-//! proof is bound to the published pixels. The A3 test passes while the attack
-//! works; its fix must make it fail. Run after `provenance setup` and
-//! `provenance demo`.
+//! proof is bound to the published pixels. The A3 forgery is rejected by the
+//! same check, since the range check now commits H before its challenges. Run
+//! after `provenance setup` and `provenance demo`.
 
 use std::{
     fs,
@@ -69,15 +69,6 @@ fn republish_and_verify(name: &str, pixels: &RgbImage, assertion: &Assertion) ->
         .verify(&signed, None, &mut |_| {})
 }
 
-fn assert_accepted(verdict: &Verdict) {
-    assert!(
-        verdict.rejected.is_none(),
-        "the reader rejected the forgery: {:?}",
-        verdict.rejected
-    );
-    assert_eq!(verdict.passed.len(), 4);
-}
-
 fn demo() -> (Assertion, RgbImage) {
     let signed = repository().join("out/signed.png");
     let assertion = manifest::read(&signed).expect("run `provenance demo` first");
@@ -114,7 +105,7 @@ fn substituted_crop_is_rejected_by_the_crop_proof() {
 
 #[test]
 #[ignore = "needs `provenance setup` and `provenance demo`; run with --release -- --ignored"]
-fn forged_crop_proof_passes_every_reader_check() {
+fn forged_crop_proof_is_rejected_by_the_range_check() {
     let (mut assertion, published) = demo();
     let prover = ProverParams::load(&workspace().crop_params()).unwrap();
     let target = gradient(assertion.crop.size());
@@ -133,5 +124,15 @@ fn forged_crop_proof_passes_every_reader_check() {
     .unwrap();
     assertion.image_proof = BASE64.encode(proof);
 
-    assert_accepted(&republish_and_verify("forged-crop", &target, &assertion));
+    // If accepted, anyone could publish any picture as a crop of this capture.
+    let verdict = republish_and_verify("forged-crop", &target, &assertion);
+    let rejected = verdict
+        .rejected
+        .expect("the reader accepted the forged crop proof");
+    assert_eq!(rejected.check, Check::Image, "{}", rejected.detail);
+    assert!(
+        rejected.detail.contains("range check"),
+        "rejected for another reason: {}",
+        rejected.detail
+    );
 }

@@ -8,7 +8,7 @@ use ark_bls12_381::Bls12_381;
 use ark_ff::{One, Zero};
 use ark_poly::DenseMultilinearExtension;
 use subroutines::{
-    pcs::prelude::MultilinearProverParam,
+    pcs::prelude::{Commitment, MultilinearProverParam, PolynomialCommitmentScheme},
     poly_iop::{
         prelude::{ProductCheck, SumCheck},
         PolyIOP,
@@ -256,6 +256,7 @@ pub(crate) fn prove_products(
 pub(crate) struct RangeCheck {
     pub proof: ProductCheckProof,
     pub counts: Poly,
+    pub counts_commitment: Commitment<Bls12_381>,
     pub product: Poly,
     pub fraction: Poly,
 }
@@ -283,6 +284,13 @@ pub(crate) fn prove_range(
     ];
     let right = [poly(counts), poly(shifted_counts)];
 
+    // H goes into the transcript before the challenges, so it cannot be chosen
+    // after seeing them (attack A3).
+    let counts_commitment = check(Pcs::commit(params, &right[0]), "committing to range counts")?;
+    check(
+        transcript.append_serializable_element(b"hCom(x)", &counts_commitment),
+        "appending to the transcript",
+    )?;
     let offset = challenge(transcript, b"alpha")?;
     let constant = DenseMultilinearExtension::from_evaluations_vec(
         NUM_VARS + 1,
@@ -303,6 +311,7 @@ pub(crate) fn prove_range(
     Ok(RangeCheck {
         proof,
         counts: right[0].clone(),
+        counts_commitment,
         product,
         fraction,
     })

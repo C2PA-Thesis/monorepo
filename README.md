@@ -426,7 +426,8 @@ file (`crates/provenance/tests/forged_crops.rs`): a third party replaces the
 published crop and re-signs the manifest with the sample key. With the honest
 crop proof (A2) the reader rejects it at the crop proof, since the proof's
 challenges now depend on the published pixels. With a forged crop proof (A3)
-the reader accepts it.
+the reader also rejects it at the crop proof, since the range check commits the
+sorted vector H before drawing its challenges.
 
 The prover side of a wrong cell is covered in `location-proof/main_test.go`:
 the honest prover refuses a cell that does not contain the coordinate, and

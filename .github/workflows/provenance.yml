@@ -48,7 +48,8 @@ jobs:
         run: crates/fingerprint-ffi/c/check.sh
 
       # Slow tests: the crop-proof round trip and the attacks of the security
-      # analysis, which pass while each attack still works.
+      # analysis. A2 and A3 must be rejected; the linkage test passes while the
+      # commitments still identify the original.
       - name: Crop proof round trip and attacks
         run: cargo test --release -p crop-proof --features attack-hooks -- --ignored
 
@@ -72,7 +73,7 @@ jobs:
       - name: Run every attack and check its expected outcome
         run: ./target/release/provenance attack
 
-      # Passes while a third party can still replace the published crop.
+      # A third party replaces the published crop; the reader must reject it.
       - name: Republish forged crops of the demo file
         run: cargo test --release -p provenance --test forged_crops -- --ignored --test-threads=1
 

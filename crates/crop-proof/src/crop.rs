@@ -172,12 +172,11 @@ fn prove_core(
     )?;
 
     for range in &ranges {
-        let counts = check(
-            Pcs::commit(pcs, &range.counts),
-            "committing to range counts",
-        )?;
-        append(&mut transcript, b"hCom(x)", &counts)?;
-        commitments.extend([counts, range.proof.prod_x_comm, range.proof.frac_comm]);
+        commitments.extend([
+            range.counts_commitment,
+            range.proof.prod_x_comm,
+            range.proof.frac_comm,
+        ]);
     }
 
     let OpeningPoints { points, .. } = iop::opening_points(
@@ -370,6 +369,7 @@ fn verify_prefix(
 
     let mut range_claims = Vec::with_capacity(3);
     for channel in 0..3 {
+        append(&mut transcript, b"hCom(x)", &commitments[3 + 3 * channel])?;
         let offset = challenge(&mut transcript, b"alpha")?;
         let mix = challenge(&mut transcript, b"alpha")?;
         let (alpha, expected) = verify_product_check(
@@ -378,7 +378,8 @@ fn verify_prefix(
             &commitments[5 + 3 * channel],
             &aux_info(NUM_VARS + 1),
             &mut transcript,
-        )?;
+        )
+        .map_err(|error| anyhow!("range check for channel {channel} rejected: {error}"))?;
         range_claims.push(RangeClaim {
             offset,
             mix,
@@ -449,9 +450,6 @@ fn verify_core(
             .each_ref()
             .map(|sumcheck| sumcheck.point.as_slice()),
     );
-    for channel in 0..3 {
-        append(&mut transcript, b"hCom(x)", &commitments[3 + 3 * channel])?;
-    }
     let image = check_openings(
         pcs,
         commitments,
@@ -467,7 +465,8 @@ fn verify_core(
         &iop::range_openings(),
         &proof.range_openings,
         &mut transcript,
-    )?;
+    )
+    .map_err(|error| anyhow!("range check openings rejected: {error}"))?;
 
     let (table, shifted_table) = iop::range_tables();
     let (table, shifted_table) = (poly(table), poly(shifted_table));
