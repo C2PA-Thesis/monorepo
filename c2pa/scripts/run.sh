@@ -43,9 +43,9 @@ if not ours:
 
 data = ours[0]["data"]
 print(f"    {label}:")
-print(f"      schema_version : {data['schema_version']}")
-print(f"      commitment.alg : {data['commitment']['alg']}")
-print(f"      h3 cell        : {data['location_proof']['cell']} (res {data['location_proof']['resolution']})")
+print(f"      version        : {data['version']}")
+print(f"      cell           : {data['cell']}")
+print(f"      crop           : {data['crop']}")
 
 if state != "Valid":
     print(f"    FAIL: validation_state = {state}")
