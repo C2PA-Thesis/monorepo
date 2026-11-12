@@ -1,6 +1,10 @@
 {
   "servers": [
-    { "name": "Prod", "urls": [], "pin": "" },
+    {
+      "name": "Prod",
+      "urls": ["https://3.19.37.133:8792"],
+      "pin": "7b060966e56a5f26f1d3d34523c048e7a09edec87f926f6e769f39b6c501c06e"
+    },
     { "name": "Dev", "urls": [], "pin": "" }
   ]
 }

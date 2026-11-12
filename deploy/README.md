@@ -95,7 +95,7 @@ journal says so (`journalctl -u provenance`). Without `team-id`, `serve.sh` uses
 ## Registration
 
 Both servers run `provenance serve --open-registration` with the App ID
-`<team-id>.io.github.c2pa-thesis.capture` (`serve.sh`). A phone registers without a QR
+`<team-id>.io.github.c2pa-thesis.capture-app` (`serve.sh`). A phone registers without a QR
 code:
 
 1. The app connects to the address and TLS pin built into it (`ios/ProvenanceCapture/Resources/servers.json`)

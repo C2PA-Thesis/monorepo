@@ -45,7 +45,7 @@ The differences:
   certificate key.
 
 SwiftUI, iOS 17 or later, Swift 6 language mode with complete concurrency
-checking. Bundle id `io.github.c2pa-thesis.capture`. The project format
+checking. Bundle id `io.github.c2pa-thesis.capture-app`. The project format
 (`objectVersion = 77`, synchronized folders) needs Xcode 16 or later. It was
 made and tested with Xcode 27.2 only. CI takes the newest Xcode release on the
 runner and stops if it is older than 16.
@@ -54,7 +54,8 @@ runner and stops if it is older than 16.
 
 ```
 ProvenanceCapture.xcodeproj   hand-written, folders are synchronized groups
-Config/Info.plist             usage strings, ATS local networking
+Config/Info.plist             usage strings, ATS off (every remote connection is pinned)
+Config/*.entitlements         App Attest environment
 ProvenanceCapture/
   App/                        the app entry and CaptureFlow, the step-by-step model
   Model/                      receipt bytes, crop math, framing, wire types, timeline
@@ -123,11 +124,13 @@ on the laptop. These are the steps.
    7-day limit below.
 2. Select the ProvenanceCapture target, Signing and Capabilities, and choose
    that team (the project leaves `DEVELOPMENT_TEAM` empty). If Xcode says the
-   bundle id `io.github.c2pa-thesis.capture` is not available (it is registered to
-   another team), change it to one of your own; nothing in the code or on the
-   laptop depends on it. Both can also be passed to `xcodebuild` without
-   editing the project: `DEVELOPMENT_TEAM=<team id>
-   PRODUCT_BUNDLE_IDENTIFIER=<your id> -allowProvisioningUpdates`.
+   bundle id `io.github.c2pa-thesis.capture-app` is not available (it is registered to
+   another team), change it to one of your own, and start the laptop with that
+   App ID (below). Both can also be passed to `xcodebuild` without editing the
+   project: `DEVELOPMENT_TEAM=<team id> PRODUCT_BUNDLE_IDENTIFIER=<your id>
+   -allowProvisioningUpdates`. The target asks for the App Attest entitlement;
+   if a Personal Team cannot sign it (not verified), add
+   `CODE_SIGN_ENTITLEMENTS=` to drop it.
 3. On the iPhone, set a passcode if it has none: the Secure Enclave key is
    created with `.userPresence`, and every signature asks for Face ID, Touch
    ID or the passcode.
@@ -149,7 +152,7 @@ on the laptop. These are the steps.
 To have the laptop verify App Attest, sign with the paid team and start the
 laptop with that team's App ID: `provenance serve --app-id
 <team id>.<bundle id>` (or `PROVENANCE_APP_ID`), for example
-`PROVENANCE_APP_ID=<team id>.io.github.c2pa-thesis.capture scripts/serve.sh`. The
+`PROVENANCE_APP_ID=<team id>.io.github.c2pa-thesis.capture-app scripts/serve.sh`. The
 Team ID is under Membership details in the developer account. With a
 Personal Team the app still pairs, as declared.
 
@@ -407,7 +410,7 @@ runner.
 
 - Anything on a device: the Secure Enclave key, the camera, the QR scanner,
   the local network prompt and the retry after it, pinned TLS to a LAN
-  address under ATS with `NSAllowsLocalNetworking`, the device setup steps
+  address, the device setup steps
   above. The device build compiles (CI builds it unsigned).
 - `zkloc_prove` on a device: its time and memory there. In the Simulator it
   runs in the tests when they get params
