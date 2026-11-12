@@ -43,7 +43,7 @@ The differences:
   certificate key.
 
 SwiftUI, iOS 17 or later, Swift 6 language mode with complete concurrency
-checking. Bundle id `edu.utdt.td8.capture`. The project format
+checking. Bundle id `io.github.c2pa-thesis.capture`. The project format
 (`objectVersion = 77`, synchronized folders) needs Xcode 16 or later. It was
 made and tested with Xcode 27.2 only. CI takes the newest Xcode release on the
 runner and stops if it is older than 16.
@@ -120,7 +120,7 @@ on the laptop. These are the steps.
    7-day limit below.
 2. Select the ProvenanceCapture target, Signing and Capabilities, and choose
    that team (the project leaves `DEVELOPMENT_TEAM` empty). If Xcode says the
-   bundle id `edu.utdt.td8.capture` is not available (it is registered to
+   bundle id `io.github.c2pa-thesis.capture` is not available (it is registered to
    another team), change it to one of your own; nothing in the code or on the
    laptop depends on it. Both can also be passed to `xcodebuild` without
    editing the project: `DEVELOPMENT_TEAM=<team id>

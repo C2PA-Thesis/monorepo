@@ -10,7 +10,7 @@ export PATH="${C2PA_BIN_DIR:-$HOME/.local/bin}:$PATH"
 IN="${1:-fixtures/image.jpg}"
 MANIFEST="${2:-manifests/placeholder-assertion.json}"
 OUT="out/signed.jpg"
-LABEL="edu.utdt.td8.zkloc"
+LABEL="io.github.c2pa-thesis.zkloc"
 
 # These take PEM contents, not paths. A path fails with "Invalid certification data".
 export C2PA_PRIVATE_KEY="$(cat certs/es256_private.key)"
