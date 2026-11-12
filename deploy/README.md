@@ -40,9 +40,13 @@ test photos.
 
 ## Setting it up once
 
-In AWS, as an administrator of the account (us-east-2):
+In AWS, as an administrator of the account (us-east-2). GitHub's OIDC provider
+comes first, unless the account already has one for
+`token.actions.githubusercontent.com`:
 
 ```bash
+aws iam create-open-id-connect-provider \
+  --url https://token.actions.githubusercontent.com --client-id-list sts.amazonaws.com
 aws cloudformation deploy --stack-name provenance-account --template-file deploy/account.yml
 aws cloudformation deploy --stack-name provenance-prod --template-file deploy/env.yml \
   --capabilities CAPABILITY_IAM \

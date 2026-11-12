@@ -4,17 +4,10 @@ Description: >-
   provider, so Actions deploys without stored keys, and the bucket releases go
   through.
 
-Resources:
-  GitHubOidc:
-    Type: AWS::IAM::OIDCProvider
-    Properties:
-      Url: https://token.actions.githubusercontent.com
-      ClientIdList:
-        - sts.amazonaws.com
-      Tags:
-        - Key: Project
-          Value: tesis-td8
+# The OIDC provider is created once outside this stack: an account holds one
+# provider per URL, and the organization's policy may reserve creating it.
 
+Resources:
   Releases:
     Type: AWS::S3::Bucket
     # Every release can be built again from its commit.
@@ -62,7 +55,7 @@ Resources:
 
 Outputs:
   GitHubOidcArn:
-    Value: !Ref GitHubOidc
+    Value: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com
     Export:
       Name: provenance-github-oidc
   ReleasesBucket:
