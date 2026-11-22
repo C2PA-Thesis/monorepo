@@ -257,7 +257,7 @@ final class CaptureFlow {
             }
             let (base, paired) = try await reach(candidates(payload), pin: payload.pin, request: request, device: key.id)
             guard paired.device == key.id else {
-                throw CaptureError("the laptop registered key \(Verdict.short(paired.device)), not this phone's")
+                throw CaptureError("the server registered key \(Verdict.short(paired.device)), not this phone's")
             }
             let pairing = Pairing(
                 base: base, urls: candidates(payload), pin: payload.pin, device: paired.device, kind: key.kind,
@@ -284,7 +284,7 @@ final class CaptureFlow {
         defer { api.invalidate() }
         do {
             guard key.kind == .secureEnclave else {
-                throw CaptureError("registering needs the Secure Enclave and App Attest; scan a laptop's code instead")
+                throw CaptureError("registering needs the Secure Enclave and App Attest")
             }
             let info = try await api.server()
             try info.validate()
@@ -373,21 +373,21 @@ final class CaptureFlow {
                         // The laptop may have registered the key and only the answer was lost.
                         if (try? await api.trusted(device)) == true { return (url, Paired(device: device)) }
                         throw CaptureError(
-                            "the laptop at \(host) stopped answering after the pairing request reached it (\(describe(error))). The pairing token is single use and may be spent: try again")
+                            "the server at \(host) stopped answering after the pairing request reached it (\(describe(error))). The pairing token is single use and may be spent: try again")
                     }
                 } catch let error as URLError where error.code == .cancelled {
-                    throw CaptureError("the laptop at \(host) does not hold the pinned certificate")
+                    throw CaptureError("the server at \(host) does not hold the pinned certificate")
                 } catch let error as URLError where HTTP.isConnectionFailure(error) {
                     last = error
                 }
                 if Date.now >= deadline { break rounds }
             }
-            pairStatus = "Looking for the laptop…"
+            pairStatus = "Looking for the server…"
             try await Task.sleep(for: .seconds(2))
         }
         let reason = last.map { " (\(describe($0)))" } ?? ""
         throw CaptureError(
-            "no laptop answered within \(seconds) s\(reason). Check that this phone is on the laptop's network and provenance serve runs")
+            "no server answered within \(seconds) s\(reason). Check that the server is running and this phone can reach it")
     }
 
     private func fetchParams() async {
@@ -680,8 +680,8 @@ final class CaptureFlow {
                     title: "Couldn't prove the area", message: "Try again.",
                     detail: describe(error), action: .retry)
                 : Failure(
-                    title: "Your laptop didn't answer",
-                    message: "Check it's on and on the same Wi-Fi.",
+                    title: "Couldn't reach the server",
+                    message: "Check your connection and try again.",
                     detail: describe(error), action: .retry)
             sending = false
         }
@@ -697,7 +697,7 @@ final class CaptureFlow {
         return value
     }
 
-    // MARK: 5. The laptop
+    // MARK: 5. The server
 
     var timeline: [Timeline.Group] {
         let halted = laptop?.phase == .failed ? (laptop?.error ?? "failed") : nil
@@ -717,7 +717,7 @@ final class CaptureFlow {
                     laptopNotice = nil
                     outcome = .rejected(Failure(
                         title: "Still working on it",
-                        message: "Your laptop is slower than usual. Check it.",
+                        message: "The server is taking longer than usual. Try again later.",
                         detail: "The capture \(id) is still running after \(Int(Self.followLimit / 60)) minutes."))
                     return
                 }
@@ -732,8 +732,8 @@ final class CaptureFlow {
                     if !transient || Date.now.timeIntervalSince(since) > Self.laptopPatience {
                         laptopNotice = nil
                         outcome = .rejected(Failure(
-                            title: "Lost your laptop",
-                            message: "Check it's on and on the same Wi-Fi.",
+                            title: "Lost the connection",
+                            message: "Check your connection and try again.",
                             detail: "\(describe(error)). Capture \(id)."))
                         return
                     }
@@ -750,7 +750,7 @@ final class CaptureFlow {
                 laptop = current
                 noteRunning()
                 if !current.phase.isRunning { break }
-                laptopNotice = current.phase == .queued ? "Waiting for your laptop" : nil
+                laptopNotice = current.phase == .queued ? "Waiting for the server" : nil
                 try? await Task.sleep(for: .milliseconds(700))
             }
             guard let status, !Task.isCancelled else { return }
@@ -779,7 +779,7 @@ final class CaptureFlow {
                 title: rejected ? "This photo didn't pass the checks" : "Publishing stopped",
                 message: rejected
                     ? "It wasn't published. Take the photo again."
-                    : "Something went wrong on your laptop. Take the photo again.",
+                    : "Something went wrong on the server. Take the photo again.",
                 detail: status.error ?? "unknown error"))
             return
         }
@@ -792,7 +792,7 @@ final class CaptureFlow {
             guard !Task.isCancelled else { return }
             outcome = .rejected(Failure(
                 title: "Couldn't bring the file back",
-                message: "It's verified and saved on your laptop.",
+                message: "It's verified and saved on the server.",
                 detail: describe(error)))
         }
     }
@@ -830,8 +830,8 @@ final class CaptureFlow {
                 if let original { show(original) }
                 sendSteps = [.prove: .done, .upload: .failed]
                 sendFailure = Failure(
-                    title: "Your laptop didn't answer",
-                    message: "Check it's on and on the same Wi-Fi.",
+                    title: "Couldn't reach the server",
+                    message: "Check your connection and try again.",
                     detail: "Could not connect to the server.", action: .retry)
             case "rejected":
                 outcome = .rejected(Failure(
@@ -840,15 +840,15 @@ final class CaptureFlow {
                     detail: "location: the proof does not verify for cell 87c2e3020ffffff"))
             case "lost":
                 outcome = .rejected(Failure(
-                    title: "Lost your laptop",
-                    message: "Check it's on and on the same Wi-Fi.",
+                    title: "Lost the connection",
+                    message: "Check your connection and try again.",
                     detail: "Could not connect to the server. Capture 20261102-124501-3f2a."))
             case "stored":
                 acceptedID = "20261102-124501-3f2a"
                 storedOnly = true
             case "pairFailed":
                 use(nil)
-                fail("Could not pair: no laptop answered within 10 s (Could not connect to the server.).")
+                fail("Could not pair: no server answered within 10 s (Could not connect to the server.).")
             default:
                 break
             }

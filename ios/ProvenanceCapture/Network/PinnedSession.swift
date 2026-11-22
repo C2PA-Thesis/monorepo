@@ -159,7 +159,7 @@ struct PinnedSession: Sendable {
                 last = error
             }
         }
-        throw last ?? CaptureError("no address for the laptop")
+        throw last ?? CaptureError("no address for the server")
     }
 
     private func url(_ path: String, _ base: URL) -> URL {
@@ -204,7 +204,7 @@ enum HTTP {
         do {
             return try JSONDecoder().decode(type, from: data)
         } catch {
-            throw CaptureError("the laptop answered something unexpected: \(error)")
+            throw CaptureError("the server answered something unexpected: \(error)")
         }
     }
 }

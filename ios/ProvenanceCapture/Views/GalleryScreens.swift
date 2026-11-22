@@ -239,7 +239,7 @@ private struct CheckScreen: View {
                 Button("Done", action: back).buttonStyle(.primary).padding(.horizontal, 24).padding(.bottom, 12)
             case .unreachable:
                 Spacer()
-                Problem(title: "Your laptop didn't answer", message: "Check it's on and on the same Wi-Fi.")
+                Problem(title: "Couldn't reach the server", message: "Check your connection and try again.")
                 Spacer()
                 VStack(spacing: 6) {
                     Button("Try again") { Task { await run() } }.buttonStyle(.primary)
@@ -277,7 +277,7 @@ private struct CheckScreen: View {
     /// The first check the file failed, said plainly.
     private static func reason(_ check: String?) -> String {
         switch check {
-        case "device": "Your laptop doesn't know the iPhone that took it."
+        case "device": "It was taken on an iPhone the server doesn't know."
         case "image": "It was changed after it was taken."
         case "location": "Where it was taken doesn't check out."
         default: "It has no proof. It wasn't taken with Capture, or the proof was lost when it was saved or sent."

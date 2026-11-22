@@ -27,7 +27,7 @@ enum ProofParams {
             let got = try sha256(of: file)
             guard got == want else {
                 try? manager.removeItem(at: file)
-                throw CaptureError("\(name) has SHA-256 \(Verdict.short(got)), the laptop announced \(Verdict.short(want))")
+                throw CaptureError("\(name) has SHA-256 \(Verdict.short(got)), the server announced \(Verdict.short(want))")
             }
             try? manager.removeItem(at: target)
             try manager.moveItem(at: file, to: target)

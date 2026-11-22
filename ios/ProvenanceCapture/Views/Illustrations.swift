@@ -217,7 +217,7 @@ struct ConnectArt: View {
                 }
                 .animation(Theme.ease, value: tick)
             }
-            Image(systemName: "laptopcomputer").font(.system(size: 72, weight: .regular))
+            Image(systemName: "server.rack").font(.system(size: 60, weight: .regular))
         }
         .foregroundStyle(Theme.ink)
         .accessibilityHidden(true)

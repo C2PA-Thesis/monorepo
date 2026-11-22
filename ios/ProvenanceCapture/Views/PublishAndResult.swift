@@ -47,7 +47,7 @@ struct PublishScreen: View {
     /// What runs now, in plain words.
     private var now: String {
         if flow.sendSteps[.prove] == .running { return "Proving you were in the area" }
-        if flow.sendSteps[.upload] == .running { return "Sending it to your laptop" }
+        if flow.sendSteps[.upload] == .running { return "Sending it to the server" }
         let running = items.first { if case .running = $0.state { true } else { false } }
             ?? items.first { if case .pending = $0.state { true } else { false } }
         if let running { return Self.plain[running.row.key] ?? running.row.title }
@@ -117,8 +117,8 @@ struct ResultScreen: View {
                             .frame(width: 64, height: 64).background(Theme.surface, in: Circle())
                             .accessibilityHidden(true)
                         Heading(
-                            title: "Saved on your laptop",
-                            subtitle: "Publishing is off there. It can be published from the laptop.", center: true)
+                            title: "Saved, not published",
+                            subtitle: "Publishing is turned off on the server. The photo is stored there.", center: true)
                     }
                     .padding(.horizontal, 32)
                 }
