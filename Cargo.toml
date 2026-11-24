@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/app-attest",
+    "crates/bench",
     "crates/crop-proof",
     "crates/fingerprint",
     "crates/fingerprint-ffi",

@@ -476,6 +476,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "bench"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "clap",
+ "crop-proof",
+ "libc",
+ "provenance",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "time",
+]
+
+[[package]]
 name = "bit-vec"
 version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

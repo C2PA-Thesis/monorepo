@@ -4,6 +4,7 @@ on:
   push:
     paths: &paths
       - 'crates/**'
+      - '!crates/bench/results/**'
       # crates/fingerprint-ffi tests and links against this header.
       - 'ios/Frameworks/include/fingerprint.h'
       - 'location-proof/**'
@@ -55,7 +56,7 @@ jobs:
 
       - name: Build
         run: |
-          cargo build --release -p provenance
+          cargo build --release -p provenance -p bench
           cargo build --profile wasm -p fingerprint --target wasm32-unknown-unknown
 
       - name: Set up proof parameters, keys and samples
@@ -76,6 +77,10 @@ jobs:
       # A third party replaces the published crop; the reader must reject it.
       - name: Republish forged crops of the demo file
         run: cargo test --release -p provenance --test forged_crops -- --ignored --test-threads=1
+
+      # Fails when a sample fails, so the harness cannot rot between real runs.
+      - name: Benchmark the pipeline once
+        run: ./target/release/bench run --quick --samples 1
 
       - name: Upload the published photo and the forged copies
         if: always()
