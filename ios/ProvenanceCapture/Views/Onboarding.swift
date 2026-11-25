@@ -112,11 +112,10 @@ struct CameraAccessScreen: View {
     }
 }
 
+/// Sets this iPhone up on its own: the only thing the person does is confirm
+/// with Face ID. A failure offers to try again.
 struct PairScreen: View {
-    @Bindable var flow: CaptureFlow
-    @State private var typing = false
-    @State private var choosing = false
-    private let servers = KnownServers.available
+    let flow: CaptureFlow
 
     var body: some View {
         OnboardingPage(title: title, subtitle: subtitle) {
@@ -129,47 +128,33 @@ struct PairScreen: View {
                 }
                 .accessibilityElement(children: .combine)
             }
+            #if DEBUG
+                if flow.pairFailed {
+                    Text(flow.pairStatus).font(Typeface.sans(13, relativeTo: .footnote)).foregroundStyle(Theme.faint)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            #endif
         } actions: {
             actions
         }
-        .sheet(isPresented: $typing) { CodeSheet(flow: flow, done: { typing = false }) }
-        .confirmationDialog("Connect another way", isPresented: $choosing, titleVisibility: .visible) {
-            ForEach(servers.dropFirst()) { server in
-                Button("Use the \(server.name) server") { Task { await flow.register(with: server) } }
-            }
-            Button("Scan a laptop's code") { flow.showScanner = true }
-            Button("Enter a laptop's code") { typing = true }
-        }
-        .task {
-            // The Simulator shares the Mac's network, so it connects without a code.
-            if CaptureFlow.isSimulator, flow.pairing == nil, !flow.pairFailed, flow.key != nil { await flow.fetchFromMac() }
-        }
+        .task { await flow.connect() }
         .onChange(of: flow.key != nil) { _, ready in
-            if ready, CaptureFlow.isSimulator, flow.pairing == nil, !flow.pairFailed { Task { await flow.fetchFromMac() } }
+            if ready { Task { await flow.connect() } }
         }
     }
 
     private var title: String {
-        guard flow.pairFailed else { return servers.isEmpty ? "Connect your laptop" : "Connect to a server" }
-        if flow.pairNeedsSettings { return "Capture can't see your laptop" }
-        if flow.pairing != nil { return "Couldn't get ready" }
-        return "Couldn't connect"
+        guard flow.pairFailed else { return "Setting up this iPhone" }
+        return flow.pairing != nil ? "Couldn't get ready" : "Couldn't connect"
     }
 
     private var subtitle: String {
         guard flow.pairFailed else {
             if CaptureFlow.isSimulator { return "This Mac does the heavy lifting when you publish." }
-            if let server = servers.first {
-                return "It does the heavy lifting when you publish. Use the \(server.name) server, or scan the code on your laptop."
-            }
-            return "It does the heavy lifting when you publish. Open Capture on it and scan the code."
+            return "Confirm with Face ID so this iPhone can sign the photos it takes."
         }
-        if flow.pairNeedsSettings { return "Turn on Local Network for Capture in Settings." }
-        if flow.pairing != nil { return "Keep your laptop on and try again." }
-        if !servers.isEmpty { return "Check your connection and try again, or scan a laptop's code." }
-        return CaptureFlow.isSimulator
-            ? "Start Capture on this Mac, then try again."
-            : "Check your laptop is on the same Wi-Fi with Capture open."
+        if CaptureFlow.isSimulator { return "Start Capture on this Mac, then try again." }
+        return "Check your connection and try again."
     }
 
     private var workingTitle: String {
@@ -179,66 +164,18 @@ struct PairScreen: View {
     }
 
     @ViewBuilder private var actions: some View {
-        if flow.pairNeedsSettings {
-            OpenSettingsButton(style: PillButtonStyle(kind: .primary))
-            Button("Try again") { flow.pairAgain() }.buttonStyle(.quiet)
-        } else if flow.pairing != nil, !flow.isPaired, !flow.paramsBusy {
+        if flow.pairing != nil, !flow.isPaired, !flow.paramsBusy {
             Button("Try again") { Task { await flow.retryParams() } }.buttonStyle(.primary)
-            Button("Connect again") { flow.pairAgain() }.buttonStyle(.quiet)
-        } else if !flow.pairWorking {
-            if CaptureFlow.isSimulator {
-                Button(flow.pairFailed ? "Try again" : "Connect to this Mac") { Task { await flow.fetchFromMac() } }
-                    .buttonStyle(.primary)
-                Color.clear.frame(height: 44)
-            } else if let server = servers.first {
-                Button(flow.pairFailed ? "Try again" : "Use the \(server.name) server") {
-                    Task { await flow.register(with: server) }
-                }
-                .buttonStyle(.primary)
-                Button("Connect another way") { choosing = true }.buttonStyle(.quiet)
-            } else {
-                Button {
-                    flow.showScanner = true
-                } label: {
-                    Label(flow.pairFailed ? "Scan again" : "Scan the code", systemImage: "qrcode.viewfinder")
-                }
-                .buttonStyle(.primary)
-                Button("Enter the code instead") { typing = true }.buttonStyle(.quiet)
+            Button("Connect again") {
+                flow.pairAgain()
+                Task { await flow.connect() }
             }
+            .buttonStyle(.quiet)
+        } else if flow.pairFailed {
+            Button("Try again") { Task { await flow.connect() } }.buttonStyle(.primary)
+            Color.clear.frame(height: 44)
         } else {
             Color.clear.frame(height: 98)
         }
     }
 }
-
-/// Pasting the pairing code, for when the camera can't read it.
-private struct CodeSheet: View {
-    @Bindable var flow: CaptureFlow
-    let done: () -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            Heading(title: "Enter the code", subtitle: "Copy the pairing code from the Capture page on your laptop and paste it here.")
-            TextField("Pairing code", text: $flow.pasted, axis: .vertical)
-                .font(Typeface.mono(13))
-                .lineLimit(3...6)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-                .padding(14)
-                .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.Radius.sm))
-                .overlay(RoundedRectangle(cornerRadius: Theme.Radius.sm).strokeBorder(Theme.line2))
-            Spacer(minLength: 0)
-            Button("Connect") {
-                done()
-                Task { await flow.pairPasted() }
-            }
-            .buttonStyle(.primary)
-            .disabled(flow.pasted.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-        }
-        .padding(24)
-        .background(Theme.paper.ignoresSafeArea())
-        .presentationDetents([.medium])
-        .presentationCornerRadius(Theme.Radius.lg)
-    }
-}
-

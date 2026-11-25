@@ -116,14 +116,6 @@ final class WireTests: XCTestCase {
         XCTAssertEqual(reads, 1)
     }
 
-    /// The path text iOS attaches when Local Network access is off for the app.
-    func testRecognisesALocalNetworkRefusal() {
-        let refused = URLError(.notConnectedToInternet, userInfo: ["_NSURLErrorNWPathKey": "unsatisfied (Local network prohibited), interface: en0[802.11]"])
-        XCTAssertTrue(HTTP.localNetworkDenied(refused))
-        XCTAssertFalse(HTTP.localNetworkDenied(URLError(.notConnectedToInternet)))
-        XCTAssertFalse(HTTP.localNetworkDenied(URLError(.cannotConnectToHost, userInfo: refused.userInfo)))
-    }
-
     func testUploadSendsNullAccuracyAndSnakeCaseKeys() throws {
         let receipt = Receipt(
             fingerprint: Fingerprint(algorithm: "a", size: .init(width: 1, height: 1), r: [], g: [], b: []),

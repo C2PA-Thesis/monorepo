@@ -28,9 +28,6 @@ struct ContentView: View {
                 flow.applyScenario()
             #endif
         }
-        .fullScreenCover(isPresented: $flow.showScanner) {
-            ScannerScreen { code in Task { await flow.scanned(code) } } cancel: { flow.showScanner = false }
-        }
     }
 }
 

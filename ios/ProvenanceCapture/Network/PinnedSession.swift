@@ -159,7 +159,7 @@ struct PinnedSession: Sendable {
                 last = error
             }
         }
-        throw last ?? CaptureError("no address for the laptop")
+        throw last ?? CaptureError("no address for the server")
     }
 
     private func url(_ path: String, _ base: URL) -> URL {
@@ -195,13 +195,6 @@ enum HTTP {
         neverConnected(error) || [.networkConnectionLost, .timedOut].contains(error.code)
     }
 
-    /// iOS refused the request because Local Network access is off for the app.
-    /// URLError carries this only in the description of its network path.
-    static func localNetworkDenied(_ error: URLError) -> Bool {
-        guard error.code == .notConnectedToInternet, let path = error.userInfo["_NSURLErrorNWPathKey"] else { return false }
-        return String(describing: path).localizedCaseInsensitiveContains("local network prohibited")
-    }
-
     /// The request cannot have reached the laptop.
     static func neverConnected(_ error: URLError) -> Bool {
         [.cannotConnectToHost, .notConnectedToInternet, .cannotFindHost].contains(error.code)
@@ -211,7 +204,7 @@ enum HTTP {
         do {
             return try JSONDecoder().decode(type, from: data)
         } catch {
-            throw CaptureError("the laptop answered something unexpected: \(error)")
+            throw CaptureError("the server answered something unexpected: \(error)")
         }
     }
 }

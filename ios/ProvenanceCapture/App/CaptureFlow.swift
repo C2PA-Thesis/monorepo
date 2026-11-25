@@ -80,8 +80,6 @@ final class CaptureFlow {
     private(set) var paramsStatus: String?
     /// The parameter download is running.
     private(set) var paramsBusy = false
-    var showScanner = false
-    var pasted = ""
 
     // Welcome
     private(set) var welcomed = UserDefaults.standard.bool(forKey: CaptureFlow.welcomedKey)
@@ -161,9 +159,6 @@ final class CaptureFlow {
     /// Something runs that the pair screen waits for.
     var pairWorking: Bool { !pairFailed && (key == nil || pairingBusy || paramsBusy) }
 
-    /// The failure is a permission only Settings can give back.
-    var pairNeedsSettings: Bool { pairFailed && pairStatus == Self.localNetworkHelp }
-
     func finishWelcome() {
         welcomed = true
         UserDefaults.standard.set(true, forKey: Self.welcomedKey)
@@ -209,7 +204,7 @@ final class CaptureFlow {
     }
 
     /// The Simulator asks the Mac's own `provenance serve` for the payload.
-    func fetchFromMac() async {
+    private func fetchFromMac() async {
         pairStatus = "Connecting…"
         pairFailed = false
         pairingBusy = true
@@ -225,20 +220,17 @@ final class CaptureFlow {
         await pair(with: payload)
     }
 
-    func pairPasted() async {
-        do {
-            await pair(with: try PairingPayload.parse(pasted, requireAddress: !Self.isSimulator))
-        } catch {
-            fail(describe(error))
-        }
-    }
-
-    func scanned(_ code: String) async {
-        showScanner = false
-        do {
-            await pair(with: try PairingPayload.parse(code, requireAddress: !Self.isSimulator))
-        } catch {
-            fail(describe(error))
+    /// Connects without asking: an iPhone registers with the first server
+    /// built into the app, and the Simulator, which has no App Attest, pairs
+    /// with the Mac's own `provenance serve`.
+    func connect() async {
+        guard key != nil, pairing == nil, !pairingBusy else { return }
+        if Self.isSimulator {
+            await fetchFromMac()
+        } else if let server = KnownServers.available.first {
+            await register(with: server)
+        } else {
+            fail("this build has no server in servers.json")
         }
     }
 
@@ -265,7 +257,7 @@ final class CaptureFlow {
             }
             let (base, paired) = try await reach(candidates(payload), pin: payload.pin, request: request, device: key.id)
             guard paired.device == key.id else {
-                throw CaptureError("the laptop registered key \(Verdict.short(paired.device)), not this phone's")
+                throw CaptureError("the server registered key \(Verdict.short(paired.device)), not this phone's")
             }
             let pairing = Pairing(
                 base: base, urls: candidates(payload), pin: payload.pin, device: paired.device, kind: key.kind,
@@ -292,11 +284,12 @@ final class CaptureFlow {
         defer { api.invalidate() }
         do {
             guard key.kind == .secureEnclave else {
-                throw CaptureError("registering needs the Secure Enclave and App Attest; scan a laptop's code instead")
+                throw CaptureError("registering needs the Secure Enclave and App Attest")
             }
             let info = try await api.server()
             try info.validate()
             let challenge = try await api.challenge().challenge
+            pairStatus = "Confirm with Face ID…"
             let signature = try await Task.detached { try key.sign(Data(challenge.utf8)) }.value
             pairStatus = "Asking Apple to attest this app…"
             let attestation: AppAttestation
@@ -324,13 +317,6 @@ final class CaptureFlow {
         } catch {
             fail("Could not register with \(server.name): \(describe(error))")
         }
-    }
-
-    /// Forgets the current connection and registers with `server` instead.
-    func switchTo(_ server: KnownServer) async {
-        guard !pairingBusy, !paramsBusy else { return }
-        pairAgain()
-        await register(with: server)
     }
 
     /// Forgets the pairing, also one whose parameters never downloaded, and keeps the key.
@@ -361,19 +347,17 @@ final class CaptureFlow {
 
     /// Tries every announced address in turn, round after round, until one
     /// answers or the time is up. Each try is short, so a dead address (a VPN
-    /// or bridge interface) costs seconds, and the rounds cover the time the
-    /// local network prompt stays open. The token is single use, so an address
+    /// or bridge interface) costs seconds. The token is single use, so an address
     /// is first asked a question that carries no token, and the token is sent
     /// again only when the request with it never connected. A request that
     /// connected and then timed out or dropped may have spent the token.
     private func reach(_ urls: [URL], pin: String, request: PairRequest, device: String) async throws -> (URL, Paired) {
         guard !urls.isEmpty else { throw CaptureError("the pairing code names no address") }
-        let seconds = Self.isSimulator ? 10 : 90
+        let seconds = 10
         let deadline = Date.now.addingTimeInterval(TimeInterval(seconds))
         let apis = urls.map { LaptopAPI(bases: [$0], pin: pin, patience: .pairing) }
         defer { apis.forEach { $0.invalidate() } }
         var last: URLError?
-        var denied = false
         rounds: while true {
             for (url, api) in zip(urls, apis) {
                 let host = url.host() ?? ""
@@ -389,26 +373,22 @@ final class CaptureFlow {
                         // The laptop may have registered the key and only the answer was lost.
                         if (try? await api.trusted(device)) == true { return (url, Paired(device: device)) }
                         throw CaptureError(
-                            "the laptop at \(host) stopped answering after the pairing request reached it (\(describe(error))). The QR code is single use and may be spent: show a new one on the laptop and scan it again")
+                            "the server at \(host) stopped answering after the pairing request reached it (\(describe(error))). The pairing token is single use and may be spent: try again")
                     }
                 } catch let error as URLError where error.code == .cancelled {
-                    throw CaptureError("the laptop at \(host) does not hold the pinned certificate")
+                    throw CaptureError("the server at \(host) does not hold the pinned certificate")
                 } catch let error as URLError where HTTP.isConnectionFailure(error) {
                     last = error
-                    denied = denied || HTTP.localNetworkDenied(error)
                 }
                 if Date.now >= deadline { break rounds }
             }
-            pairStatus = denied ? Self.localNetworkHelp : "Looking for the laptop…"
+            pairStatus = "Looking for the server…"
             try await Task.sleep(for: .seconds(2))
         }
-        if denied { throw CaptureError(Self.localNetworkHelp) }
         let reason = last.map { " (\(describe($0)))" } ?? ""
         throw CaptureError(
-            "no laptop answered within \(seconds) s\(reason). Check that this phone is on the laptop's network and provenance serve runs")
+            "no server answered within \(seconds) s\(reason). Check that the server is running and this phone can reach it")
     }
-
-    static let localNetworkHelp = "Turn on Local Network in Settings › Capture, then pair again."
 
     private func fetchParams() async {
         guard var pairing, let api, !paramsBusy else { return }
@@ -700,8 +680,8 @@ final class CaptureFlow {
                     title: "Couldn't prove the area", message: "Try again.",
                     detail: describe(error), action: .retry)
                 : Failure(
-                    title: "Your laptop didn't answer",
-                    message: "Check it's on and on the same Wi-Fi.",
+                    title: "Couldn't reach the server",
+                    message: "Check your connection and try again.",
                     detail: describe(error), action: .retry)
             sending = false
         }
@@ -717,7 +697,7 @@ final class CaptureFlow {
         return value
     }
 
-    // MARK: 5. The laptop
+    // MARK: 5. The server
 
     var timeline: [Timeline.Group] {
         let halted = laptop?.phase == .failed ? (laptop?.error ?? "failed") : nil
@@ -737,7 +717,7 @@ final class CaptureFlow {
                     laptopNotice = nil
                     outcome = .rejected(Failure(
                         title: "Still working on it",
-                        message: "Your laptop is slower than usual. Check it.",
+                        message: "The server is taking longer than usual. Try again later.",
                         detail: "The capture \(id) is still running after \(Int(Self.followLimit / 60)) minutes."))
                     return
                 }
@@ -752,8 +732,8 @@ final class CaptureFlow {
                     if !transient || Date.now.timeIntervalSince(since) > Self.laptopPatience {
                         laptopNotice = nil
                         outcome = .rejected(Failure(
-                            title: "Lost your laptop",
-                            message: "Check it's on and on the same Wi-Fi.",
+                            title: "Lost the connection",
+                            message: "Check your connection and try again.",
                             detail: "\(describe(error)). Capture \(id)."))
                         return
                     }
@@ -770,7 +750,7 @@ final class CaptureFlow {
                 laptop = current
                 noteRunning()
                 if !current.phase.isRunning { break }
-                laptopNotice = current.phase == .queued ? "Waiting for your laptop" : nil
+                laptopNotice = current.phase == .queued ? "Waiting for the server" : nil
                 try? await Task.sleep(for: .milliseconds(700))
             }
             guard let status, !Task.isCancelled else { return }
@@ -799,7 +779,7 @@ final class CaptureFlow {
                 title: rejected ? "This photo didn't pass the checks" : "Publishing stopped",
                 message: rejected
                     ? "It wasn't published. Take the photo again."
-                    : "Something went wrong on your laptop. Take the photo again.",
+                    : "Something went wrong on the server. Take the photo again.",
                 detail: status.error ?? "unknown error"))
             return
         }
@@ -812,7 +792,7 @@ final class CaptureFlow {
             guard !Task.isCancelled else { return }
             outcome = .rejected(Failure(
                 title: "Couldn't bring the file back",
-                message: "It's verified and saved on your laptop.",
+                message: "It's verified and saved on the server.",
                 detail: describe(error)))
         }
     }
@@ -850,8 +830,8 @@ final class CaptureFlow {
                 if let original { show(original) }
                 sendSteps = [.prove: .done, .upload: .failed]
                 sendFailure = Failure(
-                    title: "Your laptop didn't answer",
-                    message: "Check it's on and on the same Wi-Fi.",
+                    title: "Couldn't reach the server",
+                    message: "Check your connection and try again.",
                     detail: "Could not connect to the server.", action: .retry)
             case "rejected":
                 outcome = .rejected(Failure(
@@ -860,15 +840,15 @@ final class CaptureFlow {
                     detail: "location: the proof does not verify for cell 87c2e3020ffffff"))
             case "lost":
                 outcome = .rejected(Failure(
-                    title: "Lost your laptop",
-                    message: "Check it's on and on the same Wi-Fi.",
+                    title: "Lost the connection",
+                    message: "Check your connection and try again.",
                     detail: "Could not connect to the server. Capture 20261102-124501-3f2a."))
             case "stored":
                 acceptedID = "20261102-124501-3f2a"
                 storedOnly = true
             case "pairFailed":
                 use(nil)
-                fail("Could not pair: no laptop answered within 10 s (Could not connect to the server.).")
+                fail("Could not pair: no server answered within 10 s (Could not connect to the server.).")
             default:
                 break
             }

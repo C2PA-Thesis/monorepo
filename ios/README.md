@@ -62,7 +62,7 @@ ProvenanceCapture/
   Crypto/DeviceKey.swift      Secure Enclave key, software key, Keychain
   Network/                    PinnedSession, the laptop API, proof parameter download
   Native/NativeBridge.swift   the only file that calls the Rust and Go libraries
-  Device/                     camera, QR scanner, CoreLocation
+  Device/                     camera, CoreLocation
   Views/                      the screens
   Resources/                  asset catalog, sample.jpg (the C2PA sample photo)
 ProvenanceCaptureTests/       XCTest unit tests and fixtures
@@ -77,7 +77,7 @@ the project.
 |---|---|---|
 | Device key | software P-256 key in the Keychain (`kind: software`) | Secure Enclave, `.privateKeyUsage` and `.userPresence` (`kind: secure-enclave`) |
 | App Attest | none: the app does not call it, and the laptop shows `software` | an attestation at each pairing, verified by a laptop with `--app-id`; needs a paid team (see [App Attest](#app-attest)) |
-| Pairing | fetches the payload from `http://127.0.0.1:8791/api/v2/pairing`, or paste it | scans the QR code on the presenter page, or paste it |
+| Connecting | pairs on its own with the payload from `http://127.0.0.1:8791/api/v2/pairing` | registers on its own with the first server in `servers.json`, with App Attest |
 | Photo | bundled `sample.jpg`, or the photo library | the app's own camera session, no photo library |
 | Location | Xcode's simulated location or a GPX file, sent with `simulated: true` | GPS; a fix that iOS marks as simulated by software is refused |
 
@@ -114,10 +114,10 @@ nor the salt.
 
 ### On an iPhone
 
-On 2026-11-02 this ran end to end on an iPhone 17 Pro (iOS 26.2) with a free
-Personal Team: pairing by QR over Wi-Fi, a Secure Enclave key, the real
-camera, the location proof on the phone, then publish and the reader checks
-on the laptop. These are the steps.
+On 2026-11-12 this ran end to end on an iPhone 17 Pro with the paid team:
+registering with prod (App Attest and Apple's risk metric), a Secure Enclave
+key, the real camera, the location proof on the phone, then publish and the
+reader checks on the server. These are the steps.
 
 1. In Xcode, Settings, Accounts, add your Apple ID. Xcode lists it as a
    Personal Team. A paid Apple Developer Program team works too, without the
@@ -141,13 +141,10 @@ on the laptop. These are the steps.
 5. The first launch of an app signed by a Personal Team is refused until you
    trust its developer: Settings, General, VPN and Device Management, the
    entry under Developer App for your Apple ID, Trust.
-6. Put the iPhone on the same Wi-Fi as the Mac. Networks that isolate clients
-   from each other (many guest and campus networks) block it; a phone hotspot
-   with the Mac joined to it is an alternative. Unverified on such networks.
-7. In the app, scan the large QR code on the presenter page, under "With the
-   app", and tap Allow when iOS asks for local network access. If it was
-   refused, turn it on in Settings, Privacy and Security, Local Network,
-   Capture.
+6. Open the app. After location and camera access it registers with the
+   first server in `servers.json` on its own; the only step is confirming
+   with Face ID. Registering needs App Attest, so the app must be signed by
+   the paid team: with a Personal Team it cannot connect.
 
 To have the laptop verify App Attest, sign with the paid team and start the
 laptop with that team's App ID: `provenance serve --app-id
@@ -161,32 +158,30 @@ that enable apps to be installed on a device will expire 7 days from
 issuance" ([Developer account overview](https://developer.apple.com/support/compare-memberships/),
 Enable a personal team in Xcode). After that the app does not open until you
 run it from Xcode again. Running it over the installed app should keep its
-key and pairing (unverified); if the app was deleted, pair again and the new
-key is trusted next to the old one.
+key and registration (unverified); if the app was deleted, it registers again
+and the new key is trusted next to the old one.
 
 After pairing the app downloads `proving.key` and `circuit.r1cs` from
 `/api/params/location/` and checks each SHA-256 against the pairing payload.
 They are kept in Application Support (`params/location/`, excluded from
 backups) next to a `version` file holding `sealed-hints-v1`, which
 `location-proof` checks. The pairing (address, pin, device id, parameter
-hashes) is kept in UserDefaults; "Pair again" forgets it and keeps the key.
+hashes) is kept in UserDefaults; "Connect again" forgets it and keeps the key.
 When the download fails, the screen offers both "Try again" and "Connect
 again", because a retry fails for good when the laptop's
 parameters, certificate or address changed.
 
-Pairing tries every address in the payload, one at a time, with a 6 second
-request timeout and no waiting for connectivity. It repeats the round every 2
-seconds for up to 90 seconds on a device (10 in the Simulator), which covers
-the local network prompt. When iOS refuses a request because Local Network
-access is off, the step says so and names the setting. Requests are never
-sent in parallel, because the token is single use. For the same reason each
+In the Simulator, pairing tries every address in the payload, one at a time,
+with a 6 second request timeout and no waiting for connectivity. It repeats
+the round every 2 seconds for up to 10 seconds. Requests are never sent in
+parallel, because the token is single use. For the same reason each
 address is first asked `GET /api/devices/{id}`, which carries no token, and
 the pairing request goes only to an address that answered. It is sent again
 only when it never connected. When it connected and then timed out or
 dropped, the laptop may have spent the token: the app asks the same address
-whether the key is now trusted, and if not, asks for a new QR code. In the
-Simulator, `https://localhost:8792` is tried first, so pairing works when the
-Mac has no LAN address.
+whether the key is now trusted, and if not, fails with a message to try
+again. `https://localhost:8792` is tried first, so pairing works when the Mac
+has no LAN address.
 
 After pairing the app keeps one pinned `URLSession`. A request goes to the
 address that last answered and moves on to the other announced addresses
@@ -221,8 +216,8 @@ instance of this App ID, on Apple hardware, asked to pair this receipt key
 with this token. That the receipt key is in the Secure Enclave follows from
 the app's code. Any build signed by the team attests the same.
 
-When the device cannot attest, the app pairs without it and says why on the
-Connection sheet (Key row), and the laptop shows the key as declared. A
+When the device cannot attest, the app pairs without it, and the laptop shows
+the key as declared. A
 laptop started with `--require-attestation` refuses that pairing. Reasons:
 
 - The Simulator never calls App Attest. Apple's page for `isSupported` does
@@ -249,20 +244,22 @@ capability under Signing and Capabilities.
 
 ## Registering with a server
 
-A device build can connect to the team's servers without a QR code. Their
-addresses and TLS pins are built in, from `Resources/servers.json`, which
-starts empty: an entry without an https address or a 64-digit pin is left out,
-and with none left the app only offers the QR code, as before. To fill it,
-take each environment's `Address` stack output and the pin the deploy prints
-([deploy](../deploy/README.md), Registration).
+A device build connects to the team's servers; there is no QR code. Their
+addresses and TLS pins are built in, from `Resources/servers.json`: an entry
+without an https address or a 64-digit pin is left out, and with none left the
+app cannot connect. To fill it, take each environment's `Address` stack
+output and the pin the deploy prints ([deploy](../deploy/README.md),
+Registration).
 
-With servers listed, the connect screen offers "Use the Prod server" (the
-first entry) and "Connect another way" (the others, scanning, typing a code).
-The Connection sheet shows the server and offers to switch. Registering
+The app registers with the first entry as soon as it reaches the connect
+screen, with nothing to tap: the person only confirms with Face ID, because
+the receipt key signs the challenge. A failure offers "Try again". Once
+registered, the camera shows nothing about the connection: a request that
+fails says so where it failed and offers to try again. Registering
 (`CaptureFlow.register`):
 
 1. `GET /api/v2/server` over the pinned connection gives the parameter
-   digests, which the QR code gives when pairing.
+   digests.
 2. `POST /api/v2/challenge` gives a single-use challenge. The receipt key
    signs it.
 3. A new App Attest key is attested over
@@ -401,17 +398,15 @@ runner.
 
 ## Not verified yet
 
-- Registering from a device with a server: the whole flow, Apple's answer
-  with the risk metric, and how the connect screen reads with servers
-  listed. `servers.json` is empty until the deploy.
+- Registering on its own at first launch on a device, without a tap: the
+  flow with the button ran on an iPhone against prod on 2026-11-12,
+  including Apple's risk metric and a capture end to end.
 - App Attest on a device: `generateKey` and `attestKey` with the paid team,
   the development aaguid, and the laptop verifying the result. The device
   build compiles that code; the Simulator never runs it.
 
-- Anything on a device: the Secure Enclave key, the camera, the QR scanner,
-  the local network prompt and the retry after it, pinned TLS to a LAN
-  address, the device setup steps
-  above. The device build compiles (CI builds it unsigned).
+- Anything on a device beyond the run above: the device setup steps with
+  another team. The device build compiles (CI builds it unsigned).
 - `zkloc_prove` on a device: its time and memory there. In the Simulator it
   runs in the tests when they get params
   (`TEST_RUNNER_ZKLOC_PARAMS=<dir from location-proof setup>`, and

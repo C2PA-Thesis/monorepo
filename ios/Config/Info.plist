@@ -10,11 +10,9 @@
 		<true/>
 	</dict>
 	<key>NSCameraUsageDescription</key>
-	<string>Capture takes the photos it certifies, and scans the code on your laptop to connect.</string>
+	<string>Capture takes the photos it certifies.</string>
 	<key>NSFaceIDUsageDescription</key>
 	<string>Face ID confirms it's you before this iPhone signs a photo.</string>
-	<key>NSLocalNetworkUsageDescription</key>
-	<string>Capture sends your photos to your laptop on this Wi-Fi.</string>
 	<key>NSLocationTemporaryUsageDescriptionDictionary</key>
 	<dict>
 		<key>capture</key>
