@@ -63,7 +63,7 @@ did not execute is marked as such.
 
 \section{Scope and method}
 
-The analysis covers commit \code{eb9087e} of \code{C2PA-Thesis/monorepo}, the
+The analysis covers commit \code{4265f06} of \code{C2PA-Thesis/monorepo}, the
 zk-Location fork it pins (\code{cc8f1c7}) and the HyperPlonk fork that provides
 the polynomial commitment (\code{glgreiner/hyperplonk} at \code{bed02ac}). It
 covers the parts every deployment shares: the receipt, the location proof, the
@@ -176,7 +176,7 @@ B3 & Both setups are single-party & C1, C2 & setup operator & by inspection \\
 \item[Fix.] Two options. (a) The device computes the hints at capture and the
   envelope commits to them, $E=\mathrm{MiMC}(\theta,\phi,s,\text{hints})$, so
   the prover cannot change them. This is implemented on the fork's branch
-  \code{c2p-77-sealed-hints} (\code{793d561}), not yet in the monorepo. We
+  \code{c2p-77-sealed-hints} (\code{793d561}), on branch \code{patricioperaltarg/c2p-77-native-ios-capture} (\code{c25a8e6}), pending merge to main. We
   measured 21{,}161 to 23{,}793 constraints (+12.4\%). It moves trust: the cell
   is then correct for the hints the device signed, so the device is trusted for
   the trigonometry as well as for the coordinate. (b) Bound the hints in the
@@ -191,13 +191,13 @@ B3 & Both setups are single-party & C1, C2 & setup operator & by inspection \\
   published pixel, the verifier checks $\sum_i r_i P_i = \sum_i r_i (S I)_i$ by
   sumcheck, where $S$ selects the left half. The challenges are drawn from a
   transcript that has absorbed only the image commitments, the hash sumchecks
-  and the range-check messages (\file{crates/crop-proof/src/crop.rs}{238--285}).
+  and the range-check messages (\file{crates/crop-proof/src/crop.rs}{261--305}).
   Neither $P$ nor $h$ is absorbed at any point; $P$ is read only after the
-  challenges exist (\file{crop.rs}{309}). This is the weak Fiat--Shamir
+  challenges exist (\file{crop.rs}{330}). This is the weak Fiat--Shamir
   transformation of Bernhard, Pereira and Warinschi~\cite{weakfs}: the
   statement is not hashed. Trail of Bits reported the same class of bug in
   several proof systems as Frozen Heart~\cite{frozenheart}. The fingerprint enters only as the claimed sum of
-  the hash sumcheck (\file{crop.rs}{248--251}). That gives no separate
+  the hash sumcheck (\file{crop.rs}{270--273}). That gives no separate
   attack, because the device signs $h$ and a third party cannot choose it.
 \item[Who.] A third party. The proof is public, so anyone can replay the
   transcript, obtain $r$, and look for $P'\neq P$ with
@@ -248,9 +248,9 @@ B3 & Both setups are single-party & C1, C2 & setup operator & by inspection \\
   pixels merged with the table $\{0,\dots,255\}$ and the sorted vector $H$, which
   lists the table and the pixel values together in table order. The challenges
   of that product check are drawn at \code{crates/crop-proof/src/iop.rs}, lines
-  269 and 274, in the prover and at \file{crop.rs}{262--263} in the
+  269 and 274, in the prover and at \file{crop.rs}{282--283} in the
   verifier, but the commitment to $H$ enters the transcript only after the crop
-  sumcheck (\code{crop.rs}, lines 115 and 342).
+  sumcheck (\code{crop.rs}, lines 121 and 363).
 \item[Who.] A third party. Choosing $H$ after the challenges lets the prover
   satisfy the product check for any committed values, in or out of range.
   Without the range bound, $A\,I'=h$ has solutions with arbitrary field
@@ -292,7 +292,7 @@ B3 & Both setups are single-party & C1, C2 & setup operator & by inspection \\
 \begin{finding}{A4}{Commitments and fingerprint identify the original}
 \item[What.] The fingerprint $h=A\,I$ is deterministic and public. The proof
   also carries PST commitments to the three channels of $I$
-  (\file{crop.rs}{85--91}), and the commitment scheme adds no randomness
+  (\file{crop.rs}{94--96}), and the commitment scheme adds no randomness
   (\file{multilinear_kzg/mod.rs}{102} in the HyperPlonk fork), so the same
   channel always gives the same commitment. Nine evaluations of the channel
   polynomials are published unmasked. HyperVerITAS derives zero knowledge from
@@ -342,10 +342,10 @@ B3 & Both setups are single-party & C1, C2 & setup operator & by inspection \\
 \item[Attack.] \cmd{provenance attack} case \code{signed-elsewhere} signs the
   demo photo with a Tokyo coordinate and proves that cell; the verifier
   accepts. In the CLI the simulated device key is an unencrypted PEM file
-  protected only by file permissions (\file{crates/provenance/src/capture.rs}{233}).
+  protected only by file permissions (\file{crates/provenance/src/receipt.rs}{115--127}).
   The same holds for the capture time: the receipt signs a \code{captured_at}
   that is ``asserted by the device, not by a trusted clock''
-  (\file{capture.rs}{56}), and no claim in Section~2 covers time.
+  (\file{receipt.rs}{33--34}), and no claim in Section~2 covers time.
 \item[Assumption.] The capture device is honest, reports its true location and
   time, and its key does not leave it. Hardware-backed keys and platform
   attestation would narrow this; they are not implemented.
@@ -356,7 +356,7 @@ B3 & Both setups are single-party & C1, C2 & setup operator & by inspection \\
 \item[What.] The C2PA manifest is signed with the sample certificate and key
   that \cmd{provenance setup} downloads from the public \code{c2patool}
   release, and the verifier accepts a manifest whose state is \code{Valid}
-  (\file{crates/provenance/src/manifest.rs}{102--105}). Anyone can therefore
+  (\file{crates/provenance/src/manifest.rs}{101--104}). Anyone can therefore
   re-sign a modified file. The check still verifies integrity, but it does not
   identify an editor. Every forged file in \cmd{provenance attack} is
   re-signed this way, so the rejections come from the receipt and the proofs.
@@ -380,7 +380,7 @@ These concern the phone web app and the capture server, which will change.
     build both proofs. We assume it is trusted with them.
   \item Phones pair with a six-digit code that does not expire and has no
     attempt limit; a paired key is added to the keys the reader trusts.
-  \item The web app takes the photo from a file picker and reads the location
+  \item The web app takes the photo from an HTML file input with \code{capture="environment"} (opens the camera on mobile) and reads the location
     when the file arrives, not at the shutter.
 \end{itemize}
 
@@ -397,7 +397,7 @@ document is a claim about them.
     A5, we did not check whether a coordinate near a cell boundary can be
     proven in a neighboring cell once A1 is fixed.
   \item \textbf{Displayed versus verified pixels.} The reader decodes the PNG
-    and converts it to 8-bit RGB (\file{crates/provenance/src/capture.rs}{197--202}),
+    and converts it to 8-bit RGB (\file{crates/provenance/src/image.rs}{17--37}),
     dropping alpha and ignoring color profiles. We did not check whether a
     file can display a different picture from the one that is verified.
   \item \textbf{Other commitment schemes.} The HyperVerITAS repository has
