@@ -211,10 +211,7 @@ private struct CheckScreen: View {
             switch state {
             case .running:
                 Spacer()
-                VStack(spacing: 28) {
-                    ApertureLoader(size: 88)
-                    Text("Checking this photo").font(Typeface.sans(20, .bold, relativeTo: .title3)).foregroundStyle(Theme.ink)
-                }
+                LoadingState(title: "Checking this photo")
                 Spacer()
                 Color.clear.frame(height: 68)
             case .passed(let claim, let outline):
@@ -230,7 +227,11 @@ private struct CheckScreen: View {
                 .padding(.horizontal, 24)
                 .padding(.top, 24)
                 .padding(.bottom, 24)
-                .onAppear { withAnimation(.spring(duration: 0.6, bounce: 0.5).delay(0.15)) { popped = true } }
+                .sensoryFeedback(.success, trigger: popped) { _, new in new }
+                .onAppear {
+                    Sound.success.play()
+                    withAnimation(.spring(duration: 0.6, bounce: 0.5).delay(0.15)) { popped = true }
+                }
                 Button("Done", action: back).buttonStyle(.primary).padding(.horizontal, 24).padding(.bottom, 12)
             case .failed(let message):
                 Spacer()

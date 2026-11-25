@@ -82,7 +82,7 @@ struct LocationScreen: View {
             title: denied ? "Location is off" : "Allow location",
             subtitle: denied
                 ? "Turn it on in Settings, with Precise Location."
-                : "So each photo can prove where it was taken. Your location stays private."
+                : "So each photo can prove where it was taken."
         ) {
             LocationArt(off: denied)
         } actions: {
@@ -150,15 +150,20 @@ struct PairScreen: View {
 
     private var subtitle: String {
         guard flow.pairFailed else {
+            if flow.slowToConnect {
+                if CaptureFlow.isSimulator { return "Waiting for provenance serve on this Mac." }
+                return "This is taking longer than usual. Check that this iPhone is online."
+            }
             if CaptureFlow.isSimulator { return "This Mac does the heavy lifting when you publish." }
             return "Confirm with Face ID so this iPhone can sign the photos it takes."
         }
-        if CaptureFlow.isSimulator { return "Start Capture on this Mac, then try again." }
-        return "Check your connection and try again."
+        if CaptureFlow.isSimulator { return "Start provenance serve on this Mac, then try again." }
+        return "Something went wrong while setting up. Try again."
     }
 
     private var workingTitle: String {
         if flow.key == nil { return "Setting up this iPhone…" }
+        if flow.slowToConnect { return "Still connecting…" }
         if flow.paramsBusy { return "Getting ready…" }
         return "Connecting…"
     }

@@ -80,6 +80,12 @@ final class CaptureFlow {
     private(set) var paramsStatus: String?
     /// The parameter download is running.
     private(set) var paramsBusy = false
+    /// `connect()` is waiting to try again.
+    private(set) var retrying = false
+    /// Connecting has taken more than a few seconds.
+    private(set) var slowToConnect = false
+    /// The last failure was the server not answering.
+    private var unreachable = false
 
     // Welcome
     private(set) var welcomed = UserDefaults.standard.bool(forKey: CaptureFlow.welcomedKey)
@@ -157,7 +163,7 @@ final class CaptureFlow {
     }
 
     /// Something runs that the pair screen waits for.
-    var pairWorking: Bool { !pairFailed && (key == nil || pairingBusy || paramsBusy) }
+    var pairWorking: Bool { !pairFailed && (key == nil || pairingBusy || paramsBusy || retrying) }
 
     func finishWelcome() {
         welcomed = true
@@ -196,7 +202,7 @@ final class CaptureFlow {
         if let saved = Pairing.load(), saved.device == key?.id {
             use(saved)
             booted = true
-            if !saved.paramsReady { await fetchParams() }
+            if !saved.paramsReady { await connect() }
             return
         }
         booted = true
@@ -213,7 +219,8 @@ final class CaptureFlow {
             payload = try await LocalPairing.fetch()
         } catch {
             pairingBusy = false
-            fail("provenance serve on this Mac did not answer: \(describe(error)).")
+            unreachable = Self.isUnreachable(error)
+            fail("provenance serve on this Mac did not answer: \(describe(error))")
             return
         }
         pairingBusy = false
@@ -222,16 +229,44 @@ final class CaptureFlow {
 
     /// Connects without asking: an iPhone registers with the first server
     /// built into the app, and the Simulator, which has no App Attest, pairs
-    /// with the Mac's own `provenance serve`.
+    /// with the Mac's own `provenance serve`. While the server cannot be
+    /// reached it keeps trying, so the screen stays on "Connecting…" instead
+    /// of showing an error the user can do nothing about.
     func connect() async {
-        guard key != nil, pairing == nil, !pairingBusy else { return }
-        if Self.isSimulator {
-            await fetchFromMac()
-        } else if let server = KnownServers.available.first {
-            await register(with: server)
-        } else {
-            fail("this build has no server in servers.json")
+        guard key != nil, !isPaired, !pairingBusy, !paramsBusy, !retrying else { return }
+        retrying = true
+        let started = Date.now
+        defer {
+            retrying = false
+            slowToConnect = false
         }
+        var wait = 1.0
+        while !isPaired {
+            unreachable = false
+            if pairing != nil {
+                await fetchParams()
+            } else if Self.isSimulator {
+                await fetchFromMac()
+            } else if let server = KnownServers.available.first {
+                await register(with: server)
+            } else {
+                fail("this build has no server in servers.json")
+                return
+            }
+            guard pairFailed, unreachable else { return }
+            pairFailed = false
+            slowToConnect = Date.now.timeIntervalSince(started) > 10
+            do { try await Task.sleep(for: .seconds(wait)) } catch { return }
+            wait = min(wait * 2, 5)
+        }
+    }
+
+    /// A failure that waiting can fix: no connection, or a server that is
+    /// starting or restarting.
+    private static func isUnreachable(_ error: Error) -> Bool {
+        if let error = error as? URLError { return HTTP.isConnectionFailure(error) }
+        if let error = error as? HTTPError { return [502, 503, 504].contains(error.status) }
+        return false
     }
 
     func pair(with payload: PairingPayload) async {
@@ -267,6 +302,7 @@ final class CaptureFlow {
             use(pairing)
             await fetchParams()
         } catch {
+            unreachable = unreachable || Self.isUnreachable(error)
             fail("Could not pair: \(describe(error))")
         }
     }
@@ -315,6 +351,7 @@ final class CaptureFlow {
             use(pairing)
             await fetchParams()
         } catch {
+            unreachable = Self.isUnreachable(error)
             fail("Could not register with \(server.name): \(describe(error))")
         }
     }
@@ -386,6 +423,7 @@ final class CaptureFlow {
             try await Task.sleep(for: .seconds(2))
         }
         let reason = last.map { " (\(describe($0)))" } ?? ""
+        unreachable = true
         throw CaptureError(
             "no server answered within \(seconds) s\(reason). Check that the server is running and this phone can reach it")
     }
@@ -406,7 +444,8 @@ final class CaptureFlow {
             paramsStatus = nil
         } catch {
             paramsStatus = nil
-            fail("Proof parameters did not download: \(describe(error)).")
+            unreachable = Self.isUnreachable(error)
+            fail("Proof parameters did not download: \(describe(error))")
         }
     }
 

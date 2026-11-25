@@ -119,10 +119,11 @@ struct OpenSettingsButton: View {
     }
 }
 
-/// The area on a muted map: the hexagon in teal, and on this phone only, a
-/// dot where the photo was taken.
+/// The area on a muted map: the hexagon in teal. The exact spot is never
+/// drawn, not even on this phone, so a screenshot can't leak it.
 struct AreaMap: View {
     let outline: Outline?
+    /// Only centres the map while the outline is not known yet.
     var you: CLLocationCoordinate2D?
     /// Metres around `you` while the outline is not known yet.
     var span: Double = 4000
@@ -136,13 +137,6 @@ struct AreaMap: View {
                 MapPolygon(coordinates: Self.coordinates(outline))
                     .foregroundStyle(Theme.signalBright.opacity(0.16))
                     .stroke(Theme.signal, style: StrokeStyle(lineWidth: 2.5, lineJoin: .round))
-            }
-            if let you {
-                Annotation("Where you took it", coordinate: you) {
-                    Circle().fill(Theme.ink).frame(width: 10, height: 10)
-                        .overlay(Circle().strokeBorder(Theme.paper, lineWidth: 2.5).padding(-2.5))
-                }
-                .annotationTitles(.hidden)
             }
         }
         .mapStyle(.standard(emphasis: .muted, pointsOfInterest: .excludingAll))
@@ -285,6 +279,37 @@ struct Heading: View {
     }
 }
 
+/// A centred loader with what runs now: the one waiting state every screen uses.
+struct LoadingState<Footer: View>: View {
+    let title: String
+    var detail: String?
+    @ViewBuilder var footer: Footer
+
+    var body: some View {
+        VStack(spacing: 28) {
+            ApertureLoader(size: 72)
+            VStack(spacing: 8) {
+                Text(title).font(Typeface.title).tight(26).foregroundStyle(Theme.ink)
+                    .accessibilityAddTraits(.isHeader)
+                if let detail {
+                    Text(detail).font(Typeface.sans(15, relativeTo: .subheadline)).foregroundStyle(Theme.soft)
+                        .contentTransition(.opacity)
+                        .animation(Theme.ease, value: detail)
+                }
+            }
+            .multilineTextAlignment(.center)
+            footer
+        }
+        .padding(.horizontal, 32)
+    }
+}
+
+extension LoadingState where Footer == EmptyView {
+    init(title: String, detail: String? = nil) {
+        self.init(title: title, detail: detail) { EmptyView() }
+    }
+}
+
 /// Names for the area sizes.
 enum AreaWords {
     /// Short names for the size picker, coarse to fine.
@@ -299,6 +324,8 @@ struct ApertureMark: View, Animatable {
     /// The hexagon's size against the lens, 0 closed to 1 wide open.
     var opening: Double = 0.5
     var rotation: Double = 0
+    /// One flat colour instead of the iris gradient.
+    var tint: Color?
 
     nonisolated var animatableData: AnimatablePair<Double, Double> {
         get { AnimatablePair(opening, rotation) }
@@ -313,7 +340,7 @@ struct ApertureMark: View, Animatable {
             let blades = Aperture.blades(in: CGRect(origin: .zero, size: size), opening: opening, rotation: rotation)
             let radius = min(size.width, size.height) / 2
             for (index, blade) in blades.enumerated() {
-                let colors = [Theme.iris[index], Theme.iris[index + 1]]
+                let colors = tint.map { [$0, $0] } ?? [Theme.iris[index], Theme.iris[index + 1]]
                 context.fill(
                     blade.path,
                     with: .linearGradient(Gradient(colors: colors), startPoint: blade.from, endPoint: blade.to))
@@ -337,7 +364,7 @@ struct ApertureLoader: View {
     var body: some View {
         TimelineView(.animation(paused: reduceMotion)) { context in
             let time = context.date.timeIntervalSinceReferenceDate
-            ApertureMark(opening: 0.4 + 0.1 * sin(time * 1.6), rotation: reduceMotion ? 0 : time * 0.5)
+            ApertureMark(opening: 0.4 + 0.1 * sin(time * 1.6), rotation: reduceMotion ? 0 : time * 0.5, tint: Theme.ink)
         }
         .frame(width: size, height: size)
         .accessibilityElement()

@@ -94,6 +94,12 @@ final class LocationService: NSObject, CLLocationManagerDelegate {
         try? await manager.requestTemporaryFullAccuracyAuthorization(withPurposeKey: Self.purposeKey)
     }
 
+    /// Whether a shutter pressed at `date` would find a fix without waiting.
+    func isFresh(at date: Date) -> Bool {
+        guard let last else { return false }
+        return date.timeIntervalSince(last.timestamp) <= Self.maxAge
+    }
+
     /// The fix for a photo taken at `shutter`: one at most `maxAge` from it,
     /// waiting no later than `shutter + maxAge` for the next one.
     func fix(at shutter: Date) async throws -> Fix {
