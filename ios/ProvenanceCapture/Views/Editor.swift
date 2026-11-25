@@ -1,8 +1,7 @@
 import SwiftUI
 
 /// The photo editor: the picture, the current tool's options under it, and
-/// the tools in a bar at the bottom. The laptop proves the crop and the turn
-/// after it, so blur and greyscale are shown as coming soon.
+/// the tools in a bar at the bottom. Only edits the laptop can prove are here.
 struct CropEditor: View {
     let image: CGImage?
     let size: OriginalSize
@@ -28,7 +27,7 @@ struct CropEditor: View {
     }
 
     enum Tool: CaseIterable, Identifiable {
-        case crop, rotate, blur, greyscale
+        case crop, rotate
 
         var id: Self { self }
 
@@ -36,8 +35,6 @@ struct CropEditor: View {
             switch self {
             case .crop: "Crop"
             case .rotate: "Rotate"
-            case .blur: "Blur"
-            case .greyscale: "Greyscale"
             }
         }
 
@@ -45,12 +42,8 @@ struct CropEditor: View {
             switch self {
             case .crop: "crop"
             case .rotate: "rotate.right"
-            case .blur: "aqi.medium"
-            case .greyscale: "circle.lefthalf.filled"
             }
         }
-
-        var ready: Bool { self == .crop || self == .rotate }
     }
 
     enum Aspect: CaseIterable, Identifiable {
@@ -86,7 +79,7 @@ struct CropEditor: View {
                 if tool == .rotate {
                     TurnCanvas(image: image, crop: draft, turn: draftTurn, angle: angle)
                 } else {
-                    CropCanvas(image: image, size: size, crop: $draft, ratio: aspect.ratio, editable: tool == .crop)
+                    CropCanvas(image: image, size: size, crop: $draft, ratio: aspect.ratio)
                 }
             }
             .padding(.horizontal, 20)
@@ -98,6 +91,9 @@ struct CropEditor: View {
         }
         .background(Color.black.ignoresSafeArea())
         .preferredColorScheme(.dark)
+        .sensoryFeedback(.selection, trigger: tool)
+        .sensoryFeedback(.selection, trigger: aspect)
+        .sensoryFeedback(.impact(weight: .light), trigger: draftTurn)
         .onAppear {
             draft = crop
             draftTurn = turn
@@ -150,7 +146,7 @@ struct CropEditor: View {
                     .accessibilityLabel(draftTurn == .zero ? "Not turned" : "Turned \(draftTurn.degrees) degrees clockwise")
                 TurnButton(icon: "rotate.right", label: "Turn right") { turnBy(1) }
             }
-        } else if tool == .crop {
+        } else {
             HStack(spacing: 8) {
                 ForEach(Aspect.allCases) { option in
                     Chip(title: option.title, selected: aspect == option, dark: true) {
@@ -161,13 +157,6 @@ struct CropEditor: View {
                     }
                 }
             }
-        } else {
-            Text("Coming soon")
-                .font(Typeface.sans(15, .medium, relativeTo: .subheadline))
-                .foregroundStyle(.white.opacity(0.6))
-                .padding(.horizontal, 16)
-                .frame(minHeight: 36)
-                .background(.white.opacity(0.1), in: Capsule())
         }
     }
 
@@ -188,27 +177,15 @@ struct CropEditor: View {
                         Image(systemName: item.icon)
                             .font(.system(size: 20, weight: .medium))
                             .frame(height: 26)
-                            .overlay(alignment: .topTrailing) {
-                                if !item.ready {
-                                    Text("Soon")
-                                        .font(Typeface.sans(9, .bold, relativeTo: .caption2))
-                                        .padding(.horizontal, 5)
-                                        .padding(.vertical, 2)
-                                        .background(.white.opacity(0.18), in: Capsule())
-                                        .fixedSize()
-                                        .offset(x: 24, y: -8)
-                                }
-                            }
                         Text(item.title).font(Typeface.sans(12, .medium, relativeTo: .caption))
                         Circle().fill(tool == item ? .white : .clear).frame(width: 4, height: 4)
                     }
-                    .foregroundStyle(tool == item ? .white : .white.opacity(item.ready ? 0.6 : 0.4))
+                    .foregroundStyle(tool == item ? .white : .white.opacity(0.6))
                     .frame(maxWidth: .infinity, minHeight: 64)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(item.title)
-                .accessibilityHint(item.ready ? "" : "Coming soon")
                 .accessibilityAddTraits(tool == item ? .isSelected : [])
             }
         }
@@ -226,7 +203,6 @@ private struct CropCanvas: View {
     let size: OriginalSize
     @Binding var crop: CropRect
     let ratio: Double?
-    let editable: Bool
     @State private var start: CropRect?
 
     var body: some View {
@@ -240,24 +216,22 @@ private struct CropCanvas: View {
                 Rectangle().strokeBorder(.white, lineWidth: 1.5)
                     .frame(width: box.width, height: box.height)
                     .offset(x: box.minX, y: box.minY)
-                if editable {
-                    ThirdsGrid()
-                        .stroke(.white.opacity(0.5), lineWidth: 0.75)
-                        .frame(width: box.width, height: box.height)
-                        .offset(x: box.minX, y: box.minY)
-                        .opacity(start == nil ? 0 : 1)
-                        .animation(Theme.ease, value: start == nil)
-                        .allowsHitTesting(false)
-                    Color.clear
-                        .frame(width: box.width, height: box.height)
-                        .contentShape(Rectangle())
-                        .offset(x: box.minX, y: box.minY)
-                        .gesture(move(scale))
-                    ForEach(CropHandle.allCases.filter { ratio == nil || $0.isCorner }, id: \.self) { handle in
-                        HandleMark(handle: handle)
-                            .position(point(handle, box))
-                            .gesture(resize(handle, scale))
-                    }
+                ThirdsGrid()
+                    .stroke(.white.opacity(0.5), lineWidth: 0.75)
+                    .frame(width: box.width, height: box.height)
+                    .offset(x: box.minX, y: box.minY)
+                    .opacity(start == nil ? 0 : 1)
+                    .animation(Theme.ease, value: start == nil)
+                    .allowsHitTesting(false)
+                Color.clear
+                    .frame(width: box.width, height: box.height)
+                    .contentShape(Rectangle())
+                    .offset(x: box.minX, y: box.minY)
+                    .gesture(move(scale))
+                ForEach(CropHandle.allCases.filter { ratio == nil || $0.isCorner }, id: \.self) { handle in
+                    HandleMark(handle: handle)
+                        .position(point(handle, box))
+                        .gesture(resize(handle, scale))
                 }
             }
         }

@@ -84,14 +84,13 @@ struct CameraHome: View {
             lastThumbnail.frame(width: 56, height: 56)
             Spacer()
             Button(action: shoot) {
-                ZStack {
-                    Circle().strokeBorder(.white, lineWidth: 4)
-                    Circle().fill(.white).padding(8).scaleEffect(shooting ? 0.86 : 1)
-                }
-                .frame(width: 78, height: 78)
-                .opacity(canShoot ? 1 : 0.4)
+                Circle().strokeBorder(.white, lineWidth: 4)
+                    .frame(width: 78, height: 78)
+                    .opacity(canShoot ? 1 : 0.4)
             }
+            .buttonStyle(ShutterStyle(shooting: shooting))
             .disabled(!canShoot)
+            .sensoryFeedback(.impact(weight: .medium), trigger: shooting) { _, new in new }
             .accessibilityLabel("Take the photo")
             Spacer()
             libraryButton.frame(width: 56, height: 56)
@@ -105,16 +104,16 @@ struct CameraHome: View {
             if let photo = flow.gallery.photos.first, let image = flow.gallery.image(photo) {
                 Image(uiImage: image).resizable().scaledToFill()
                     .frame(width: 48, height: 48)
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
-                    .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.white.opacity(0.7), lineWidth: 1.5))
-                    .overlay(alignment: .topTrailing) { VerifiedMark(size: 18).offset(x: 6, y: -6) }
+                    .clipShape(Circle())
+                    .overlay(Circle().strokeBorder(.white.opacity(0.7), lineWidth: 1.5))
+                    .overlay(alignment: .topTrailing) { VerifiedMark(size: 18).offset(x: 4, y: -4) }
+                    .id(photo.id)
+                    .transition(.scale(scale: 0.5).combined(with: .opacity))
             } else {
-                Image(systemName: "square.grid.2x2").font(.system(size: 18, weight: .medium))
-                    .frame(width: 48, height: 48)
-                    .background(.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
-                    .foregroundStyle(.white)
+                CameraIcon(name: "square.grid.2x2")
             }
         }
+        .animation(.spring(duration: 0.45, bounce: 0.3), value: flow.gallery.photos.first?.id)
         .accessibilityLabel("Your photos")
     }
 
@@ -122,18 +121,12 @@ struct CameraHome: View {
         #if targetEnvironment(simulator)
             // The Simulator has no camera; a library photo stands in for the shutter.
             PhotosPicker(selection: $picked, matching: .images) {
-                Image(systemName: "photo.on.rectangle").font(.system(size: 18, weight: .medium))
-                    .frame(width: 48, height: 48)
-                    .background(.white.opacity(0.12), in: Circle())
-                    .foregroundStyle(.white)
+                CameraIcon(name: "photo.on.rectangle")
             }
             .accessibilityLabel("Use a photo from the library")
         #else
             Button(action: flip) {
-                Image(systemName: "arrow.triangle.2.circlepath.camera").font(.system(size: 18, weight: .medium))
-                    .frame(width: 48, height: 48)
-                    .background(.white.opacity(0.12), in: Circle())
-                    .foregroundStyle(.white)
+                CameraIcon(name: "arrow.triangle.2.circlepath.camera")
             }
             .disabled(!canShoot)
             .opacity(canShoot ? 1 : 0.4)
@@ -165,6 +158,8 @@ struct CameraHome: View {
         Task {
             defer { shooting = false }
             #if targetEnvironment(simulator)
+                // The camera plays its own shutter sound on a device.
+                Sound.shutter.play()
                 if let url = Bundle.main.url(forResource: "sample", withExtension: "jpg"),
                     let data = try? Data(contentsOf: url)
                 {
@@ -182,16 +177,51 @@ struct CameraHome: View {
     }
 }
 
-/// The location state, over the viewfinder.
+/// The shutter: the inner disc sinks while pressed and while the photo is taken.
+private struct ShutterStyle: ButtonStyle {
+    let shooting: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .overlay {
+                Circle().fill(.white).padding(8)
+                    .scaleEffect(configuration.isPressed ? 0.88 : shooting ? 0.92 : 1)
+                    .animation(.spring(duration: 0.25, bounce: 0.3), value: configuration.isPressed)
+                    .animation(.spring(duration: 0.25, bounce: 0.3), value: shooting)
+            }
+    }
+}
+
+/// A round icon button on the camera's black bar.
+private struct CameraIcon: View {
+    let name: String
+
+    var body: some View {
+        Image(systemName: name).font(.system(size: 18, weight: .medium))
+            .frame(width: 48, height: 48)
+            .background(.white.opacity(0.12), in: Circle())
+            .foregroundStyle(.white)
+    }
+}
+
+/// The location state, over the viewfinder. Ready means a fix recent enough
+/// for the shutter to use, not just that one arrived at some point.
 private struct LocationChip: View {
     let location: LocationService
 
     var body: some View {
+        // Re-read every second: a fix goes stale without any new event.
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            chip(fresh: location.isFresh(at: context.date))
+        }
+    }
+
+    private func chip(fresh: Bool) -> some View {
         Group {
             if let url = settingsURL {
-                Link(destination: url) { label }
+                Link(destination: url) { label(fresh: fresh) }
             } else {
-                label
+                label(fresh: fresh)
             }
         }
         .accessibilityElement(children: .combine)
@@ -202,16 +232,20 @@ private struct LocationChip: View {
         return nil
     }
 
-    private var label: some View {
+    private func label(fresh: Bool) -> some View {
         HStack(spacing: 8) {
             switch location.status {
-            case .ok:
+            case .ok where fresh:
                 Circle().fill(Theme.verify).frame(width: 7, height: 7)
                     .overlay(Circle().stroke(Theme.verify.opacity(0.3), lineWidth: 3))
+                    .transition(.scale.combined(with: .opacity))
                 Text("Location ready").foregroundStyle(.white)
-            case .waiting:
+                    .transition(.opacity)
+            case .ok, .waiting:
                 Spinner(color: .white).frame(width: 12, height: 12)
+                    .transition(.opacity)
                 Text("Finding your location…").foregroundStyle(.white)
+                    .transition(.opacity)
             case .error(let text, _):
                 Circle().fill(Theme.warn).frame(width: 7, height: 7)
                 Text(text).foregroundStyle(.white)
@@ -221,6 +255,12 @@ private struct LocationChip: View {
         .padding(.horizontal, 14)
         .frame(height: 36)
         .background(.white.opacity(0.12), in: Capsule())
+        .animation(Theme.ease, value: ready(fresh))
+    }
+
+    private func ready(_ fresh: Bool) -> Bool {
+        if case .ok = location.status { return fresh }
+        return false
     }
 }
 

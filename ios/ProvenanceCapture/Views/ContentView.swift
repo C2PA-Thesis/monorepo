@@ -21,6 +21,7 @@ struct ContentView: View {
         }
         .transition(.opacity)
         .animation(Theme.ease, value: flow.stage)
+        .sensoryFeedback(.success, trigger: flow.stage) { old, new in old == .pair && new != .pair }
         .tint(Theme.ink)
         .task {
             await flow.boot()

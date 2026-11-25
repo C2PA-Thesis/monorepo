@@ -11,19 +11,9 @@ struct PublishScreen: View {
             if let failure = flow.sendFailure {
                 Problem(title: failure.title, message: failure.message)
             } else {
-                VStack(spacing: 28) {
-                    ApertureLoader(size: 88)
-                    VStack(spacing: 8) {
-                        Text("Publishing").font(Typeface.title).tight(26).foregroundStyle(Theme.ink)
-                        Text(flow.laptopNotice ?? now)
-                            .font(Typeface.sans(15, relativeTo: .subheadline)).foregroundStyle(Theme.soft)
-                            .contentTransition(.opacity)
-                            .animation(Theme.ease, value: now)
-                    }
-                    .multilineTextAlignment(.center)
-                    ProgressLine(value: progress).frame(width: 160)
+                LoadingState(title: "Publishing", detail: flow.laptopNotice ?? now) {
+                    ProgressLine(done: done, total: total, step: now).frame(width: 160)
                 }
-                .padding(.horizontal, 32)
             }
             Spacer()
             if flow.sendFailure != nil {
@@ -54,7 +44,7 @@ struct PublishScreen: View {
         return "Almost there"
     }
 
-    private var progress: Double {
+    private var done: Int {
         let phone = flow.sendSteps.values.filter { $0 == .done }.count
         let laptop = items.filter {
             switch $0.state {
@@ -62,10 +52,11 @@ struct PublishScreen: View {
             default: false
             }
         }.count
-        // Before the laptop answers, its steps are not known yet; six is the usual count.
-        let total = 2 + max(items.count, 6)
-        return Double(phone + laptop) / Double(total)
+        return phone + laptop
     }
+
+    // Before the laptop answers, its steps are not known yet; six is the usual count.
+    private var total: Int { 2 + max(items.count, 6) }
 
     /// What each laptop step and check does, in plain words.
     static let plain: [String: String] = [
@@ -80,22 +71,39 @@ struct PublishScreen: View {
     ]
 }
 
-/// A thin bar that fills as the work moves on.
+/// A thin bar that fills as the work moves on. Inside a step it keeps
+/// creeping towards the next one, so a long proof doesn't look stuck.
 private struct ProgressLine: View {
-    let value: Double
+    let done: Int
+    let total: Int
+    /// The step running now; the creep restarts when it changes.
+    let step: String
+    @State private var started = Date.now
 
     var body: some View {
-        GeometryReader { geometry in
-            ZStack(alignment: .leading) {
-                Capsule().fill(Theme.line)
-                Capsule().fill(Theme.ink).frame(width: max(6, geometry.size.width * min(max(value, 0), 1)))
+        TimelineView(.periodic(from: .now, by: 0.25)) { context in
+            let value = value(at: context.date)
+            GeometryReader { geometry in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Theme.line)
+                    Capsule().fill(Theme.ink).frame(width: max(6, geometry.size.width * value))
+                }
             }
+            .animation(.linear(duration: 0.25), value: value)
+            .accessibilityValue("\(Int((value * 100).rounded())) percent")
         }
         .frame(height: 4)
-        .animation(Theme.ease, value: value)
+        .onChange(of: step) { started = .now }
+        .onChange(of: done) { started = .now }
         .accessibilityElement()
         .accessibilityLabel("Progress")
-        .accessibilityValue("\(Int((value * 100).rounded())) percent")
+    }
+
+    /// Never reaches the next step on its own: 1 - e^(-t/8) of one step, at most 90 %.
+    private func value(at date: Date) -> Double {
+        guard total > 0 else { return 0 }
+        let creep = min(1 - exp(-date.timeIntervalSince(started) / 8), 0.9)
+        return min((Double(done) + creep) / Double(total), 1)
     }
 }
 
@@ -167,6 +175,9 @@ struct VerifiedView: View {
                 if let image {
                     Image(uiImage: image).resizable().scaledToFit()
                         .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.md))
+                        .opacity(popped ? 1 : 0)
+                        .offset(y: popped || reduceMotion ? 0 : 16)
+                        .animation(Theme.ease.delay(0.3), value: popped)
                         .accessibilityLabel("The published photo")
                 }
             }
@@ -181,13 +192,15 @@ struct VerifiedView: View {
                 .padding(.bottom, 12)
             }
         }
+        .sensoryFeedback(.success, trigger: popped) { _, new in new }
         .onAppear {
+            Sound.success.play()
             if reduceMotion { popped = true } else { withAnimation(.spring(duration: 0.6, bounce: 0.5).delay(0.15)) { popped = true } }
         }
     }
 
     private var summary: String {
         let today = ISO8601DateFormatter().date(from: takenAt).map(Calendar.current.isDateInToday) ?? false
-        return "Taken \(today ? "today at " : "")\(Verdict.when(takenAt)). Your location stays private."
+        return "Taken \(today ? "today at " : "")\(Verdict.when(takenAt))."
     }
 }
