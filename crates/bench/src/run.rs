@@ -564,14 +564,17 @@ mod tests {
         log.append(&sample("a", 1)).unwrap();
         log.append(&sample("b", 2)).unwrap();
         let read = read_samples(dir.path()).unwrap();
-        assert_eq!(
-            read,
-            [sample("a", 1), sample("b", 2)].map(|mut each| {
-                each.at = read[0].at.clone();
-                each.load_average = read[0].load_average;
+        // Each sample is stamped when it is built, so the two can differ.
+        let expected: Vec<Sample> = [sample("a", 1), sample("b", 2)]
+            .into_iter()
+            .zip(&read)
+            .map(|(mut each, got)| {
+                each.at = got.at.clone();
+                each.load_average = got.load_average;
                 each
             })
-        );
+            .collect();
+        assert_eq!(read, expected);
     }
 
     #[test]
