@@ -9,3 +9,4 @@ web/public/fingerprint.wasm
 ios/Frameworks/*.xcframework
 ios/build/
 ios/**/xcuserdata/
+ios/ProvenanceCaptureTests/Fixtures/bench/

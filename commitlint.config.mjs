@@ -6,6 +6,7 @@ export default {
       2,
       'always',
       [
+        'bench',
         'c2pa',
         'crop-proof',
         'fingerprint',

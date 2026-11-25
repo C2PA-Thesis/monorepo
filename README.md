@@ -90,11 +90,12 @@ flowchart LR
 | `location-proof` | Go CLI for the location proof, built against the zk-Location fork |
 | `location-proof/zkloc` | The CLI's logic as a Go package: setup, cell, outline, hints, commit, prove, verify |
 | `location-proof/mobile` | `zkloc` behind C functions that take and return JSON, built as a static library for the iOS app |
+| `crates/bench` | The benchmark suite. See [crates/bench/README.md](crates/bench/README.md) |
 | `crates/provenance` | Capture, publish, the HTTP and TLS API, device pairing, reader checks, attacks, and the `provenance` CLI |
 | `ios` | ProvenanceCapture, the native capture app. See [ios/README.md](ios/README.md) |
 | `web` | The capture page a phone's browser opens, and the presenter page the laptop shows |
 | `c2pa` | The C2P-19 custom assertion round trip with `c2patool` |
-| `scripts` | `setup.sh` once, then `demo.sh phone` or `demo.sh` |
+| `scripts` | `setup.sh` once, then `demo.sh phone` or `demo.sh`. `bench.sh` runs the benchmark suite |
 | `deploy` | The dev and prod servers on EC2: `dev` deploys to dev and `main` to prod. See [deploy/README.md](deploy/README.md) |
 
 ### Code from other repositories
@@ -606,35 +607,37 @@ lists the `c2pa.orientation` action, next to `c2pa.cropped`.
 
 ## Measurements
 
-Median of three runs per side on 2026-09-14, macOS 26.5.2 on Apple arm64,
-alternating the PR #3 Python pipeline (`8/8 ALL DEMO STAGES PASSED` in every
-run) with `provenance` on the same sample photo and coordinate. Proof
-parameters were already set up for both. The table predates the sealed hints
-and was not measured again; the one demo run shown under
-[The CLI](#the-cli), on 2026-10-30, is close to it.
+`scripts/bench.sh` measures everything below and more, and writes a report to
+`crates/bench/results`. [crates/bench/README.md](crates/bench/README.md) says
+what it measures and how.
 
-| Step | PR #3 | This repository | Speedup |
-| --- | ---: | ---: | ---: |
-| Capture: fingerprint, envelope, receipt | 8.41 s | 1.75 s | 4.8x |
-| Crop | 0.33 s | under 0.01 s | |
-| Location proof | 0.63 s | 0.62 s | 1.0x |
-| Crop proof | 132.32 s | 17.70 s | 7.5x |
-| Publish | 0.26 s | 0.02 s | 13x |
-| Capture to verified file | 145.34 s | 21.24 s | 6.8x |
-| Reader verification, standalone | 3.35 s | 1.02 s | 3.3x |
-| Attacks (6 in PR #3, 7 here) | 21.56 s | 6.02 s | 3.6x |
+Medians of run `20261106T161115Z-01046cbe`, on 2026-11-06, at commit `01046cb`
+(PR #21), on an Apple M5 Max with 128 GB, macOS 26.6.2, at the reference case:
+a 1024x512 original and a 512x512 crop. Each sample ran in its own process with
+a warm file cache.
 
-The location proof runs the same circuit and gnark prover in both, so it does
-not change. The crop proof is faster mostly because its parameters are loaded
-without re-checking every curve point (they are pinned by SHA-256 instead),
-and the fingerprint and `r^T A` computations use every core. For PR #3,
-"capture to verified file" is the sum of its first six stage timings.
-
-| Output | PR #3 | This repository |
+| Step | Time | Peak memory |
 | --- | ---: | ---: |
-| Location proof | 196 bytes | 196 bytes |
-| Crop proof | 36,692 bytes | 36,692 bytes |
-| Signed PNG | 317,491 bytes | 200,709 bytes |
+| Capture: fingerprint, envelope, receipt | 0.39 s | 15 MB |
+| Location proof | 0.34 s | 93 MB |
+| Crop proof | 9.25 s | 5.92 GB |
+| Reader verification | 0.72 s | 329 MB |
+| Capture to verified file | 10.68 s | 5.92 GB |
+
+| Output | Size |
+| --- | ---: |
+| Location proof | 196 bytes |
+| Crop proof | 36.7 KB |
+| Signed PNG | 207.1 KB |
+
+The crop proof takes 86% of capture to verified file. Its peak memory does not
+change with the size of the original, because smaller originals are padded to
+2^19 pixels. Upstream HyperVerITAS on the same machine and the same pixels took
+10.92 s to prove, 2.59 s to verify and 6.37 GB, and its proof is 49.1 KB.
+
+On an iPhone 17 Pro with iOS 27.0, at the 836x627 original of a 4:3 photo, the
+fingerprint took 1.85 s and the location proof 1.33 s, with a peak footprint
+of 89 MB. The crop proof does not run on the phone.
 
 ## References
 
