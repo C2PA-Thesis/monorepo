@@ -160,7 +160,7 @@ Median is the operation alone. Middle half is the 25th to 75th percentile. Proce
 | Location proof, prover | 335.1 ms | 42.1 ms | 260.0 ms |
 | Location proof, verifier | 15.5 ms | 1.3 ms | 1.5 ms |
 
-The papers used other hardware: an Apple M3 with 36 GB for HyperVerITAS PST at 2^19 pixels, an m6i.xlarge with 4 vCPUs for ZKLP. This repository's location prover is a separate process that loads its keys each time. Upstream's times the proof alone, in a process that already holds them.
+The papers used other hardware: an Apple M3 with 36 GB for HyperVerITAS PST at 2^19 pixels, an m6i.xlarge with 4 vCPUs for ZKLP. This repository's location prover is a separate process that loads its keys each time, for proving and for verifying. Upstream's times the proof alone, in a process that already holds them. How much of the difference that accounts for is not measured.
 
 ## Files a prover or reader holds
 

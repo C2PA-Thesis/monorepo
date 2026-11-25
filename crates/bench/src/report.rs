@@ -396,8 +396,9 @@ fn comparison(report: &mut String, rows: &[Row]) {
     report.push_str(
         "\nThe papers used other hardware: an Apple M3 with 36 GB for HyperVerITAS PST at 2^19 \
          pixels, an m6i.xlarge with 4 vCPUs for ZKLP. This repository's location prover is a \
-         separate process that loads its keys each time. Upstream's times the proof alone, in a \
-         process that already holds them.\n",
+         separate process that loads its keys each time, for proving and for verifying. \
+         Upstream's times the proof alone, in a process that already holds them. How much of \
+         the difference that accounts for is not measured.\n",
     );
 }
 

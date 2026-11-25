@@ -33,6 +33,16 @@ The reference case is a 1024x512 original (2^19 pixels), a 512x512 crop, no
 turn, and an H3 cell of resolution 7. It is the smallest case in the
 HyperVerITAS paper, Table 3: "Full System Crop (50% of image)".
 
+The paper figures in the report, as each paper states them:
+
+| Figure | Source |
+| --- | --- |
+| HyperVerITAS PST at 2^19 pixels: prover 16.1 s, verifier 3.1 s, peak memory 6.4 GB, proof 49.1 KB | HyperVerITAS, Table 3, rows "HV[PST]", columns "TP (s)", "TV (s)", "MP (GB)" and "π (KB)" at 2^19. The paper's unit is "GB"; whether it means 10^9 or 2^30 bytes is not stated |
+| HyperVerITAS hardware | §5.2: "laptop with 36GB RAM and an Apple M3 Chip" |
+| ZKLP prover 0.26 s | ZKLP, Table 2, row "CZKLP FP32 Groth16", column "Prover Time" |
+| ZKLP verifier 1.54 ms | ZKLP, §5: "Groth16 proof (≈ 1.54 ms)" |
+| ZKLP hardware | ZKLP, §5: "an m6i.xlarge AWS instance with 4 vCPUs and 16 GB of RAM" |
+
 | Group | Question it answers |
 | --- | --- |
 | `pipeline` | How long does each step take at the reference case? This group also measures capture to verified file, and all attacks |
@@ -65,8 +75,10 @@ separates loading the crop parameters from proving.
 
 - **One process for each sample.** Peak memory comes from the operating system
   (`wait4`), and one sample cannot change the next.
-- **Each operation checks its result.** A proof that does not verify is a
-  failed sample, not a fast one.
+- **Each operation checks its output.** A sample fails if the program fails or
+  its output is wrong (a different envelope, a missing proof). The provers do
+  not verify the proof they just made; the verify, reader and attack scenarios
+  do.
 - **Round 0 is a warmup.** It fills the file cache and is not in the statistics.
   So the numbers are for a warm cache.
 - **The machine rests after each sample**, as long as the sample took, up to
