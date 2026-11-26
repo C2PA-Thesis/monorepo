@@ -8,6 +8,8 @@
 //! compute it identically, so this crate builds natively for the prover and
 //! for `wasm32-unknown-unknown` for the capture page (see `wasm.rs`).
 
+use std::sync::{Mutex, PoisonError};
+
 use anyhow::{anyhow, ensure, Context, Result};
 use ark_ff::{BigInteger, PrimeField, Zero};
 use ark_std::UniformRand;
@@ -157,34 +159,42 @@ pub fn hash_image_into(channels: [&[u8]; 3], out: &mut [u8]) {
     write_elements(&hash_image(channels), out);
 }
 
+/// Pixels of one row a task scales before adding them to the result: 32 KiB
+/// of products, which stay in a core's cache. Measured at 2^19 pixels, blocks
+/// of 256 and of 1024 pixels take the same time and 4096 take 7% longer.
+const COMBINE_BLOCK: usize = 1 << 10;
+
 /// `r^T A` for row weights `r`, over the first `pixels` columns.
 pub fn combine_rows(weights: &[F], pixels: usize) -> Vec<F> {
-    // One accumulator per worker: a vector per row would need 128 x 2^19 elements.
-    let workers = worker_count(weights.len());
-    let rows_per_worker = weights.len().div_ceil(workers);
-    let partial = parallel_map(workers, |worker| {
-        let mut combined = vec![F::zero(); pixels];
-        let rows = worker * rows_per_worker..((worker + 1) * rows_per_worker).min(weights.len());
-        for row in rows {
-            let mut entries = matrix_row(row);
-            for value in &mut combined {
-                *value += F::rand(&mut entries) * weights[row];
+    // A row's stream can only be read in order, so a task walks one row from
+    // the first pixel to the last. It scales a block of the row into a small
+    // buffer, then adds the buffer to the result under the lock of that
+    // block. Every task allocates its own buffer and a worker runs one task
+    // at a time, so one buffer is live per worker. The only vector as long as
+    // the result is the result.
+    let mut combined = vec![F::zero(); pixels];
+    let blocks: Vec<Mutex<&mut [F]>> = combined.chunks_mut(COMBINE_BLOCK).map(Mutex::new).collect();
+    parallel_map(weights.len(), |row| {
+        let mut entries = matrix_row(row);
+        let mut scaled = vec![F::zero(); COMBINE_BLOCK.min(pixels)];
+        for (block, start) in blocks.iter().zip((0..pixels).step_by(COMBINE_BLOCK)) {
+            let scaled = &mut scaled[..COMBINE_BLOCK.min(pixels - start)];
+            for value in scaled.iter_mut() {
+                *value = F::rand(&mut entries) * weights[row];
+            }
+            // A poisoned lock means another worker panicked. `parallel_map`
+            // passes that panic on, so these sums are never returned.
+            let mut sums = block.lock().unwrap_or_else(PoisonError::into_inner);
+            for (sum, value) in sums.iter_mut().zip(scaled.iter()) {
+                *sum += value;
             }
         }
-        combined
     });
-    partial
-        .into_iter()
-        .reduce(|mut total, part| {
-            total
-                .iter_mut()
-                .zip(part)
-                .for_each(|(sum, value)| *sum += value);
-            total
-        })
-        .unwrap_or_else(|| vec![F::zero(); pixels])
+    drop(blocks);
+    combined
 }
 
+#[cfg(any(test, not(target_arch = "wasm32")))]
 fn worker_count(tasks: usize) -> usize {
     std::thread::available_parallelism()
         .map_or(1, usize::from)
@@ -349,5 +359,70 @@ mod tests {
         let channels = std::array::from_fn(|_| vec![0; size.pixels()]);
         let image = RgbImage::new(size, channels).unwrap();
         assert!(Fingerprint::of(&image).is_err());
+    }
+
+    /// `combine_rows` as first written: one vector as long as the result per
+    /// worker, summed at the end.
+    fn combine_rows_per_worker(weights: &[F], pixels: usize) -> Vec<F> {
+        // One accumulator per worker: a vector per row would need 128 x 2^19 elements.
+        let workers = worker_count(weights.len());
+        let rows_per_worker = weights.len().div_ceil(workers);
+        let partial = parallel_map(workers, |worker| {
+            let mut combined = vec![F::zero(); pixels];
+            let rows =
+                worker * rows_per_worker..((worker + 1) * rows_per_worker).min(weights.len());
+            for row in rows {
+                let mut entries = matrix_row(row);
+                for value in &mut combined {
+                    *value += F::rand(&mut entries) * weights[row];
+                }
+            }
+            combined
+        });
+        partial
+            .into_iter()
+            .reduce(|mut total, part| {
+                total
+                    .iter_mut()
+                    .zip(part)
+                    .for_each(|(sum, value)| *sum += value);
+                total
+            })
+            .unwrap_or_else(|| vec![F::zero(); pixels])
+    }
+
+    #[test]
+    fn combined_rows_match_the_first_implementation() {
+        let mut rng = ChaCha8Rng::seed_from_u64(7);
+        let weights: Vec<F> = (0..HASH_ROWS).map(|_| F::rand(&mut rng)).collect();
+        for pixels in [0, 1, 1000, 1 << 14] {
+            assert_eq!(
+                combine_rows(&weights, pixels),
+                combine_rows_per_worker(&weights, pixels),
+                "{pixels} pixels"
+            );
+        }
+        // Fewer rows than workers, and none.
+        assert_eq!(
+            combine_rows(&weights[..3], 3000),
+            combine_rows_per_worker(&weights[..3], 3000)
+        );
+        assert_eq!(combine_rows(&[], 5), vec![F::zero(); 5]);
+    }
+
+    /// `combine_rows` is `r^T A`: entry by entry, the sum the definition gives.
+    #[test]
+    fn combined_rows_match_the_definition() {
+        let mut rng = ChaCha8Rng::seed_from_u64(8);
+        let pixels = COMBINE_BLOCK + 5;
+        let weights: Vec<F> = (0..HASH_ROWS).map(|_| F::rand(&mut rng)).collect();
+        let mut expected = vec![F::zero(); pixels];
+        for (row, weight) in weights.iter().enumerate() {
+            let mut entries = matrix_row(row);
+            for sum in &mut expected {
+                *sum += F::rand(&mut entries) * weight;
+            }
+        }
+        assert_eq!(combine_rows(&weights, pixels), expected);
     }
 }

@@ -15,7 +15,7 @@ use transcript::IOPTranscript;
 use super::{
     dense::Dense,
     eq::{self, SplitEq},
-    sumcheck,
+    products, sumcheck,
 };
 use crate::{
     crop::{append, crop_challenges, new_transcript},
@@ -48,10 +48,10 @@ pub(crate) fn prove_core(
     }
 
     mark("hash weights");
-    let (_, mut combined_rows) = iop::hash_weights(&mut transcript, size)?;
-    combined_rows.resize(1 << NUM_VARS, F::zero());
+    let (_, combined_rows) = iop::hash_weights(&mut transcript, size)?;
     mark("hash sumcheck");
-    let hash = prove_products(&combined_rows, &channels, &mut transcript)?;
+    let pixels = original.channels().each_ref().map(Vec::as_slice);
+    let hash = products::prove_products(NUM_VARS, &combined_rows, pixels, &mut transcript)?;
     drop(combined_rows);
 
     let tables = iop::range_tables();
@@ -64,12 +64,11 @@ pub(crate) fn prove_core(
     drop(tables);
 
     mark("crop sumcheck");
-    let mut weights = {
+    let weights = {
         let challenges = crop_challenges(&mut transcript, rect, turn)?;
         iop::crop_weights(size, rect, turn, &challenges)
     };
-    weights.resize(1 << NUM_VARS, F::zero());
-    let crop = prove_products(&weights, &channels, &mut transcript)?;
+    let crop = products::prove_products(NUM_VARS, &weights, pixels, &mut transcript)?;
     drop(weights);
 
     for range in &ranges {
@@ -120,26 +119,6 @@ pub(crate) fn prove_core(
         image_openings,
         range_openings,
     })
-}
-
-/// One sumcheck per channel of `sum of weights * channel`.
-fn prove_products(
-    weights: &[F],
-    channels: &[Poly; 3],
-    transcript: &mut IOPTranscript<F>,
-) -> Result<[Sumcheck; 3]> {
-    let mut proofs = Vec::with_capacity(3);
-    for channel in channels {
-        let mut rounds = Dense::new(
-            NUM_VARS,
-            vec![weights.to_vec(), channel.evaluations.clone()],
-            vec![(F::one(), vec![0, 1])],
-        );
-        proofs.push(sumcheck::prove(&mut rounds, transcript)?);
-    }
-    proofs
-        .try_into()
-        .map_err(|_| anyhow!("expected three sumchecks"))
 }
 
 struct RangeCheck {
