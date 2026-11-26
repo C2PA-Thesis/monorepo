@@ -22,6 +22,10 @@ pub(crate) fn table(point: &[F]) -> Vec<F> {
     table
 }
 
+/// Values a task of `SplitEq::sum_rows` reads at least, unless there are
+/// fewer: below this, starting the task costs more than its work.
+const TASK_VALUES: usize = 1 << 12;
+
 /// `eq(x, point)` as `low[x mod 2^k] * high[x div 2^k]`.
 pub(crate) struct SplitEq {
     low: Vec<F>,
@@ -30,8 +34,15 @@ pub(crate) struct SplitEq {
 }
 
 impl SplitEq {
+    /// Two tables of about the same size, which keeps both small.
     pub(crate) fn new(point: &[F]) -> Self {
-        let low_vars = point.len() / 2;
+        Self::with_low_vars(point, point.len() / 2)
+    }
+
+    /// As `new`, with the first `low_vars` coordinates in the low table. A
+    /// caller that keeps state per entry of the high table picks the split.
+    pub(crate) fn with_low_vars(point: &[F], low_vars: usize) -> Self {
+        let low_vars = low_vars.min(point.len());
         Self {
             low: table(&point[..low_vars]),
             high: table(&point[low_vars..]),
@@ -63,23 +74,6 @@ impl SplitEq {
                 inner * high
             })
             .sum()
-    }
-}
-
-/// Values a task of `SplitEq::sum_rows` reads at least, unless there are
-/// fewer: below this, starting the task costs more than its work.
-const TASK_VALUES: usize = 1 << 12;
-
-impl SplitEq {
-    /// As `new`, with the first `low_vars` coordinates in the low table. A
-    /// caller that keeps state per entry of the high table picks the split.
-    pub(crate) fn with_low_vars(point: &[F], low_vars: usize) -> Self {
-        let low_vars = low_vars.min(point.len());
-        Self {
-            low: table(&point[..low_vars]),
-            high: table(&point[low_vars..]),
-            low_vars,
-        }
     }
 
     /// `sum over x of eq(x, point) * row(x)`, where a row is `width` values.

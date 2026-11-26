@@ -816,31 +816,161 @@ mod tests {
         );
     }
 
+    /// Opens `instance` here and with hyperplonk, each on a fresh transcript,
+    /// and asserts that the proofs and the transcripts agree. Returns ours.
+    fn assert_opens_as_hyperplonk(
+        pcs: &MultilinearProverParam<Bls12_381>,
+        instance: &Instance,
+        case: &str,
+    ) -> BatchOpening {
+        let polynomials: Vec<Values<'_>> = instance.data.iter().map(Data::values).collect();
+        let mut theirs_transcript = transcript();
+        let theirs = hyperplonk(pcs, instance, &mut theirs_transcript);
+        let mut ours_transcript = transcript();
+        let ours = open(
+            &Srs::Loaded(pcs.clone()),
+            instance.num_vars,
+            &polynomials,
+            &instance.points,
+            &instance.openings,
+            &mut ours_transcript,
+        )
+        .unwrap();
+        assert_same(&ours, &theirs, case);
+        assert_same_state(ours_transcript, theirs_transcript, case);
+        ours
+    }
+
     #[test]
     fn opens_as_hyperplonk_does() {
         let mut rng = StdRng::seed_from_u64(7);
         // Larger than most of the polynomials, as the image batch finds it.
         let pcs = keys(&mut rng, MAX_VARS);
-        let srs = Srs::Loaded(pcs.clone());
-        for num_vars in 3..=MAX_VARS {
+        for num_vars in 1..=MAX_VARS {
             for count in [2, 3, 9, 33] {
                 let case = format!("{count} openings over {num_vars} variables");
                 let instance = instance(&mut rng, num_vars, count);
-                let polynomials: Vec<Values<'_>> = instance.data.iter().map(Data::values).collect();
-                let mut theirs_transcript = transcript();
-                let theirs = hyperplonk(&pcs, &instance, &mut theirs_transcript);
-                let mut ours_transcript = transcript();
-                let ours = open(
-                    &srs,
-                    num_vars,
-                    &polynomials,
-                    &instance.points,
-                    &instance.openings,
-                    &mut ours_transcript,
-                )
-                .unwrap();
-                assert_same(&ours, &theirs, &case);
-                assert_same_state(ours_transcript, theirs_transcript, &case);
+                assert_opens_as_hyperplonk(&pcs, &instance, &case);
+            }
+        }
+    }
+
+    /// When every polynomial of a batch is short, the last entries of the
+    /// combination are zero and their quotients are not asked for. When
+    /// every polynomial is empty, no quotient is.
+    #[test]
+    fn opens_batches_of_short_polynomials() {
+        let mut rng = StdRng::seed_from_u64(12);
+        let pcs = keys(&mut rng, MAX_VARS - 1);
+        for num_vars in [1, 2, 3, 6, MAX_VARS - 1] {
+            let size = 1usize << num_vars;
+            let random = |rng: &mut StdRng| (0..num_vars).map(|_| F::rand(rng)).collect::<Vec<F>>();
+            let mut final_query = vec![F::one(); num_vars];
+            final_query[0] = F::zero();
+            let points = vec![
+                random(&mut rng),
+                random(&mut rng),
+                vec![F::zero(); num_vars],
+                final_query,
+            ];
+            let over_half = (size / 2 + 1).min(size - 1);
+            for (bytes, field) in [
+                (0, 0),
+                (1, 0),
+                (0, 1),
+                (1, 1),
+                (size / 2, size / 2),
+                (over_half, 1),
+                (1, over_half),
+                (size / 4 + 1, size / 8),
+                (size - 1, size - 1),
+            ] {
+                for (kind, commitments) in [("both", 0..4), ("bytes", 0..2), ("field", 2..4)] {
+                    // Polynomials 0 and 1 are of bytes, 2 and 3 of field
+                    // elements.
+                    let data = vec![
+                        Data::Bytes((0..bytes).map(|_| rng.gen()).collect()),
+                        Data::Bytes((0..bytes / 2).map(|_| rng.gen()).collect()),
+                        Data::Field((0..field).map(|_| F::rand(&mut rng)).collect()),
+                        Data::Field((0..field / 2).map(|_| F::rand(&mut rng)).collect()),
+                    ];
+                    let openings = (0..5)
+                        .map(|i| Opening {
+                            commitment: commitments.start + i % commitments.len(),
+                            point: rng.gen_range(0..points.len()),
+                            fixed: None,
+                        })
+                        .collect();
+                    let instance = Instance {
+                        num_vars,
+                        data,
+                        points: points.clone(),
+                        openings,
+                    };
+                    let case = format!(
+                        "{kind}: {bytes} bytes and {field} field elements over {num_vars} variables"
+                    );
+                    assert_opens_as_hyperplonk(&pcs, &instance, &case);
+                }
+            }
+        }
+    }
+
+    /// The image and the range batch fix more than `BYTE_BLOCK_VARS` high
+    /// variables of their polynomials of bytes, so a pass takes several
+    /// blocks and reuses its sums per byte value from one block to the
+    /// next. The batches above are too small for a second block. A low table
+    /// of fewer variables reaches it on small data.
+    #[test]
+    fn fixes_the_high_variables_of_bytes_block_by_block() {
+        let mut rng = StdRng::seed_from_u64(13);
+        for num_vars in 1..=9 {
+            let size = 1usize << num_vars;
+            for low_vars in 0..=num_vars.min(3) {
+                let width = 1 << low_vars;
+                let random: Vec<F> = (low_vars..num_vars).map(|_| F::rand(&mut rng)).collect();
+                let mut ends_in_zero = random.clone();
+                if let Some(last) = ends_in_zero.last_mut() {
+                    *last = F::zero();
+                }
+                let tails = [
+                    vec![F::zero(); random.len()],
+                    vec![F::one(); random.len()],
+                    ends_in_zero,
+                    random,
+                ];
+                for (tail, len) in tails.iter().flat_map(|tail| {
+                    [0, 1, size / 3, size / 2 + 1, size - 1, size].map(|len| (tail, len))
+                }) {
+                    let bytes: Vec<u8> = (0..len).map(|_| rng.gen()).collect();
+                    let field: Vec<F> = bytes.iter().map(|&byte| F::from(byte)).collect();
+                    let mut expected = vec![F::zero(); width];
+                    for (weight, row) in eq::table(tail).iter().zip(field.chunks(width)) {
+                        for (sum, value) in expected.iter_mut().zip(row) {
+                            *sum += *weight * value;
+                        }
+                    }
+                    // One more than the tail has: the split takes what there is.
+                    for block_vars in 0..=tail.len() + 1 {
+                        let case = format!(
+                            "{len} of 2^{num_vars} values, {low_vars} low variables, \
+                             blocks of {block_vars} variables"
+                        );
+                        let split = SplitEq::with_low_vars(tail, block_vars);
+                        assert_eq!(
+                            fix_high(Values::Bytes(&bytes), low_vars, &split),
+                            expected,
+                            "bytes: {case}"
+                        );
+                        assert_eq!(
+                            fix_high(Values::Field(&field), low_vars, &split),
+                            expected,
+                            "field elements: {case}"
+                        );
+                    }
+                    assert_eq!(head(Values::Bytes(&bytes), low_vars, tail), expected);
+                    assert_eq!(head(Values::Field(&field), low_vars, tail), expected);
+                }
             }
         }
     }
@@ -917,22 +1047,8 @@ mod tests {
         let mut instance = instance(&mut rng, num_vars, 3);
         let fixed = F::rand(&mut rng);
         instance.openings[1].fixed = Some(fixed);
-        let polynomials: Vec<Values<'_>> = instance.data.iter().map(Data::values).collect();
-        let mut theirs_transcript = transcript();
-        let theirs = hyperplonk(&pcs, &instance, &mut theirs_transcript);
-        let mut ours_transcript = transcript();
-        let ours = open(
-            &Srs::Loaded(pcs.clone()),
-            num_vars,
-            &polynomials,
-            &instance.points,
-            &instance.openings,
-            &mut ours_transcript,
-        )
-        .unwrap();
+        let ours = assert_opens_as_hyperplonk(&pcs, &instance, "a fixed evaluation");
         assert_eq!(ours.evaluations[1], fixed);
-        assert_same(&ours, &theirs, "a fixed evaluation");
-        assert_same_state(ours_transcript, theirs_transcript, "a fixed evaluation");
     }
 
     #[test]

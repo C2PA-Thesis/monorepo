@@ -4,13 +4,12 @@
 
 pub(crate) mod dense;
 pub(crate) mod eq;
-#[allow(dead_code)] // until the prover commits through it
 pub(crate) mod msm;
 pub(crate) mod open;
 pub(crate) mod products;
 pub(crate) mod prover;
 pub(crate) mod range;
-#[allow(dead_code)] // until the prover commits through it
+#[allow(dead_code)] // until the parameters are mapped
 pub(crate) mod srs;
 pub(crate) mod sumcheck;
 

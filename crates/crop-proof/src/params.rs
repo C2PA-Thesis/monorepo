@@ -101,6 +101,7 @@ impl ProverParams {
     pub(crate) fn pcs(&self) -> &subroutines::pcs::prelude::MultilinearProverParam<Bls12_381> {
         match &self.srs {
             Srs::Loaded(pcs) => pcs,
+            Srs::Mapped(_) => unreachable!("the key is loaded"),
         }
     }
 }
