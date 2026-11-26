@@ -14,6 +14,7 @@ mod baseline;
 mod environment;
 mod measure;
 mod phone;
+mod probe;
 mod report;
 mod run;
 mod stats;
@@ -79,6 +80,23 @@ enum Command {
         #[arg(long)]
         work: PathBuf,
         task: String,
+    },
+    /// Prove one crop under the memory probe and print what it measured.
+    #[command(hide = true)]
+    Probe {
+        #[arg(long)]
+        work: PathBuf,
+        /// Check the proof after measuring.
+        #[arg(long)]
+        verify: bool,
+        /// Write live heap bytes and footprint over time here, as CSV.
+        #[arg(long)]
+        trace: Option<PathBuf>,
+        /// Write the proof here.
+        #[arg(long)]
+        proof_out: Option<PathBuf>,
+        /// The case, as in a sample's task. Defaults to the reference case.
+        case: Option<String>,
     },
 }
 
@@ -199,6 +217,31 @@ fn dispatch(cli: Cli) -> Result<()> {
                 serde_json::to_string(&workload::execute(&lab, &task)?)?
             );
             Ok(())
+        }
+        Command::Probe {
+            work,
+            verify,
+            trace,
+            proof_out,
+            case,
+        } => {
+            let case = match case {
+                Some(case) => serde_json::from_str(&case).context("parsing the case")?,
+                None => suite::Case::reference(),
+            };
+            let lab = Lab {
+                workspace: Workspace::new(&home),
+                work,
+            };
+            probe::run(
+                &lab,
+                &case,
+                &probe::Options {
+                    verify,
+                    trace,
+                    proof_out,
+                },
+            )
         }
     }
 }

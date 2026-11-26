@@ -483,10 +483,12 @@ dependencies = [
  "base64 0.22.1",
  "clap",
  "crop-proof",
+ "hex",
  "libc",
  "provenance",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "tempfile",
  "time",
 ]

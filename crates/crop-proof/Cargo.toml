@@ -30,6 +30,8 @@ transcript = { git = "https://github.com/glgreiner/hyperplonk", rev = "bed02ac87
 [features]
 # Attack code and test hooks for the security analysis. Off by default.
 attack-hooks = ["dep:num-bigint"]
+# Phase marks for the memory profiler of the bench crate. Off by default.
+probe = []
 
 [dev-dependencies]
 # Self dependency so the crate's own tests build with the hooks feature on.

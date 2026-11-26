@@ -21,6 +21,7 @@ use transcript::IOPTranscript;
 use crate::{
     edit,
     iop::{self, challenge, check, image_poly, poly, Opening, OpeningPoints, Poly},
+    probe::mark,
     wire::{self, BatchOpening, CropProof, Sumcheck},
     Fingerprint, Pcs, ProverParams, Rect, RgbImage, Size, Turn, VerifierParams, F, NUM_VARS,
     PROTOCOL,
@@ -145,6 +146,7 @@ fn prove_core(
     statement: &[u8; 32],
 ) -> Result<CropProof> {
     let size = original.size();
+    mark("commit image");
     let channels: [Poly; 3] = original
         .channels()
         .each_ref()
@@ -158,12 +160,17 @@ fn prove_core(
         append(&mut transcript, b"img(x)", commitment)?;
     }
 
+    mark("hash weights");
     let (_, combined_rows) = iop::hash_weights(&mut transcript, size)?;
+    mark("hash sumcheck");
     let hash = iop::prove_products(&image_poly(combined_rows), &channels, &mut transcript)?;
     let mut ranges = Vec::with_capacity(3);
-    for (channel, pixels) in channels.iter().zip(original.channels()) {
+    const RANGE: [&str; 3] = ["range check 0", "range check 1", "range check 2"];
+    for (i, (channel, pixels)) in channels.iter().zip(original.channels()).enumerate() {
+        mark(RANGE[i]);
         ranges.push(iop::prove_range(channel, pixels, pcs, &mut transcript)?);
     }
+    mark("crop sumcheck");
     let crop_challenges = crop_challenges(&mut transcript, rect, turn)?;
     let crop = iop::prove_products(
         &image_poly(iop::crop_weights(size, rect, turn, &crop_challenges)),
@@ -192,6 +199,7 @@ fn prove_core(
                 .flat_map(|range| [&range.counts, &range.product, &range.fraction]),
         )
         .collect();
+    mark("image opening");
     let image_openings = open(
         pcs,
         &polynomials,
@@ -199,6 +207,7 @@ fn prove_core(
         &iop::image_openings(),
         &mut transcript,
     )?;
+    mark("range opening");
     let range_openings = open(
         pcs,
         &polynomials,
@@ -207,6 +216,7 @@ fn prove_core(
         &mut transcript,
     )?;
 
+    mark("encode");
     let mut range_sumchecks = ranges
         .into_iter()
         .map(|range| Sumcheck::from(range.proof.zero_check_proof));
