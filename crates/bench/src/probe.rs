@@ -150,7 +150,7 @@ mod profile {
 #[cfg(feature = "mem-profile")]
 mod profile {
     use std::{
-        alloc::{GlobalAlloc, Layout, System},
+        alloc::{GlobalAlloc, Layout},
         fmt::Write,
         fs,
         path::Path,
@@ -163,6 +163,7 @@ mod profile {
     };
 
     use anyhow::{Context, Result};
+    use crop_proof::alloc::DirectLarge;
     use serde::Serialize;
 
     use super::footprint;
@@ -180,10 +181,10 @@ mod profile {
         PEAK.fetch_max(live, Relaxed);
     }
 
-    // SAFETY: every call goes to the system allocator unchanged.
+    // SAFETY: every call goes unchanged to the allocator the publisher runs with.
     unsafe impl GlobalAlloc for Counting {
         unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-            let pointer = System.alloc(layout);
+            let pointer = DirectLarge.alloc(layout);
             if !pointer.is_null() {
                 grew(layout.size());
             }
@@ -191,7 +192,7 @@ mod profile {
         }
 
         unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
-            let pointer = System.alloc_zeroed(layout);
+            let pointer = DirectLarge.alloc_zeroed(layout);
             if !pointer.is_null() {
                 grew(layout.size());
             }
@@ -199,12 +200,12 @@ mod profile {
         }
 
         unsafe fn dealloc(&self, pointer: *mut u8, layout: Layout) {
-            System.dealloc(pointer, layout);
+            DirectLarge.dealloc(pointer, layout);
             LIVE.fetch_sub(layout.size(), Relaxed);
         }
 
         unsafe fn realloc(&self, pointer: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-            let new = System.realloc(pointer, layout, new_size);
+            let new = DirectLarge.realloc(pointer, layout, new_size);
             if !new.is_null() {
                 if new_size >= layout.size() {
                     grew(new_size - layout.size());

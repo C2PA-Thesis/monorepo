@@ -12,6 +12,7 @@ use std::fmt;
 use anyhow::{ensure, Result};
 use serde::{Deserialize, Serialize};
 
+pub mod alloc;
 mod crop;
 #[cfg(feature = "attack-hooks")]
 pub mod forge;

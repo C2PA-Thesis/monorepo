@@ -21,6 +21,11 @@ mod stats;
 mod suite;
 mod workload;
 
+// The allocator the publisher runs with, so the samples measure what ships.
+#[cfg(not(feature = "mem-profile"))]
+#[global_allocator]
+static ALLOCATOR: crop_proof::alloc::DirectLarge = crop_proof::alloc::DirectLarge;
+
 use environment::Environment;
 use run::{Paths, RunInfo};
 use suite::{scenarios, Depth, Group, Scenario};

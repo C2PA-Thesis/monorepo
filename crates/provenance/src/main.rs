@@ -27,6 +27,10 @@ use provenance::{
 };
 use serde::Serialize;
 
+// Proving frees many large tables; see crop_proof::alloc.
+#[global_allocator]
+static ALLOCATOR: crop_proof::alloc::DirectLarge = crop_proof::alloc::DirectLarge;
+
 #[derive(Parser)]
 #[command(
     version,
