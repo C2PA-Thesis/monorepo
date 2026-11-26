@@ -46,6 +46,7 @@ pub(crate) fn image_poly(mut values: Vec<F>) -> Poly {
     poly(values)
 }
 
+#[cfg(feature = "attack-hooks")]
 pub(crate) fn field_values(pixels: &[u8]) -> Vec<F> {
     pixels.iter().map(|&pixel| F::from(pixel)).collect()
 }
@@ -223,6 +224,7 @@ pub(crate) fn range_openings() -> Vec<Opening> {
         .collect()
 }
 
+#[cfg(feature = "attack-hooks")]
 pub(crate) fn sorted_counts(pixels: &[u8]) -> (Vec<F>, Vec<F>) {
     let size = 1u64 << (NUM_VARS + 1);
     let reduction = IRREDUCIBLE[NUM_VARS + 1] - size;

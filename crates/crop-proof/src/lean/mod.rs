@@ -9,6 +9,7 @@ pub(crate) mod msm;
 pub(crate) mod open;
 pub(crate) mod products;
 pub(crate) mod prover;
+pub(crate) mod range;
 #[allow(dead_code)] // until the prover commits through it
 pub(crate) mod srs;
 pub(crate) mod sumcheck;
