@@ -17,6 +17,10 @@ const VERIFIER: &str = "verifier.bin";
 
 pub struct ProverParams {
     pub(crate) srs: Srs,
+    /// The key deserialized for hyperplonk's own prover, the first time the
+    /// reference prover or a forger asks for it.
+    #[cfg(feature = "attack-hooks")]
+    reference: std::sync::OnceLock<subroutines::pcs::prelude::MultilinearProverParam<Bls12_381>>,
 }
 
 pub struct VerifierParams {
@@ -90,19 +94,32 @@ pub fn setup_with_rng(dir: &Path, rng: &mut impl RngCore) -> Result<()> {
 }
 
 impl ProverParams {
+    /// Maps the prover key instead of reading it: the file is 201 MB, and
+    /// pages the system can reload from the file do not count as memory the
+    /// process owns.
     pub fn load(dir: &Path) -> Result<Self> {
+        let expected = expected_digest(dir, PROVER)?;
+        let srs = Srs::open(&dir.join(PROVER))?;
+        let bytes = srs.bytes().context("the prover key is not mapped")?;
+        ensure!(
+            Digest256::of(bytes) == expected,
+            "{PROVER} does not match the SHA-256 in metadata.json"
+        );
         Ok(Self {
-            srs: Srs::Loaded(load_member(dir, PROVER)?),
+            srs,
+            #[cfg(feature = "attack-hooks")]
+            reference: std::sync::OnceLock::new(),
         })
     }
 
-    /// The key as hyperplonk's own prover takes it.
+    /// The key as hyperplonk's own prover takes it, in the heap.
     #[cfg(feature = "attack-hooks")]
     pub(crate) fn pcs(&self) -> &subroutines::pcs::prelude::MultilinearProverParam<Bls12_381> {
-        match &self.srs {
-            Srs::Loaded(pcs) => pcs,
-            Srs::Mapped(_) => unreachable!("the key is loaded"),
-        }
+        self.reference.get_or_init(|| {
+            let mut bytes = self.srs.bytes().expect("load maps the key");
+            CanonicalDeserialize::deserialize_uncompressed_unchecked(&mut bytes)
+                .expect("load checked the key's structure")
+        })
     }
 }
 
@@ -114,9 +131,11 @@ impl VerifierParams {
     }
 }
 
-fn load_member<T: CanonicalDeserialize + CanonicalSerialize>(dir: &Path, name: &str) -> Result<T> {
+/// The digest setup recorded for `name`, after checking that `dir` holds
+/// parameters of this protocol and size.
+fn expected_digest(dir: &Path, name: &str) -> Result<Digest256> {
     let metadata_path = dir.join(METADATA);
-    let metadata: Metadata = serde_json::from_slice(
+    let mut metadata: Metadata = serde_json::from_slice(
         &fs::read(&metadata_path)
             .with_context(|| format!("reading {}", metadata_path.display()))?,
     )
@@ -128,13 +147,17 @@ fn load_member<T: CanonicalDeserialize + CanonicalSerialize>(dir: &Path, name: &
         metadata.protocol,
         metadata.num_vars
     );
-    let expected = metadata
+    metadata
         .files
-        .get(name)
-        .with_context(|| format!("metadata lists no {name}"))?;
+        .remove(name)
+        .with_context(|| format!("metadata lists no {name}"))
+}
+
+fn load_member<T: CanonicalDeserialize + CanonicalSerialize>(dir: &Path, name: &str) -> Result<T> {
+    let expected = expected_digest(dir, name)?;
     let bytes = fs::read(dir.join(name)).with_context(|| format!("reading {name}"))?;
     ensure!(
-        Digest256::of(&bytes) == *expected,
+        Digest256::of(&bytes) == expected,
         "{name} does not match the SHA-256 in metadata.json"
     );
     // Unchecked: validating every curve point took minutes, and the digest

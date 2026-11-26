@@ -9,7 +9,6 @@ pub(crate) mod open;
 pub(crate) mod products;
 pub(crate) mod prover;
 pub(crate) mod range;
-#[allow(dead_code)] // until the parameters are mapped
 pub(crate) mod srs;
 pub(crate) mod sumcheck;
 

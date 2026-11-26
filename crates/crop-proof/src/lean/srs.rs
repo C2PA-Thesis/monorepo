@@ -36,7 +36,8 @@ const DECODE_TASK: usize = 1 << 10;
 // A process holds one key, so the size of the larger variant costs nothing.
 #[allow(clippy::large_enum_variant)]
 pub(crate) enum Srs {
-    /// Deserialized into memory.
+    /// Deserialized into memory. Only the tests load a key this way.
+    #[cfg_attr(not(test), allow(dead_code))]
     Loaded(MultilinearProverParam<Bls12_381>),
     /// The key file itself, decoded range by range as it is read.
     Mapped(Mapped),
@@ -194,6 +195,7 @@ impl<'a> Basis<'a> {
     /// The points of `range`, ready for arithmetic. A mapped basis decodes
     /// them into a new vector of 104 bytes per point, so ask for a range at
     /// a time and never for a whole large basis: 2^20 points are 109 MB.
+    #[cfg(test)]
     pub(crate) fn points(&self, range: Range<usize>) -> Cow<'a, [G1Affine]> {
         match self {
             Basis::Points(points) => Cow::Borrowed(&points[range]),
