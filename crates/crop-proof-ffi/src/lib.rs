@@ -1,6 +1,9 @@
 //! C ABI over the crop proof for native callers, mainly the iOS capture app.
 //! The header is `ios/Frameworks/include/crop_proof.h`.
 //!
+//! The static library is the only Rust archive the app links. It also holds
+//! the functions of `fingerprint-ffi` (`ios/Frameworks/include/fingerprint.h`).
+//!
 //! An image is three planes, R, G and B, of `width * height` bytes each in
 //! row-major order, the layout `fingerprint-ffi` takes. Every function
 //! returns a status instead of panicking, because unwinding into C or Swift
@@ -17,12 +20,20 @@ use std::{
     ptr, slice,
 };
 
-// Every Rust allocation of the library goes through this, so the tables the
-// prover frees leave the app's footprint at once. See crop_proof::alloc.
+// The allocator of every Rust allocation in a program that links this archive
+// as its only Rust static library: a table the prover frees is unmapped at
+// once. See crop_proof::alloc. A second Rust static library defines the same
+// allocator symbols and the linker keeps one set, which may be the other
+// library's: `crop_proof_large_allocations_are_mapped` tells.
 #[global_allocator]
 static ALLOCATOR: crop_proof::alloc::DirectLarge = crop_proof::alloc::DirectLarge;
 
 use crop_proof::{Fingerprint, ProverParams, Rect, RgbImage, Size, Turn, VerifierParams};
+// The app's Rust code is this one archive, so the fingerprint's C functions
+// are part of it. Naming the crate here is what links it in.
+pub use fingerprint_ffi::{
+    fingerprint_algorithm, fingerprint_hash_rows, fingerprint_rgb, fingerprint_test_image,
+};
 
 pub const CROP_PROOF_OK: i32 = 0;
 pub const CROP_PROOF_ERROR_NULL: i32 = 1;
@@ -115,6 +126,16 @@ fn guarded(body: impl FnOnce() -> Result<(), Failure>) -> i32 {
             failure.status
         }
     }
+}
+
+/// Whether the allocator of this library is the one the program runs on.
+/// Makes one Rust allocation of 2 MiB, frees it, and says whether it got a
+/// mapping of its own. On Apple targets false means the linker took the
+/// allocator of another Rust static library, so the prover does not run on
+/// the allocator it was measured with. Always false on other targets.
+#[no_mangle]
+pub extern "C" fn crop_proof_large_allocations_are_mapped() -> bool {
+    crop_proof::alloc::large_allocations_are_mapped()
 }
 
 /// The reason of the last failed call on this thread, a NUL-terminated

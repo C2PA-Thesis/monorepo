@@ -3,6 +3,9 @@
  * image is a rectangle of a fingerprinted original, turned by a multiple of
  * 90 degrees.
  *
+ * The library is the app's only Rust static library: it also holds the
+ * functions of fingerprint.h.
+ *
  * An image is three planes, R, G and B, of width * height bytes each in
  * row-major order, the layout fingerprint.h takes: the pixel at (x, y) is
  * index y * width + x. An original has 1 to 524288 pixels.
@@ -15,6 +18,7 @@
 #ifndef CROP_PROOF_H
 #define CROP_PROOF_H
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -63,6 +67,17 @@ typedef struct crop_proof_rect {
   size_t width;
   size_t height;
 } crop_proof_rect;
+
+/*
+ * Whether this library's allocator is the one the program runs on. It gives
+ * each Rust allocation of 1 MiB or more a mapping of its own, so a table the
+ * prover frees is unmapped at once (crates/crop-proof/src/alloc.rs). Makes
+ * one allocation of 2 MiB, frees it, and says whether it was mapped.
+ *
+ * On Apple systems false means that another Rust static library is linked
+ * and the linker took its allocator. On other systems it is always false.
+ */
+bool crop_proof_large_allocations_are_mapped(void);
 
 /*
  * The reason of the last failed call on this thread. It is empty if no call

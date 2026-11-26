@@ -1,7 +1,9 @@
 /*
- * Makes and checks a crop proof through the C header the iOS app uses, at the
- * reference case: the 1024x512 test image, its left 512x512, no turn. Writes
- * the proof to stdout and the time of each step to stderr.
+ * Makes and checks a crop proof through the C headers the iOS app uses, at
+ * the reference case: the 1024x512 test image, its left 512x512, no turn.
+ * Writes the proof to stdout and the time of each step to stderr. Like the
+ * app, it links one Rust archive and takes the fingerprint's functions and
+ * the allocator from it.
  * Usage: check <parameter directory>
  */
 /* clock_gettime is POSIX, which glibc hides under -std=c11. */
@@ -12,9 +14,17 @@
 #include <time.h>
 
 #include "crop_proof.h"
+#include "fingerprint.h"
 
 #define WIDTH 1024
 #define HEIGHT 512
+
+/* Only Apple targets map large allocations (crates/crop-proof/src/alloc.rs). */
+#ifdef __APPLE__
+#define MAPPED true
+#else
+#define MAPPED false
+#endif
 
 static int fail(const char *what) {
   fprintf(stderr, "check: %s (%s)\n", what, crop_proof_last_error());
@@ -37,10 +47,14 @@ int main(int argc, char **argv) {
   const crop_proof_rect right = {512, 0, 512, 512};
   struct timespec start;
 
-  /* The test image of fingerprint.h, written out so this check needs no other library. */
-  for (size_t channel = 0; channel < 3; channel++)
-    for (size_t i = 0; i < WIDTH * HEIGHT; i++)
-      planes[channel][i] = (uint8_t)((i * 7 + channel * 13 + (i >> 9)) & 0xff);
+  /* This program has one Rust archive, so its allocator must be the one in use. */
+  if (crop_proof_large_allocations_are_mapped() != MAPPED)
+    return fail(MAPPED ? "the archive's allocator is not in use: a large allocation was not mapped"
+                       : "a large allocation was mapped on a system that is not Apple's");
+
+  /* The archive carries the fingerprint's functions: the app links no other Rust library. */
+  if (fingerprint_test_image(planes[0], planes[1], planes[2], WIDTH * HEIGHT) != FINGERPRINT_OK)
+    return fail("fingerprint_test_image failed");
 
   crop_proof_prover *prover = (crop_proof_prover *)proof;
   if (crop_proof_prover_load("/nonexistent", &prover) != CROP_PROOF_ERROR_PARAMETERS || prover != NULL ||

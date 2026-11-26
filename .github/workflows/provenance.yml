@@ -7,7 +7,7 @@ on:
       - '!crates/bench/results/**'
       # crates/fingerprint-ffi tests and links against this header.
       - 'ios/Frameworks/include/fingerprint.h'
-      # crates/crop-proof-ffi tests against this one.
+      # crates/crop-proof-ffi tests against this one, and links against both.
       - 'ios/Frameworks/include/crop_proof.h'
       - 'location-proof/**'
       - 'Cargo.toml'
@@ -68,6 +68,10 @@ jobs:
       - name: Set up proof parameters, keys and samples
         run: ./target/release/provenance setup
 
+      # Two proofs and their checks through the C functions the app calls.
+      - name: Make and check a crop proof through the C header the app uses
+        run: crates/crop-proof-ffi/c/check.sh
+
       - name: Accept a signed capture through the API and reject tampered ones
         run: cargo test --release -p provenance --test serve -- --ignored
 
@@ -89,11 +93,12 @@ jobs:
         run: ./target/release/bench run --quick --samples 1
 
       # The probe exits non-zero when the proof it made does not verify. Run
-      # ids start with the time, so the last directory is the run above. The
-      # footprint is Apple's and is absent from the report here.
+      # ids start with the time, so the last directory that starts with a
+      # digit is the run above. The footprint is Apple's and is absent from
+      # the report here.
       - name: Prove the reference crop under the memory probe and verify it
         run: |
-          runs=(target/bench/*/)
+          runs=(target/bench/[0-9]*/)
           ./target/release/bench probe --work "${runs[${#runs[@]}-1]}" --verify
 
       - name: Upload the published photo and the forged copies

@@ -231,7 +231,7 @@ fn wait_until_unlocked(udid: &str) -> Result<()> {
     }
 }
 
-/// The Rust libraries are built on every run. The app links whatever is in
+/// The Rust library is built on every run. The app links whatever is in
 /// ios/Frameworks, and a library from before the last change to the prover
 /// would be measured in the name of the new one. Cargo does nothing for
 /// sources that did not change. The Go library has no part in the crop

@@ -1,6 +1,6 @@
 [package]
 name = "crop-proof-ffi"
-description = "C ABI over the crop proof for native callers, like the iOS capture app"
+description = "C ABI over the crop proof for native callers, and the one Rust static library of the iOS capture app"
 version = "0.1.0"
 license = "MIT"
 edition.workspace = true
@@ -14,6 +14,8 @@ crate-type = ["staticlib", "rlib"]
 [dependencies]
 anyhow.workspace = true
 crop-proof = { path = "../crop-proof" }
+# Its C functions go into this crate's static library, the only one the app links.
+fingerprint-ffi = { path = "../fingerprint-ffi" }
 
 [dev-dependencies]
 tempfile = "3"

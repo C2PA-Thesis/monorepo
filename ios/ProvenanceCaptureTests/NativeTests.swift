@@ -24,18 +24,28 @@ final class NativeTests: XCTestCase {
     private let demoCell = "87c2e3020ffffff"
 
     func testBothLibrariesAreLinked() {
-        XCTAssertTrue(Native.fingerprintLinked, "Fingerprint.xcframework is not linked; run ios/scripts/build-rust.sh")
+        XCTAssertTrue(Native.fingerprintLinked, "ProvenanceRust.xcframework is not linked; run ios/scripts/build-rust.sh")
         XCTAssertTrue(Native.zklocLinked, "ZKLoc.xcframework is not linked; run ios/scripts/build-go.sh")
     }
 
     /// A whole crop proof needs the parameters, so BenchmarkTests makes one.
     /// This shows that the library is linked and that its reasons arrive.
     func testCropProverSaysWhyItDidNotLoad() {
-        XCTAssertTrue(Native.cropProofLinked, "CropProof.xcframework is not linked; run ios/scripts/build-rust.sh")
+        XCTAssertTrue(Native.cropProofLinked, "ProvenanceRust.xcframework is not linked; run ios/scripts/build-rust.sh")
         let empty = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
         XCTAssertThrowsError(try CropProver(params: empty)) { error in
             XCTAssertTrue(describe(error).contains("metadata.json"), describe(error))
         }
+    }
+
+    /// The app as linked runs Rust on the allocator of crates/crop-proof-ffi.
+    /// With a second Rust static library the linker keeps one allocator, and
+    /// it kept the other library's: every Rust allocation went to the system
+    /// allocator, not to the one the crop prover is measured with.
+    func testRustAllocatorMapsLargeAllocations() {
+        XCTAssertEqual(
+            Native.rustMapsLargeAllocations, true,
+            "Rust does not run on the allocator of crop-proof-ffi; the app must link one Rust static library")
     }
 
     func testMaxPixelsMatchesTheHeader() {

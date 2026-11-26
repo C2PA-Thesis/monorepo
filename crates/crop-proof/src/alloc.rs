@@ -6,16 +6,53 @@
 //! limit. Giving each large allocation its own mapping returns its pages to
 //! the kernel the moment it is freed, so the footprint follows the live data.
 //!
-//! Only Apple targets (macOS and iOS) take the mapped path: the cache is
-//! Apple's and the effect was measured nowhere else. Everywhere else this is
-//! the system allocator.
+//! Only Apple targets (macOS and iOS) take the mapped path, because the cache
+//! is Apple's. Everywhere else this is the system allocator.
 //!
-//! The footprints reported for the prover (crates/crop-proof/HILLCLIMB.md)
-//! assume `DirectLarge` is the global allocator of the final binary, the iOS
-//! static library included. A program opts in with
+//! The effect was measured on macOS only: at the reference case the footprint
+//! peaked at 113 MB with `DirectLarge` and at 190 MB with the system
+//! allocator (crates/crop-proof/HILLCLIMB.md, row 9a). No iOS device was
+//! measured. The iPhone Simulator, a Mac process with the Simulator's system
+//! libraries, showed no gain. There the app's footprint, up to the end of the
+//! first proof of the process and before any proof was checked, peaked at
+//! 162 to 173 MB with `DirectLarge` and at 156 to 166 MB with the system
+//! allocator, three of those four runs at 156 MB (round 0 of
+//! `testMeasureACropProof`, 4 runs each, 2026-11-26).
+//!
+//! The footprints reported there assume `DirectLarge` is the global allocator
+//! of the final binary. A program opts in with
 //! `#[global_allocator] static A: crop_proof::alloc::DirectLarge = crop_proof::alloc::DirectLarge;`.
+//! `provenance` and `bench` do, and so does `crop-proof-ffi`, the Rust static
+//! library of the iOS app.
+//!
+//! A static library can lose its allocator at link time. Every Rust static
+//! library defines the allocator symbols (`__rust_alloc` and the rest). When
+//! a program links two of them and strips dead code, as Xcode does, Apple's
+//! linker keeps the first library's set and drops the other's with a warning
+//! at most. So the app links one Rust static library, and
+//! [`large_allocations_are_mapped`] lets a program check its own link when it
+//! runs.
 
 use std::alloc::{GlobalAlloc, Layout, System};
+
+/// Whether `DirectLarge` is the global allocator of this program and maps
+/// its large blocks. It allocates 2 MiB through the global allocator, frees
+/// them, and says whether the mapped path served the allocation. The answer
+/// is false on targets that are not Apple's, where nothing is mapped.
+///
+/// The count it reads rises only inside `DirectLarge`, so another allocator
+/// cannot make the answer true.
+pub fn large_allocations_are_mapped() -> bool {
+    #[cfg(target_vendor = "apple")]
+    {
+        let before = mapped::made();
+        // Without black_box the compiler may drop an allocation nobody reads.
+        drop(std::hint::black_box(Vec::<u8>::with_capacity(2 << 20)));
+        mapped::made() != before
+    }
+    #[cfg(not(target_vendor = "apple"))]
+    false
+}
 
 /// The system allocator, except that on Apple targets allocations of 1 MiB
 /// or more are anonymous mappings of their own.
@@ -24,6 +61,15 @@ pub struct DirectLarge;
 #[cfg(target_vendor = "apple")]
 mod mapped {
     use std::alloc::Layout;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// Mappings made since the program started. Only blocks of `THRESHOLD`
+    /// bytes or more add to it, so it costs nothing that can be measured.
+    static MADE: AtomicUsize = AtomicUsize::new(0);
+
+    pub fn made() -> usize {
+        MADE.load(Ordering::Relaxed)
+    }
 
     /// Lowering it to 64 KiB took the reference case's footprint from 113 MB
     /// to 109 MB (medians of 8 interleaved probe runs on a loaded machine,
@@ -52,6 +98,7 @@ mod mapped {
         if pointer == libc::MAP_FAILED {
             std::ptr::null_mut()
         } else {
+            MADE.fetch_add(1, Ordering::Relaxed);
             pointer.cast()
         }
     }
@@ -130,10 +177,25 @@ unsafe impl GlobalAlloc for DirectLarge {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Mutex;
+
     use super::*;
+
+    /// Held by the tests that map or read the count of mappings, so one
+    /// cannot move the count while the other reads it.
+    static MAPPING: Mutex<()> = Mutex::new(());
+
+    /// This test binary runs on the system allocator, as an app does when
+    /// the linker drops the allocator of the static library.
+    #[test]
+    fn a_program_without_the_allocator_maps_nothing() {
+        let _alone = MAPPING.lock().unwrap();
+        assert!(!large_allocations_are_mapped());
+    }
 
     #[test]
     fn large_blocks_are_zeroed_grow_and_shrink() {
+        let _alone = MAPPING.lock().unwrap();
         let allocator = DirectLarge;
         let small = Layout::from_size_align(1 << 10, 8).unwrap();
         let large = Layout::from_size_align(3 << 20, 8).unwrap();

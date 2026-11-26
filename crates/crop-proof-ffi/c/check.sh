@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Builds the host staticlib, links c/check.c against it through
-# ios/Frameworks/include/crop_proof.h, and makes and checks one crop proof at
-# the reference case. It proves twice (the first call learns the proof's
+# ios/Frameworks/include/crop_proof.h and fingerprint.h, checks that its
+# allocator is the one in use, and makes and checks one crop proof at the
+# reference case. It proves twice (the first call learns the proof's
 # length), so it takes as long and as much memory as two crop proofs. The
 # parameters come from `provenance setup`; CROP_PARAMS names another directory.
 set -euo pipefail

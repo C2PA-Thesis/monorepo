@@ -287,18 +287,40 @@ the payload. Anything else cancels the connection.
 
 ## Native libraries
 
-The fingerprint (Rust, `crates/fingerprint-ffi`), the crop proof (Rust,
+The Rust code (the fingerprint, `crates/fingerprint-ffi`, and the crop proof,
 `crates/crop-proof-ffi`) and the location circuit (Go,
-`location-proof/mobile`) are static XCFrameworks that the app target links
-with "Do Not Embed" (they are in its Frameworks build phase, not in an embed
-phase). They are build outputs, about 17 MB (Fingerprint), 19 MB (CropProof)
-and 26 MB (ZKLoc) per slice, so they are not committed. Build them before the
+`location-proof/mobile`) are two static XCFrameworks that the app target
+links with "Do Not Embed" (they are in its Frameworks build phase, not in an
+embed phase). They are build outputs, about 21 MB (ProvenanceRust) and
+26 MB (ZKLoc) per slice, so they are not committed. Build them before the
 first build in Xcode:
 
 ```
 ios/scripts/build-go.sh     # ios/Frameworks/ZKLoc.xcframework, needs Go
-ios/scripts/build-rust.sh   # ios/Frameworks/Fingerprint.xcframework and CropProof.xcframework, needs rustup
+ios/scripts/build-rust.sh   # ios/Frameworks/ProvenanceRust.xcframework, needs rustup
 ```
+
+All the Rust code is one static library, `libcrop_proof_ffi.a`: the
+`crop-proof-ffi` crate depends on `fingerprint-ffi` and its archive holds the
+C functions of both. It has to be one. Every Rust static library defines the
+allocator symbols (`__rust_alloc` and the rest), so with two of them the
+linker keeps one set and drops the other library's allocator without an
+error. That happened when the crop proof was first added as a second
+XCFramework next to the fingerprint's: the linker kept the fingerprint
+library's default allocator, and the crop prover ran without the allocator
+its footprint was measured with on the Mac
+(`crates/crop-proof/src/alloc.rs`). Two checks keep a second Rust library
+from coming back unnoticed:
+
+- `ios/scripts/check-allocator.sh` reads the XCFrameworks and the plain
+  static libraries of the project's Frameworks build phases and fails unless
+  exactly one of them defines `__rust_alloc`, in the device slice and in the
+  Simulator slice. It also fails on an entry it cannot read, such as a
+  package product. It does not read `OTHER_LDFLAGS`. CI runs it after both
+  build scripts.
+- `NativeTests.testRustAllocatorMapsLargeAllocations` asks the linked app:
+  `crop_proof_large_allocations_are_mapped` makes one Rust allocation of
+  2 MiB and says whether the prover's allocator served it.
 
 The capture does not make the crop proof: the laptop still makes it from the
 original. `CropProver` and `CropVerifier` in `NativeBridge.swift` exist for
@@ -311,12 +333,13 @@ libraries. This was chosen over linking them only when present: Xcode has no
 build setting that depends on a file existing, and a CI build without them
 would compile and test none of the native calls.
 
-Each XCFramework carries its own module map in a folder named after the
-module (`Headers/ZKLocFFI/module.modulemap`), so Swift imports `ZKLocFFI`,
-`FingerprintFFI` and `CropProofFFI` with no search path settings. `NativeBridge.swift` is the
-only file that calls them; it still guards each import with `#if canImport`,
-so a copy of the project without the libraries compiles and signing stops
-with "the native library ... is not built into this app".
+Each XCFramework carries a module map for each of its headers, in a folder
+named after the module (`Headers/ZKLocFFI/module.modulemap`), so Swift imports
+`ZKLocFFI`, `FingerprintFFI` and `CropProofFFI` with no search path settings.
+`NativeBridge.swift` is the only file that calls them; it still guards each
+import with `#if canImport`, so a copy of the project without the libraries
+compiles and signing stops with "the native library ... is not built into this
+app".
 
 The cell and its outline are computed on the phone with `zkloc_cell` and
 `zkloc_outline`. The app never sends the coordinate to the laptop, so it does
@@ -397,7 +420,9 @@ lists them.
   `zkloc_cell` on the UTDT coordinate with salt 1 give the hints, envelope
   and resolution 7 cell pinned in `location-proof/main_test.go`. Hints of
   another coordinate are refused. The crop prover, asked to load a folder
-  with no parameters, fails with the reason Rust gives.
+  with no parameters, fails with the reason Rust gives. A Rust allocation of
+  2 MiB gets a mapping of its own, so the app runs on the allocator of
+  `crates/crop-proof-ffi` (see [Native libraries](#native-libraries)).
 
 `BenchmarkTests` are skipped unless they are asked for. `scripts/bench.sh
 --group phone` runs them on a paired iPhone and reads their `BENCH` lines
@@ -409,7 +434,8 @@ whole process:
 - `testMeasureACropProof`: the crop proof of a 1024x512 original, checked on
   the device. It also prints the footprint and `os_proc_available_memory()`
   twice a second as `CROP-MEMORY` lines, and the SHA-256 of each proof as a
-  `CROP-PROOF` line.
+  `CROP-PROOF` line. It fails before it measures if Rust does not run on the
+  allocator of `crates/crop-proof-ffi`.
 - `testMeasureTheMemoryLimit`: how much memory iOS gives the app. It takes
   memory until about 200 MB of headroom is left and prints the limit last.
   The process it measures is the app as `xcodebuild` starts it for a test,
@@ -418,10 +444,10 @@ whole process:
 
 By hand, from `ios/`, with the parameters of `provenance setup` copied into
 `ProvenanceCaptureTests/Fixtures/bench/crop` (`metadata.json`, `prover.bin`
-and `verifier.bin`; the folder is not committed). Build the Rust libraries
-first, every time: the app links the `CropProof.xcframework` that is on disk,
-and one from before a change to `crates/crop-proof` gives the old prover's
-numbers.
+and `verifier.bin`; the folder is not committed). Build the Rust library
+first, every time: the app links the `ProvenanceRust.xcframework` that is on
+disk, and one from before a change to `crates/crop-proof` gives the old
+prover's numbers.
 
 ```
 scripts/build-rust.sh
@@ -460,6 +486,9 @@ runner.
 
 - Anything on a device beyond the run above: the device setup steps with
   another team. The device build compiles (CI builds it unsigned).
+- The crop proof on a device: its time, its footprint and whether iOS kills
+  it. `testMeasureACropProof` ran in the Simulator only, which is a Mac
+  process. `testMeasureTheMemoryLimit` never ran: the Simulator skips it.
 - `zkloc_prove` on a device: its time and memory there. In the Simulator it
   runs in the tests when they get params
   (`TEST_RUNNER_ZKLOC_PARAMS=<dir from location-proof setup>`, and

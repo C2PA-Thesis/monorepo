@@ -65,8 +65,13 @@ jobs:
       - name: Build ZKLoc.xcframework from location-proof/mobile
         run: scripts/build-go.sh
 
-      - name: Build Fingerprint.xcframework and CropProof.xcframework from crates/*-ffi
+      - name: Build ProvenanceRust.xcframework from crates/crop-proof-ffi
         run: scripts/build-rust.sh
+
+      # Two Rust archives would each bring an allocator, and the linker would
+      # drop one without an error. This covers the device slice, which no test runs.
+      - name: Check that one linked library defines the Rust allocator
+        run: scripts/check-allocator.sh
 
       - name: Check that the project opens
         run: xcodebuild -list -project ProvenanceCapture.xcodeproj
@@ -82,7 +87,8 @@ jobs:
           -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO
 
       # Simulator builds sign ad hoc, which needs no team, so the tests can run.
-      # NativeTests fail unless every library is linked.
+      # NativeTests fail unless every library is linked, and unless Rust runs
+      # on the allocator of crates/crop-proof-ffi in the linked app.
       - name: Run the unit tests on an iPhone Simulator
         run: |
           udid=$(xcrun simctl list devices available --json | jq -r \

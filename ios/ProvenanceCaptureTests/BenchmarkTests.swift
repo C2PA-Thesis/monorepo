@@ -68,6 +68,11 @@ final class BenchmarkTests: XCTestCase {
         guard FileManager.default.fileExists(atPath: params.appending(path: "prover.bin").path(percentEncoded: false)) else {
             throw XCTSkip("copy the crop parameters into ProvenanceCaptureTests/Fixtures/bench/crop")
         }
+        // A figure taken on another allocator would be reported in the name
+        // of the one the library sets.
+        guard Native.rustMapsLargeAllocations == true else {
+            throw CaptureError("Rust does not run on the allocator of crop-proof-ffi; see Native libraries in ios/README.md")
+        }
         UIApplication.shared.isIdleTimerDisabled = true
         defer { UIApplication.shared.isIdleTimerDisabled = false }
 

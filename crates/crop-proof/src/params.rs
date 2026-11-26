@@ -256,6 +256,55 @@ mod tests {
         assert!(error.contains("SHA-256"), "{error}");
     }
 
+    fn verifier_error(dir: &TempDir) -> String {
+        match VerifierParams::load(dir.path()) {
+            Ok(_) => panic!("the parameters were loaded"),
+            Err(error) => error.to_string(),
+        }
+    }
+
+    /// A parameter directory whose metadata.json records `recorded` for the
+    /// verifier key `key`.
+    fn verifier_directory(key: &[u8], recorded: Digest256) -> TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join(VERIFIER), key).unwrap();
+        let metadata = Metadata {
+            protocol: PROTOCOL.to_string(),
+            num_vars: NUM_VARS,
+            files: BTreeMap::from([(VERIFIER.to_string(), recorded)]),
+        };
+        let metadata = serde_json::to_vec_pretty(&metadata).unwrap();
+        fs::write(dir.path().join(METADATA), metadata).unwrap();
+        dir
+    }
+
+    #[test]
+    fn a_verifier_key_that_differs_from_its_digest_is_refused_when_loaded() {
+        // The digest is compared before the bytes are parsed, so any bytes do.
+        let key = b"a verifier key";
+        let dir = verifier_directory(key, Digest256::of(b"another verifier key"));
+        let error = verifier_error(&dir);
+        assert!(error.contains("SHA-256"), "{error}");
+    }
+
+    #[test]
+    fn a_verifier_key_that_matches_its_digest_gets_past_the_digest() {
+        // Bytes that are no key: the refusal now comes from parsing them.
+        let key = b"a verifier key";
+        let dir = verifier_directory(key, Digest256::of(key));
+        let error = verifier_error(&dir);
+        assert!(error.contains("malformed"), "{error}");
+    }
+
+    #[test]
+    fn a_verifier_key_that_metadata_does_not_list_is_refused_when_loaded() {
+        let key = uncompressed(&srs::params(4)).unwrap();
+        let dir = directory(&key, Digest256::of(&key));
+        fs::write(dir.path().join(VERIFIER), b"a verifier key").unwrap();
+        let error = verifier_error(&dir);
+        assert!(error.contains("metadata lists no"), "{error}");
+    }
+
     #[test]
     fn a_member_written_again_is_a_new_file() {
         let dir = tempfile::tempdir().unwrap();

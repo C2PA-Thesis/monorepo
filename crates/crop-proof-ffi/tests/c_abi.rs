@@ -200,6 +200,27 @@ fn loading_says_why_it_failed() {
     }
 }
 
+/// A test binary links the crate as a Rust library, so rustc gives it the
+/// crate's `#[global_allocator]` and no archive is involved. This shows that
+/// the crate declares the allocator and that the probe sees it. Whether a
+/// program that links the archive runs on it is for `c/check.sh` on the host
+/// and for `NativeTests` in the app.
+#[test]
+fn large_allocations_are_mapped_on_apple_targets_only() {
+    assert_eq!(
+        crop_proof_large_allocations_are_mapped(),
+        cfg!(target_vendor = "apple")
+    );
+}
+
+/// The archive is the app's only Rust library, so it must carry the
+/// fingerprint's C functions. Here they are reached through this crate.
+#[test]
+fn the_fingerprint_functions_are_part_of_the_library() {
+    let name = unsafe { CStr::from_ptr(fingerprint_algorithm()) };
+    assert_eq!(name.to_str().unwrap(), crop_proof::FINGERPRINT_ALGORITHM);
+}
+
 /// The header is written by hand; its constants and names must match the crate.
 #[test]
 fn header_matches_the_crate() {
@@ -227,6 +248,7 @@ fn header_matches_the_crate() {
         assert_eq!(define(name), value as usize, "{name}");
     }
     for function in [
+        "crop_proof_large_allocations_are_mapped(void)",
         "crop_proof_last_error(void)",
         "crop_proof_prover_load(",
         "crop_proof_prover_free(",

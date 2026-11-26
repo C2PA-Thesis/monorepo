@@ -384,7 +384,7 @@ async fn verify(router: &Router, png: Vec<u8>) -> Value {
 }
 
 /// Polls a capture until publishing ends, and returns its last status.
-/// The crop proof takes minutes on a busy machine.
+/// The crop proof takes seconds, more on a busy machine.
 async fn published(router: &Router, id: &str) -> Value {
     let path = format!("/api/captures/{id}");
     let mut body = Value::Null;

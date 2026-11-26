@@ -78,6 +78,18 @@ enum Native {
             #endif
         }
 
+        /// Whether Rust's large allocations get a mapping of their own in this
+        /// app, as the allocator of crates/crop-proof-ffi gives them. False
+        /// means the linker took the allocator of another Rust library: the
+        /// app must link ProvenanceRust.xcframework and no other Rust archive.
+        static var rustMapsLargeAllocations: Bool? {
+            #if canImport(CropProofFFI)
+                crop_proof_large_allocations_are_mapped()
+            #else
+                nil
+            #endif
+        }
+
         /// The deterministic image whose fingerprint digests crates/fingerprint pins,
         /// so the tests can run the linked library on a known input.
         static func testImage(_ size: OriginalSize) throws -> (r: [UInt8], g: [UInt8], b: [UInt8]) {
@@ -95,7 +107,7 @@ enum Native {
                 guard status == 0 else { throw NativeError.failed("fingerprint_test_image", "status \(status)") }
                 return (r, g, b)
             #else
-                throw NativeError.notBuilt("Fingerprint.xcframework")
+                throw NativeError.notBuilt("ProvenanceRust.xcframework")
             #endif
         }
     #endif
@@ -119,7 +131,7 @@ private struct LinkedLibrary: NativeLibrary {
             guard status == 0 else { throw NativeError.failed("fingerprint_rgb", "status \(status)") }
             return try Fingerprint(binary: Data(out), size: size)
         #else
-            throw NativeError.notBuilt("Fingerprint.xcframework")
+            throw NativeError.notBuilt("ProvenanceRust.xcframework")
         #endif
     }
 
@@ -226,7 +238,7 @@ private func checkPlanes(r: [UInt8], g: [UInt8], b: [UInt8], size: OriginalSize)
 }
 
 /// The crop prover of crates/crop-proof with its parameters loaded, from
-/// CropProof.xcframework. The parameters stay in memory while this object
+/// ProvenanceRust.xcframework. The parameters stay in memory while this object
 /// lives. The capture does not call it yet: the laptop still makes the crop
 /// proof, and only the benchmark runs this.
 final class CropProver: @unchecked Sendable {
@@ -244,7 +256,7 @@ final class CropProver: @unchecked Sendable {
             guard status == CROP_PROOF_OK, let loaded else { throw cropProofFailure("crop_proof_prover_load", status) }
             handle = loaded
         #else
-            throw NativeError.notBuilt("CropProof.xcframework")
+            throw NativeError.notBuilt("ProvenanceRust.xcframework")
         #endif
     }
 
@@ -272,7 +284,7 @@ final class CropProver: @unchecked Sendable {
             guard status == CROP_PROOF_OK else { throw cropProofFailure("crop_proof_prove", status) }
             return Data(proof.prefix(length))
         #else
-            throw NativeError.notBuilt("CropProof.xcframework")
+            throw NativeError.notBuilt("ProvenanceRust.xcframework")
         #endif
     }
 }
@@ -292,7 +304,7 @@ final class CropVerifier: @unchecked Sendable {
             guard status == CROP_PROOF_OK, let loaded else { throw cropProofFailure("crop_proof_verifier_load", status) }
             handle = loaded
         #else
-            throw NativeError.notBuilt("CropProof.xcframework")
+            throw NativeError.notBuilt("ProvenanceRust.xcframework")
         #endif
     }
 
@@ -317,7 +329,7 @@ final class CropVerifier: @unchecked Sendable {
             }
             guard status == CROP_PROOF_OK else { throw cropProofFailure("crop_proof_verify", status) }
         #else
-            throw NativeError.notBuilt("CropProof.xcframework")
+            throw NativeError.notBuilt("ProvenanceRust.xcframework")
         #endif
     }
 }
