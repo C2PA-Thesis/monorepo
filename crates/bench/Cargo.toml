@@ -11,9 +11,15 @@ anyhow.workspace = true
 base64 = "0.22"
 clap = { version = "4", features = ["derive"] }
 crop-proof = { path = "../crop-proof" }
+hex.workspace = true
 libc = "0.2"
 provenance = { path = "../provenance" }
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 tempfile = "3"
 time = { version = "0.3", features = ["formatting"] }
+
+[features]
+# Counts live heap bytes per phase of the crop prover, for `bench probe`.
+mem-profile = ["crop-proof/probe"]

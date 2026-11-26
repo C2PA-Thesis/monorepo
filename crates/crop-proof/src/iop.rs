@@ -1,26 +1,17 @@
-//! Prover-side IOPs, and the public tables and points both sides rebuild.
+//! What the prover and the verifier both rebuild from public data: the
+//! challenges, the weights, the range check's tables and the opening points.
+//! The IOPs are in `lean`, and in `reference` for the prover it replaced.
 
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
-use arithmetic::{merge_polynomials, VirtualPolynomial};
-use ark_bls12_381::Bls12_381;
 use ark_ff::{One, Zero};
 use ark_poly::DenseMultilinearExtension;
-use subroutines::{
-    pcs::prelude::{Commitment, MultilinearProverParam, PolynomialCommitmentScheme},
-    poly_iop::{
-        prelude::{ProductCheck, SumCheck},
-        PolyIOP,
-    },
-};
 use transcript::IOPTranscript;
 
-use crate::{Pcs, Rect, Size, Turn, F, NUM_VARS};
+use crate::{Rect, Size, Turn, F, NUM_VARS};
 
 pub(crate) type Poly = Arc<DenseMultilinearExtension<F>>;
-pub(crate) type SumCheckProof = <PolyIOP<F> as SumCheck<F>>::SumCheckProof;
-pub(crate) type ProductCheckProof = <PolyIOP<F> as ProductCheck<Bls12_381, Pcs>>::ProductCheckProof;
 
 /// Irreducible polynomial over GF(2) for each degree. The range check walks
 /// GF(2^n) by repeated multiplication by x to lay out its tables.
@@ -58,6 +49,7 @@ pub(crate) fn image_poly(mut values: Vec<F>) -> Poly {
     poly(values)
 }
 
+#[cfg(feature = "attack-hooks")]
 pub(crate) fn field_values(pixels: &[u8]) -> Vec<F> {
     pixels.iter().map(|&pixel| F::from(pixel)).collect()
 }
@@ -108,17 +100,29 @@ pub(crate) fn times_x(slot: u64, size: u64, reduction: u64) -> u64 {
 /// The lookup table T (slot g^i holds i for i in 1..=255) and its shift
 /// (slot g^(i+1) holds i), over NUM_VARS variables.
 pub(crate) fn range_tables() -> (Vec<F>, Vec<F>) {
-    let size = 1u64 << NUM_VARS;
-    let reduction = IRREDUCIBLE[NUM_VARS] - size;
-    let mut table = vec![F::zero(); size as usize];
-    let mut shifted = vec![F::zero(); size as usize];
-    let mut slot = 1;
-    for value in 1..=MAX_PIXEL {
-        table[slot as usize] = F::from(value);
-        slot = times_x(slot, size, reduction);
-        shifted[slot as usize] = F::from(value);
+    let slots = range_table_slots(NUM_VARS);
+    let mut table = vec![F::zero(); 1 << NUM_VARS];
+    let mut shifted = vec![F::zero(); 1 << NUM_VARS];
+    for (value, pair) in (1..=MAX_PIXEL).zip(slots.windows(2)) {
+        table[pair[0]] = F::from(value);
+        shifted[pair[1]] = F::from(value);
     }
     (table, shifted)
+}
+
+/// The first 256 slots of the walk through GF(2^num_vars) by repeated
+/// multiplication by x, from slot 1: value i of the lookup table sits in
+/// slot number i - 1 of the walk, and in slot number i of its shift.
+pub(crate) fn range_table_slots(num_vars: usize) -> Vec<usize> {
+    let size = 1u64 << num_vars;
+    let reduction = IRREDUCIBLE[num_vars] - size;
+    let mut slots = Vec::with_capacity(MAX_PIXEL as usize + 1);
+    let mut slot = 1;
+    for _ in 0..=MAX_PIXEL {
+        slots.push(slot as usize);
+        slot = times_x(slot, size, reduction);
+    }
+    slots
 }
 
 /// Every point opened at the end of the proof. Indices:
@@ -223,110 +227,8 @@ pub(crate) fn range_openings() -> Vec<Opening> {
         .collect()
 }
 
-pub(crate) fn prove_products(
-    weights: &Poly,
-    channels: &[Poly; 3],
-    transcript: &mut IOPTranscript<F>,
-) -> Result<[SumCheckProof; 3]> {
-    let polynomials = channels
-        .iter()
-        .map(|channel| {
-            let mut product = VirtualPolynomial::new_from_mle(weights, F::one());
-            check(
-                product.mul_by_mle(channel.clone(), F::one()),
-                "building a sumcheck polynomial",
-            )?;
-            Ok(product)
-        })
-        .collect::<Result<Vec<_>>>()?;
-    let proofs = polynomials
-        .iter()
-        .map(|polynomial| {
-            check(
-                <PolyIOP<F> as SumCheck<F>>::prove(polynomial, transcript),
-                "sumcheck",
-            )
-        })
-        .collect::<Result<Vec<_>>>()?;
-    proofs
-        .try_into()
-        .map_err(|_| anyhow!("expected three sumchecks"))
-}
-
-pub(crate) struct RangeCheck {
-    pub proof: ProductCheckProof,
-    pub counts: Poly,
-    pub counts_commitment: Commitment<Bls12_381>,
-    pub product: Poly,
-    pub fraction: Poly,
-}
-
-/// HyperPlonk lookup proving every channel value is in 0..=255: the multiset
-/// of (value, T) and (value, T shifted) pairs equals the sorted counts H and
-/// H shifted, where H repeats each table value once per occurrence plus one.
-pub(crate) fn prove_range(
-    channel: &Poly,
-    pixels: &[u8],
-    params: &MultilinearProverParam<Bls12_381>,
-    transcript: &mut IOPTranscript<F>,
-) -> Result<RangeCheck> {
-    let (table, shifted_table) = range_tables();
-    let (counts, shifted_counts) = sorted_counts(pixels);
-    let left = [
-        check(
-            merge_polynomials(&[channel.clone(), poly(table)]),
-            "merging the range table",
-        )?,
-        check(
-            merge_polynomials(&[channel.clone(), poly(shifted_table)]),
-            "merging the range table",
-        )?,
-    ];
-    let right = [poly(counts), poly(shifted_counts)];
-
-    // H goes into the transcript before the challenges, so it cannot be chosen
-    // after seeing them (attack A3).
-    let counts_commitment = check(Pcs::commit(params, &right[0]), "committing to range counts")?;
-    check(
-        transcript.append_serializable_element(b"hCom(x)", &counts_commitment),
-        "appending to the transcript",
-    )?;
-    let offset = challenge(transcript, b"alpha")?;
-    let constant = DenseMultilinearExtension::from_evaluations_vec(
-        NUM_VARS + 1,
-        vec![offset; 1 << (NUM_VARS + 1)],
-    );
-    let mix = challenge(transcript, b"alpha")?;
-    let f = &(left[0].as_ref() + &constant) + &scaled(&left[1], mix);
-    let g = &(right[0].as_ref() + &constant) + &scaled(&right[1], mix);
-    let (proof, product, fraction) = check(
-        <PolyIOP<F> as ProductCheck<Bls12_381, Pcs>>::prove(
-            params,
-            &[Arc::new(f)],
-            &[Arc::new(g)],
-            transcript,
-        ),
-        "range product check",
-    )?;
-    Ok(RangeCheck {
-        proof,
-        counts: right[0].clone(),
-        counts_commitment,
-        product,
-        fraction,
-    })
-}
-
-fn scaled(polynomial: &Poly, by: F) -> DenseMultilinearExtension<F> {
-    let values = polynomial
-        .evaluations
-        .iter()
-        .map(|value| *value * by)
-        .collect();
-    DenseMultilinearExtension::from_evaluations_vec(polynomial.num_vars, values)
-}
-
-fn sorted_counts(pixels: &[u8]) -> (Vec<F>, Vec<F>) {
+#[cfg(feature = "attack-hooks")]
+pub(crate) fn sorted_counts(pixels: &[u8]) -> (Vec<F>, Vec<F>) {
     let size = 1u64 << (NUM_VARS + 1);
     let reduction = IRREDUCIBLE[NUM_VARS + 1] - size;
     let mut occurrences = [0usize; MAX_PIXEL as usize + 1];
@@ -353,6 +255,39 @@ mod tests {
 
     use super::*;
     use crate::{edit, RgbImage};
+
+    /// The verifier evaluates these tables. They are pinned against the loop
+    /// that built them before `range_table_slots` existed, kept here word for
+    /// word, and against slots worked out by hand.
+    #[test]
+    fn range_tables_match_the_loop_they_replaced() {
+        let size = 1u64 << NUM_VARS;
+        let reduction = IRREDUCIBLE[NUM_VARS] - size;
+        let mut table = vec![F::zero(); size as usize];
+        let mut shifted = vec![F::zero(); size as usize];
+        let mut slot = 1;
+        for value in 1..=MAX_PIXEL {
+            table[slot as usize] = F::from(value);
+            slot = times_x(slot, size, reduction);
+            shifted[slot as usize] = F::from(value);
+        }
+        let (rebuilt, rebuilt_shifted) = range_tables();
+        assert!(rebuilt == table, "the lookup table changed");
+        assert!(rebuilt_shifted == shifted, "the shifted table changed");
+
+        // Slot x^(i-1) holds i. The walk leaves the powers of two after
+        // x^18, because x^19 = x^5 + x^2 + x + 1.
+        assert_eq!(NUM_VARS, 19);
+        assert_eq!(rebuilt[1], F::from(1u32));
+        assert_eq!(rebuilt[1 << 18], F::from(19u32));
+        assert_eq!(rebuilt[0b10_0111], F::from(20u32));
+        assert_eq!(rebuilt_shifted[1 << 1], F::from(1u32));
+        assert_eq!(rebuilt_shifted[0b10_0111], F::from(19u32));
+        for table in [&rebuilt, &rebuilt_shifted] {
+            let filled = table.iter().filter(|value| !value.is_zero()).count();
+            assert_eq!(filled, MAX_PIXEL as usize);
+        }
+    }
 
     #[test]
     fn weights_select_the_turned_rectangle() {

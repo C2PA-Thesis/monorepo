@@ -42,7 +42,8 @@ host_setup() {
   id "$user" >/dev/null 2>&1 || useradd --system --home-dir "$data" --shell /sbin/nologin "$user"
   mount_data
   install -d -o "$user" -g "$user" "$data" "$data/home" "$data/captures"
-  # The crop proof peaks at 5.7 GB on an 8 GiB instance.
+  # From when the crop proof peaked at 5.7 GB on an 8 GiB instance. The prover
+  # now needs far less, but it was not measured on this host, so the swap stays.
   if [ "$(swapon --noheadings | wc -l)" -eq 0 ]; then
     [ -f /swapfile ] || {
       dd if=/dev/zero of=/swapfile bs=1M count=4096 status=none

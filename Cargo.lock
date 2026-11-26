@@ -483,10 +483,12 @@ dependencies = [
  "base64 0.22.1",
  "clap",
  "crop-proof",
+ "hex",
  "libc",
  "provenance",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "tempfile",
  "time",
 ]
@@ -960,14 +962,27 @@ dependencies = [
  "crop-proof",
  "fingerprint",
  "hex",
+ "libc",
+ "memmap2",
  "num-bigint",
  "rand 0.8.8",
+ "rayon",
  "serde",
  "serde_json",
  "sha2 0.10.9",
  "subroutines",
  "tempfile",
  "transcript",
+]
+
+[[package]]
+name = "crop-proof-ffi"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "crop-proof",
+ "fingerprint-ffi",
+ "tempfile",
 ]
 
 [[package]]
@@ -2133,6 +2148,15 @@ name = "memchr"
 version = "2.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
+
+[[package]]
+name = "memmap2"
+version = "0.9.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6b0ca1155a9ecc25aa12e8313a119f32edf0255fea2f44839c4ac0a12b2ac157"
+dependencies = [
+ "libc",
+]
 
 [[package]]
 name = "merlin"

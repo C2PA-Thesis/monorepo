@@ -52,7 +52,7 @@ The paper figures in the report, as each paper states them:
 | `resolution` | Does the H3 resolution change the cost of the location proof? |
 | `threads` | What happens with 1, 2, 4 and 8 threads? |
 | `baseline` | What do upstream HyperVerITAS and ZKLP cost on this machine? What does the fingerprint cost as WebAssembly? |
-| `phone` | What do the fingerprint, the envelope and the location proof cost on a real iPhone? |
+| `phone` | What do the fingerprint, the envelope, the location proof and the crop proof cost on a real iPhone? |
 
 Each sweep changes one input. The other inputs stay at the reference case, so
 a difference between two rows has one cause.
@@ -65,7 +65,7 @@ For each scenario the report gives:
 | Middle half | The 25th to the 75th percentile of that time |
 | Process | The whole process, with start-up and reading the inputs |
 | CPU | User and system time, added over all cores |
-| Peak memory | The largest resident set of the process and its children. On the phone, the peak footprint of the test process so far |
+| Peak memory | The largest resident set of the process and its children. On the phone, the peak footprint of the test process so far. For the crop prover the two differ: its key is a read-only mapping of a 201 MB file, which the resident set counts and the footprint does not |
 | Output | The proof or file size |
 
 The report also splits the main operations into phases. For example, it
@@ -82,7 +82,8 @@ separates loading the crop parameters from proving.
 - **Round 0 is a warmup.** It fills the file cache and is not in the statistics.
   So the numbers are for a warm cache.
 - **The machine rests after each sample**, as long as the sample took, up to
-  20 seconds. Without rests, heat slowed crop proofs from 10 s to 14 s in a run.
+  20 seconds. Without rests, heat slowed crop proofs from 10 s to 14 s in a run
+  of the earlier prover.
 - **Rounds are interleaved.** Every scenario takes one sample, then every
   scenario takes the next. A slow change, such as heat, reaches all scenarios
   alike.
@@ -92,6 +93,50 @@ separates loading the crop parameters from proving.
   repository. Sources are pinned to one revision.
 - **The phone pauses between rounds.** Each round is one capture, not a hot
   phone. Each sample records the thermal state.
+- **The phone runs the capture and the crop proof in two processes.** Its peak
+  memory is the largest footprint of the process so far, so in one process
+  the crop proof would set the figure of the capture too. The crop proof is
+  the reference case, checked on the phone before its sample counts.
+- **The phone always gets the current prover.** Each run builds the Rust
+  library again before it builds the app, so a change to the prover cannot
+  be measured with the library from before it. The app links one Rust
+  static library, which sets the prover's allocator
+  (`crates/crop-proof/src/alloc.rs`), and the crop test stops before it
+  measures if that allocator is not the one in use. The run prints the SHA-256 of
+  the proof the phone made. The proof is the same bytes for the same image and
+  parameters, and the phone proves the test image of
+  `crates/crop-proof-ffi/c/check.sh`. Run that script on the laptop: it must
+  print the same digest.
+- **The phone's output is kept.** Everything a test prints goes to
+  `target/bench/<run id>/phone-<test>.log`. The crop test prints its footprint
+  and its headroom (`os_proc_available_memory`) twice a second as
+  `CROP-MEMORY` lines. If iOS kills the proof for its memory, these lines show
+  how far it got.
+
+## The memory probe
+
+`bench probe` is not a scenario of the suite. It proves the reference crop
+once in its own process, prints the SHA-256 of the proof and the peak memory
+footprint of the process, read from the kernel right after the proof, and
+with `--verify` checks the proof it made. The footprint is the number iOS
+compares with an app's limit. It is absent from the output on other systems
+than macOS.
+
+```bash
+scripts/bench.sh --quick          # once, for the fixtures
+scripts/hillclimb-measure.sh 3    # three probe runs, one line each
+```
+
+Built with `--features mem-profile`, the probe also counts live heap bytes
+and reports their peak and the footprint for each phase of the prover:
+
+```bash
+cargo build --release -p bench --features mem-profile --target-dir target/prof
+target/prof/release/bench probe --work target/bench/<run id> --trace heap.csv
+```
+
+[crates/crop-proof/HILLCLIMB.md](../crop-proof/HILLCLIMB.md) records what the
+probe measured while the prover's memory was cut.
 
 ## Results
 
@@ -116,6 +161,11 @@ Fixtures and upstream builds go in `target/bench`.
   `--resume` continues and loses at most one sample.
 - A missing nightly toolchain, Node, network or iPhone skips only the scenarios
   that need it. The report gives the reason.
+- A phone test that fails or passes its timeout keeps the rounds it finished.
+  The round it stopped in is recorded as a failed sample, with the path of the
+  test's output. The timeout grows with the number of samples: 20 minutes to
+  build and install, then 2 minutes for each capture round and 6 minutes for
+  each crop proof round.
 - `bench run` exits with an error if a sample failed or a required scenario has
   no samples. CI runs it in this way.
 
@@ -128,6 +178,22 @@ Fixtures and upstream builds go in `target/bench`.
   repository's location prover is a separate process that loads its keys.
 - The WebAssembly row runs in Node on this laptop, on one thread. It is not
   Safari on a phone.
-- The phone does not make crop proofs. No build of the crop proof for iOS exists.
+- The phone's crop proof loads the parameters and proves in each round, as a
+  laptop sample does. It computes the fingerprint once more than the laptop
+  does, inside the library, so its time is a little higher for the same proof.
+- The phone's peak memory is the largest footprint of the test process up to
+  the end of that round's proof. Round 0, the warmup, is the only round that
+  no check of a proof ran before. The test frees the prover before it checks
+  a proof. A check is expected to stay below a proof, but its footprint was
+  not measured. If the prover needs less memory than a check, the later
+  rounds report the check; compare them with round 0 in `samples.jsonl` and
+  with the `CROP-MEMORY` lines.
+- The phone's crop proof ran in the iOS Simulator only. Every statement here
+  about what it does on a device (its time, its footprint, a kill by iOS)
+  describes the code, not a run.
+- A phone run copies only the parameters of the tests it runs. Parameters
+  from an earlier run stay in `ios/ProvenanceCaptureTests/Fixtures/bench` and
+  in the test bundle (the crop prover's are 201 MB) until that folder is
+  deleted.
 - The phone signature is not measured, because it waits for Face ID.
 - Two runs compare only on the same machine in the same state.

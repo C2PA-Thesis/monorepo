@@ -334,7 +334,9 @@ impl Engine<'_> {
         Ok(())
     }
 
-    /// The phone runs all its samples in one test, so it is done or it is not.
+    /// The phone takes all the samples of a scenario in one test. A scenario
+    /// is done when its last round is on disk; any other is measured again
+    /// from round 0.
     fn sample_phone(&mut self) -> Result<()> {
         let info = self.info;
         let wanted: Vec<&Scenario> = info
@@ -347,12 +349,24 @@ impl Engine<'_> {
             return Ok(());
         };
         println!("measuring on the iPhone");
-        let params = self.lab.workspace.location_tool().params().to_path_buf();
-        match phone::measure(&self.paths.repository, &params, &self.paths.work, samples) {
-            Ok(readings) => {
-                for reading in readings {
-                    if let Some(scenario) = wanted.iter().find(|each| each.op == reading.op) {
-                        self.log.append(&phone_sample(scenario, &reading))?;
+        let ops: Vec<Op> = wanted.iter().map(|each| each.op).collect();
+        let location = self.lab.workspace.location_tool().params().to_path_buf();
+        let crop = self.lab.workspace.crop_params();
+        let parameters = phone::Parameters {
+            location: &location,
+            crop: &crop,
+        };
+        let (repository, work) = (&self.paths.repository, &self.paths.work);
+        match phone::measure(repository, &parameters, work, &ops, samples) {
+            Ok(batches) => {
+                for batch in &batches {
+                    for scenario in wanted.iter().filter(|each| batch.ops.contains(&each.op)) {
+                        for sample in phone_samples(scenario, batch, &self.done) {
+                            if let Some(error) = &sample.error {
+                                println!("  {} round {}: {error}", scenario.id, sample.round);
+                            }
+                            self.log.append(&sample)?;
+                        }
                     }
                 }
             }
@@ -477,6 +491,37 @@ fn phone_sample(scenario: &Scenario, reading: &phone::Reading) -> Sample {
     }
 }
 
+/// What one phone test adds to the log for `scenario`: the rounds it
+/// finished, without the rounds in `done`, which a resumed run measures
+/// again. A test that stopped early adds the round it did not finish as a
+/// failure, so the report shows it and the run does not pass for a clean
+/// one. A test without any round skips the scenario, as a missing phone does.
+fn phone_samples(
+    scenario: &Scenario,
+    batch: &phone::Batch,
+    done: &HashSet<(String, u32)>,
+) -> Vec<Sample> {
+    let readings = batch.readings.iter().filter(|each| each.op == scenario.op);
+    let rounds = readings.clone().map(|each| each.round + 1).max();
+    let mut samples: Vec<Sample> = readings
+        .filter(|each| !done.contains(&(scenario.id.clone(), each.round)))
+        .map(|each| phone_sample(scenario, each))
+        .collect();
+    if let Some(failure) = &batch.failure {
+        let (round, status) = match rounds {
+            Some(next) => (next, Status::Failed),
+            None => (0, Status::Skipped),
+        };
+        samples.push(Sample::empty(
+            scenario,
+            round,
+            status,
+            Some(failure.clone()),
+        ));
+    }
+    samples
+}
+
 /// What the sample's process printed, or why it has nothing to report.
 fn finish(usage: measure::Usage) -> Result<Measured> {
     match usage.outcome {
@@ -598,6 +643,60 @@ mod tests {
             .map(|each| each.scenario)
             .collect();
         assert_eq!(names, ["kept", "after"]);
+    }
+
+    fn crop_reading(round: u32) -> phone::Reading {
+        phone::Reading {
+            op: Op::PhoneCropProve,
+            round,
+            seconds: 40.0,
+            bytes: 36692,
+            peak_footprint_bytes: 1 << 30,
+            thermal_state: 0,
+        }
+    }
+
+    #[test]
+    fn a_phone_test_that_stops_early_keeps_its_rounds_and_fails_the_next() {
+        let all = scenarios(&[Group::Phone], Depth::QUICK);
+        let crop = all.iter().find(|each| each.op == Op::PhoneCropProve);
+        let (crop, capture) = (crop.unwrap(), &all[0]);
+        let batch = phone::Batch {
+            ops: &[Op::PhoneCropProve],
+            readings: vec![crop_reading(0), crop_reading(1)],
+            failure: Some("killed".to_string()),
+        };
+        let rounds = |samples: &[Sample]| -> Vec<(u32, Status)> {
+            samples
+                .iter()
+                .map(|each| (each.round, each.status))
+                .collect()
+        };
+
+        let samples = phone_samples(crop, &batch, &HashSet::new());
+        assert_eq!(
+            rounds(&samples),
+            [(0, Status::Warmup), (1, Status::Ok), (2, Status::Failed)]
+        );
+        assert_eq!(samples[1].peak_rss_bytes, 1 << 30);
+        assert_eq!(samples[2].error.as_deref(), Some("killed"));
+
+        // A resumed run has rounds 0 and 1 on disk already.
+        let done = HashSet::from([(crop.id.clone(), 0), (crop.id.clone(), 1)]);
+        let complete = phone::Batch {
+            readings: (0..=2).map(crop_reading).collect(),
+            failure: None,
+            ..batch
+        };
+        assert_eq!(
+            rounds(&phone_samples(crop, &complete, &done)),
+            [(2, Status::Ok)]
+        );
+
+        // A scenario without any round is skipped, with the reason.
+        let skipped = phone_samples(capture, &batch, &HashSet::new());
+        assert_eq!(rounds(&skipped), [(0, Status::Skipped)]);
+        assert_eq!(skipped[0].error.as_deref(), Some("killed"));
     }
 
     #[test]

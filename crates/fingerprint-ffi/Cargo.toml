@@ -8,7 +8,8 @@ rust-version.workspace = true
 publish.workspace = true
 
 [lib]
-# staticlib is what the iOS app links; rlib lets the tests call the same functions.
+# staticlib is what c/check.sh links. rlib is what the tests link, and
+# crop-proof-ffi, whose static library carries these functions into the iOS app.
 crate-type = ["staticlib", "rlib"]
 
 [dependencies]

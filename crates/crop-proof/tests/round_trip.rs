@@ -5,7 +5,7 @@ use crop_proof::{
 use rand::{RngCore, SeedableRng};
 
 #[test]
-#[ignore = "proves over 2^19 pixels, about half a minute; run with --release --ignored"]
+#[ignore = "sets up parameters and proves over 2^19 pixels; run with --release --ignored"]
 fn proves_verifies_and_rejects_tampering() {
     let mut rng = rand::rngs::StdRng::seed_from_u64(7);
     let params = tempfile::tempdir().unwrap();

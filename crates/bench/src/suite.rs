@@ -123,6 +123,7 @@ pub enum Op {
     PhoneFingerprint,
     PhoneEnvelope,
     PhoneLocationProve,
+    PhoneCropProve,
 }
 
 impl Op {
@@ -130,7 +131,7 @@ impl Op {
     pub fn is_phone(self) -> bool {
         matches!(
             self,
-            Op::PhoneFingerprint | Op::PhoneEnvelope | Op::PhoneLocationProve
+            Op::PhoneFingerprint | Op::PhoneEnvelope | Op::PhoneLocationProve | Op::PhoneCropProve
         )
     }
 
@@ -162,6 +163,7 @@ impl Op {
             Op::PhoneFingerprint => "fingerprint",
             Op::PhoneEnvelope => "envelope",
             Op::PhoneLocationProve => "location proof",
+            Op::PhoneCropProve => "crop proof",
         }
     }
 
@@ -373,6 +375,15 @@ impl Builder {
         ] {
             self.add(Group::Phone, op, case, None, self.depth.reference);
         }
+        // BenchmarkTests.swift has this case written out: the same crop
+        // proof as on the laptop, so the two rows compare.
+        self.add(
+            Group::Phone,
+            Op::PhoneCropProve,
+            Case::reference(),
+            None,
+            self.depth.reference,
+        );
     }
 }
 
@@ -439,6 +450,14 @@ mod tests {
             image.check().unwrap();
             crop.check(image).unwrap();
         }
+    }
+
+    #[test]
+    fn the_phone_proves_the_same_crop_as_the_laptop() {
+        let all = scenarios(&Group::ALL, Depth::FULL);
+        let case_of = |op: Op| all.iter().find(|each| each.op == op).unwrap().case;
+        assert_eq!(case_of(Op::PhoneCropProve), case_of(Op::CropProve));
+        assert_eq!(case_of(Op::PhoneCropProve), Case::reference());
     }
 
     #[test]

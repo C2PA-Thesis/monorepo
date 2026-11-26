@@ -9,6 +9,7 @@ export default {
         'bench',
         'c2pa',
         'crop-proof',
+        'crop-proof-ffi',
         'fingerprint',
         'fingerprint-ffi',
         'ios',

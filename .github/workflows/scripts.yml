@@ -6,6 +6,7 @@ on:
       - 'scripts/**'
       - 'ios/scripts/**'
       - 'crates/fingerprint-ffi/c/*.sh'
+      - 'crates/crop-proof-ffi/c/*.sh'
       - '.github/workflows/scripts.yml'
   pull_request:
     paths: *paths
@@ -20,3 +21,4 @@ jobs:
         run: >
           shellcheck --external-sources --source-path=SCRIPTDIR
           scripts/*.sh ios/scripts/*.sh crates/fingerprint-ffi/c/*.sh
+          crates/crop-proof-ffi/c/*.sh

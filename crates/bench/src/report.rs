@@ -511,7 +511,8 @@ fn markdown(info: &RunInfo, rows: &[Row]) -> String {
     report.push_str(
         "\nMedian is the operation alone. Middle half is the 25th to 75th percentile. Process \
          adds start-up and reading the inputs. CPU adds up all cores. Peak memory is the \
-         process's largest resident set.\n",
+         process's largest resident set; for the crop prover that counts its mapped key file, \
+         which its memory footprint does not. On the phone it is the footprint.\n",
     );
     for group in Group::ALL {
         let members: Vec<&Row> = rows
