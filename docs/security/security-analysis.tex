@@ -70,6 +70,9 @@ covers the parts every deployment shares: the receipt, the location proof, the
 crop proof, the C2PA assertion and the reader's verifier. The phone web app and
 its capture server are out of scope because they are being replaced; their
 issues are listed as assumptions in Section~\ref{sec:assumptions}.
+A2 and A3 were also run against the reference implementation of HyperVerITAS
+(\code{glgreiner/HyperVerITAS} at \code{915c48a}), as described in their
+Origin items.
 
 Every finding names the code it depends on and its status:
 \begin{description}[itemsep=0pt]
@@ -231,6 +234,17 @@ B3 & Both setups are single-party & C1, C2 & setup operator & by inspection \\
   location proof and the crop proof, replaces the pixels with a color
   gradient, re-signs the manifest with the sample key (B2), and the reader
   passes all four checks.
+\item[Origin.] The reference implementation has the same flaw. In
+  \code{hyperveritas_impl/examples/hv_crop_pst.rs} at \code{915c48a}, the
+  verifier (lines 557--936) absorbs the image commitments (line 610) and the
+  hash and range-check messages, then draws the crop challenges at line 672.
+  It never absorbs $P$ or $h$. \code{docs/security/hyperveritas-upstream/reproduce.sh}
+  runs the attack against that code with the same method: the forged image
+  differs from the honest crop in 783{,}440 of 786{,}432 channel values, the
+  verifier draws byte-identical challenges for both images, and it accepts the
+  forged one with the honest proof unchanged. The script changes \code{ver()}
+  only to read the published crop from another file and to write the
+  challenges out; no check is modified.
 \item[Fix.] Absorb the whole statement before the first challenge: a protocol
   and version tag, a digest of the verifier parameters, the crop rectangle, a
   digest of $P$, and $h$. Bump the proof format version so old proofs are
@@ -278,8 +292,16 @@ B3 & Both setups are single-party & C1, C2 & setup operator & by inspection \\
 \item[Origin.] The reference implementation has the same order: in
   \code{hyperveritas_impl/examples/hv_crop_pst.rs} at \code{915c48a} the
   verifier draws the range challenges at lines 665--666 and absorbs the
-  commitment to $H$ (\code{hCom}) at line 776. The other variants in that
-  repository are listed in Section~\ref{sec:not-analyzed}.
+  commitment to $H$ (\code{hCom}) at line 776, and the prover's
+  \code{multsetProverIOP} (\file{hyperveritas_impl/src/prover.rs}{99, 115})
+  draws them before $H$ is committed. The same script runs this attack
+  against that code. From the upstream example it generates a dishonest
+  prover that knows only the fingerprint, solves 128 pixels per channel as
+  above and chooses $H$ after reading the two challenges; \code{ver()} is
+  the one used for A2. The verifier accepts the gradient as the crop of the
+  original behind the fingerprint, with all 384 solved values outside
+  $[0,255]$. When it reads the honest crop instead, it rejects. The other
+  variants in that repository are listed in Section~\ref{sec:not-analyzed}.
 \item[Fix.] Commit to $H$ and absorb the commitment before drawing the
   product-check challenges, as the HyperPlonk lookup requires. Check the same
   order for every committed polynomial. A2's fix does not cover this one: the
@@ -401,8 +423,8 @@ document is a claim about them.
     dropping alpha and ignoring color profiles. We did not check whether a
     file can display a different picture from the one that is verified.
   \item \textbf{Other commitment schemes.} The HyperVerITAS repository has
-    other variants of the crop proof; we checked only the transcript order of
-    the PST variant we use (A3).
+    other variants of the crop proof; we checked and ran only the PST variant
+    we use (A2, A3).
   \item \textbf{Libraries.} We rely on gnark's Groth16 verifier, the
     HyperPlonk polynomial commitment, \code{c2pa-rs} and the ECDSA
     implementation, and did not review them.

@@ -6,6 +6,7 @@ on:
       - 'scripts/**'
       - 'ios/scripts/**'
       - 'crates/fingerprint-ffi/c/*.sh'
+      - 'docs/security/*/*.sh'
       - '.github/workflows/scripts.yml'
   pull_request:
     paths: *paths
@@ -19,4 +20,4 @@ jobs:
       - name: Lint every script
         run: >
           shellcheck --external-sources --source-path=SCRIPTDIR
-          scripts/*.sh ios/scripts/*.sh crates/fingerprint-ffi/c/*.sh
+          scripts/*.sh ios/scripts/*.sh crates/fingerprint-ffi/c/*.sh docs/security/*/*.sh
