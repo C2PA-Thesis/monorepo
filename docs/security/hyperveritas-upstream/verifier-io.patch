@@ -1,0 +1,26 @@
+diff --git a/hyperveritas_impl/examples/hv_crop_pst.rs b/hyperveritas_impl/examples/hv_crop_pst.rs
+index d31c66b..22e38d0 100644
+--- a/hyperveritas_impl/examples/hv_crop_pst.rs
++++ b/hyperveritas_impl/examples/hv_crop_pst.rs
+@@ -600,6 +600,8 @@ fn ver<E, PCS>(
+     let now = Instant::now();
+     let maxVal = 255;
+     let cropFileName = format!("images/Crop{}.json", numCols);
++    // A2 reproduction: the verifier may read the published crop from another file.
++    let cropFileName = std::env::var("HV_VERIFIER_CROP").unwrap_or(cropFileName);
+     let cropImg = load_image(cropFileName);
+     let (cropImgPolyR, _)  = vec_to_poly(toFieldVec::<F>(&cropImg.R));
+     let (cropImgPolyG, _)  = vec_to_poly(toFieldVec::<F>(&cropImg.G));
+@@ -670,6 +672,12 @@ fn ver<E, PCS>(
+      // Now do sumcheck for image transformation
+     // First get frievald challenge
+     let frievaldRandVec = transcript.get_and_append_challenge_vectors(b"frievald", 1<<nvCrop).unwrap();
++    // A2 reproduction: write the crop challenges, big-endian hex, one per line.
++    if let Ok(path) = std::env::var("HV_DUMP_CHALLENGES") {
++        use ark_ff::{BigInteger, PrimeField};
++        let lines: Vec<String> = frievaldRandVec.iter().map(|c| c.into_bigint().to_bytes_be().iter().map(|b| format!("{:02x}", b)).collect::<String>()).collect();
++        std::fs::write(path, lines.join("\n")).unwrap();
++    }
+     // We now check if
+     let mut expectedSumVal = [F::zero(),F::zero(),F::zero()];
+     

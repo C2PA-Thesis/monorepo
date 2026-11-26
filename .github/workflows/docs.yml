@@ -4,6 +4,7 @@ on:
   push:
     paths: &paths
       - 'docs/**'
+      - 'crates/crop-proof/src/lattice.rs'
       - '.github/workflows/docs.yml'
   pull_request:
     paths: *paths
@@ -47,3 +48,13 @@ jobs:
         with:
           name: security-analysis
           path: docs/security/security-analysis.pdf
+
+  # The upstream reproduction needs a nightly build and 7 GB, so CI only checks
+  # that the forger still compiles against the shared lattice solver.
+  hyperveritas-upstream:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the A2 forger
+        run: cargo build --locked --manifest-path docs/security/hyperveritas-upstream/forge/Cargo.toml
