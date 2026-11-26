@@ -96,17 +96,29 @@ pub(crate) fn times_x(slot: u64, size: u64, reduction: u64) -> u64 {
 /// The lookup table T (slot g^i holds i for i in 1..=255) and its shift
 /// (slot g^(i+1) holds i), over NUM_VARS variables.
 pub(crate) fn range_tables() -> (Vec<F>, Vec<F>) {
-    let size = 1u64 << NUM_VARS;
-    let reduction = IRREDUCIBLE[NUM_VARS] - size;
-    let mut table = vec![F::zero(); size as usize];
-    let mut shifted = vec![F::zero(); size as usize];
-    let mut slot = 1;
-    for value in 1..=MAX_PIXEL {
-        table[slot as usize] = F::from(value);
-        slot = times_x(slot, size, reduction);
-        shifted[slot as usize] = F::from(value);
+    let slots = range_table_slots(NUM_VARS);
+    let mut table = vec![F::zero(); 1 << NUM_VARS];
+    let mut shifted = vec![F::zero(); 1 << NUM_VARS];
+    for (value, pair) in (1..=MAX_PIXEL).zip(slots.windows(2)) {
+        table[pair[0]] = F::from(value);
+        shifted[pair[1]] = F::from(value);
     }
     (table, shifted)
+}
+
+/// The first 256 slots of the walk through GF(2^num_vars) by repeated
+/// multiplication by x, from slot 1: value i of the lookup table sits in
+/// slot number i - 1 of the walk, and in slot number i of its shift.
+pub(crate) fn range_table_slots(num_vars: usize) -> Vec<usize> {
+    let size = 1u64 << num_vars;
+    let reduction = IRREDUCIBLE[num_vars] - size;
+    let mut slots = Vec::with_capacity(MAX_PIXEL as usize + 1);
+    let mut slot = 1;
+    for _ in 0..=MAX_PIXEL {
+        slots.push(slot as usize);
+        slot = times_x(slot, size, reduction);
+    }
+    slots
 }
 
 /// Every point opened at the end of the proof. Indices:
