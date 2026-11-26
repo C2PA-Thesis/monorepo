@@ -12,7 +12,7 @@ use subroutines::pcs::prelude::{MultilinearVerifierParam, PolynomialCommitmentSc
 use crate::{iop::check, lean::srs::Srs, Pcs, NUM_VARS, PROTOCOL};
 
 const METADATA: &str = "metadata.json";
-const PROVER: &str = "prover.bin";
+pub(crate) const PROVER: &str = "prover.bin";
 const VERIFIER: &str = "verifier.bin";
 
 pub struct ProverParams {
@@ -81,7 +81,7 @@ pub fn setup_with_rng(dir: &Path, rng: &mut impl RngCore) -> Result<()> {
         (PROVER, uncompressed(&prover)?),
         (VERIFIER, uncompressed(&verifier)?),
     ] {
-        fs::write(dir.join(name), &bytes).with_context(|| format!("writing {name}"))?;
+        write_new(dir, name, &bytes)?;
         files.insert(name.to_string(), Digest256::of(&bytes));
     }
     let metadata = Metadata {
@@ -89,21 +89,50 @@ pub fn setup_with_rng(dir: &Path, rng: &mut impl RngCore) -> Result<()> {
         num_vars: NUM_VARS,
         files,
     };
-    fs::write(dir.join(METADATA), serde_json::to_vec_pretty(&metadata)?)
-        .context("writing metadata.json")
+    write_new(dir, METADATA, &serde_json::to_vec_pretty(&metadata)?)
+}
+
+/// Writes `bytes` to a new file and renames it to `name`. Writing over a file
+/// of that name would change the bytes under a prover that has it mapped, and
+/// a setup that stops halfway would leave half a file under the final name.
+fn write_new(dir: &Path, name: &str, bytes: &[u8]) -> Result<()> {
+    let partial = dir.join(format!("{name}.partial"));
+    fs::write(&partial, bytes).with_context(|| format!("writing {name}"))?;
+    fs::rename(&partial, dir.join(name)).with_context(|| format!("writing {name}"))
 }
 
 impl ProverParams {
     /// Maps the prover key instead of reading it: the file is 201 MB, and
     /// pages the system can reload from the file do not count as memory the
     /// process owns.
+    ///
+    /// The key file must not be modified while the `ProverParams` is alive:
+    /// - If it is truncated, or the system fails to read it, the process is
+    ///   killed with SIGBUS the next time the prover touches a missing page.
+    /// - If it is rewritten in place, `prove` returns "the prover key changed
+    ///   while proving" when a point no longer decodes, and otherwise a proof
+    ///   that fails verification.
+    ///
+    /// Replacing the file by renaming a new one over it, as `setup` does,
+    /// leaves the loaded key as it was.
+    ///
+    /// The SHA-256 is checked once, here. It is an integrity check against
+    /// corruption, not authentication: whoever can write the directory can
+    /// write metadata.json as well.
     pub fn load(dir: &Path) -> Result<Self> {
         let expected = expected_digest(dir, PROVER)?;
         let srs = Srs::open(&dir.join(PROVER))?;
-        let bytes = srs.bytes().context("the prover key is not mapped")?;
         ensure!(
-            Digest256::of(bytes) == expected,
+            Digest256::of(srs.bytes()) == expected,
             "{PROVER} does not match the SHA-256 in metadata.json"
+        );
+        // The digest only ties the file to metadata.json. The prover panics
+        // on a key without the basis for the openings of the range check.
+        ensure!(
+            srs.num_vars() > NUM_VARS,
+            "{PROVER} holds a key over {} variables, expected at least {}",
+            srs.num_vars(),
+            NUM_VARS + 1
         );
         Ok(Self {
             srs,
@@ -116,8 +145,7 @@ impl ProverParams {
     #[cfg(feature = "attack-hooks")]
     pub(crate) fn pcs(&self) -> &subroutines::pcs::prelude::MultilinearProverParam<Bls12_381> {
         self.reference.get_or_init(|| {
-            let mut bytes = self.srs.bytes().expect("load maps the key");
-            CanonicalDeserialize::deserialize_uncompressed_unchecked(&mut bytes)
+            CanonicalDeserialize::deserialize_uncompressed_unchecked(self.srs.bytes())
                 .expect("load checked the key's structure")
         })
     }
@@ -175,4 +203,76 @@ fn uncompressed<T: CanonicalSerialize>(value: &T) -> Result<Vec<u8>> {
         .serialize_uncompressed(&mut bytes)
         .context("serializing parameters")?;
     Ok(bytes)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::Read;
+
+    use tempfile::TempDir;
+
+    use super::*;
+    use crate::lean::srs::tests as srs;
+
+    /// A parameter directory with `key` as its prover key and a metadata.json
+    /// that records `recorded` for it.
+    fn directory(key: &[u8], recorded: Digest256) -> TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join(PROVER), key).unwrap();
+        let metadata = Metadata {
+            protocol: PROTOCOL.to_string(),
+            num_vars: NUM_VARS,
+            files: BTreeMap::from([(PROVER.to_string(), recorded)]),
+        };
+        let metadata = serde_json::to_vec_pretty(&metadata).unwrap();
+        fs::write(dir.path().join(METADATA), metadata).unwrap();
+        dir
+    }
+
+    fn load_error(dir: &TempDir) -> String {
+        match ProverParams::load(dir.path()) {
+            Ok(_) => panic!("the parameters were loaded"),
+            Err(error) => error.to_string(),
+        }
+    }
+
+    #[test]
+    fn a_key_over_too_few_variables_is_refused_when_loaded() {
+        // A well-formed key that metadata.json describes exactly, so only
+        // its size is wrong. The prover used to panic on it.
+        let key = uncompressed(&srs::params(4)).unwrap();
+        let dir = directory(&key, Digest256::of(&key));
+        let error = load_error(&dir);
+        assert!(error.contains("a key over 4 variables"), "{error}");
+    }
+
+    #[test]
+    fn a_key_that_differs_from_its_digest_is_refused_when_loaded() {
+        let key = uncompressed(&srs::params(4)).unwrap();
+        let mut recorded = key.clone();
+        *recorded.last_mut().unwrap() ^= 1;
+        let dir = directory(&key, Digest256::of(&recorded));
+        let error = load_error(&dir);
+        assert!(error.contains("SHA-256"), "{error}");
+    }
+
+    #[test]
+    fn a_member_written_again_is_a_new_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(PROVER);
+        write_new(dir.path(), PROVER, b"the first key").unwrap();
+        // Stands for a prover that has the first file mapped.
+        let mut held = fs::File::open(&path).unwrap();
+        write_new(dir.path(), PROVER, b"another").unwrap();
+
+        let mut first = Vec::new();
+        held.read_to_end(&mut first).unwrap();
+        assert_eq!(first, b"the first key");
+        assert_eq!(fs::read(&path).unwrap(), b"another");
+        let names: Vec<_> = fs::read_dir(dir.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert_eq!(names, [PROVER]);
+    }
 }

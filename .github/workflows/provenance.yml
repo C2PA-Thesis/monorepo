@@ -7,6 +7,8 @@ on:
       - '!crates/bench/results/**'
       # crates/fingerprint-ffi tests and links against this header.
       - 'ios/Frameworks/include/fingerprint.h'
+      # crates/crop-proof-ffi tests against this one.
+      - 'ios/Frameworks/include/crop_proof.h'
       - 'location-proof/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
@@ -38,6 +40,10 @@ jobs:
           cargo fmt --check
           cargo clippy --workspace --all-targets -- -D warnings
           cargo clippy -p crop-proof --all-targets --features attack-hooks -- -D warnings
+          # Features no other step builds: the prover's phase marks and the
+          # memory profiler of the benchmark that reads them.
+          cargo clippy -p crop-proof --features probe -- -D warnings
+          cargo clippy -p bench --all-targets --features mem-profile -- -D warnings
           cd location-proof && test -z "$(gofmt -l .)" && go vet ./...
 
       - name: Unit tests
@@ -81,6 +87,14 @@ jobs:
       # Fails when a sample fails, so the harness cannot rot between real runs.
       - name: Benchmark the pipeline once
         run: ./target/release/bench run --quick --samples 1
+
+      # The probe exits non-zero when the proof it made does not verify. Run
+      # ids start with the time, so the last directory is the run above. The
+      # footprint is Apple's and is absent from the report here.
+      - name: Prove the reference crop under the memory probe and verify it
+        run: |
+          runs=(target/bench/*/)
+          ./target/release/bench probe --work "${runs[${#runs[@]}-1]}" --verify
 
       - name: Upload the published photo and the forged copies
         if: always()

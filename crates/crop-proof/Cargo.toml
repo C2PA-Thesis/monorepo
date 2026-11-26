@@ -29,7 +29,7 @@ sha2.workspace = true
 subroutines = { git = "https://github.com/glgreiner/hyperplonk", rev = "bed02ac877968512f6b920a1a449f4226944ce09" }
 transcript = { git = "https://github.com/glgreiner/hyperplonk", rev = "bed02ac877968512f6b920a1a449f4226944ce09" }
 
-[target.'cfg(unix)'.dependencies]
+[target.'cfg(target_vendor = "apple")'.dependencies]
 libc = "0.2"
 
 [features]

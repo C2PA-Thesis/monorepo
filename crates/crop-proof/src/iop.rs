@@ -1,4 +1,6 @@
-//! Prover-side IOPs, and the public tables and points both sides rebuild.
+//! What the prover and the verifier both rebuild from public data: the
+//! challenges, the weights, the range check's tables and the opening points.
+//! The IOPs are in `lean`, and in `reference` for the prover it replaced.
 
 use std::sync::Arc;
 
@@ -10,6 +12,7 @@ use transcript::IOPTranscript;
 use crate::{Rect, Size, Turn, F, NUM_VARS};
 
 pub(crate) type Poly = Arc<DenseMultilinearExtension<F>>;
+
 /// Irreducible polynomial over GF(2) for each degree. The range check walks
 /// GF(2^n) by repeated multiplication by x to lay out its tables.
 pub(crate) const IRREDUCIBLE: [u64; 27] = [
@@ -252,6 +255,39 @@ mod tests {
 
     use super::*;
     use crate::{edit, RgbImage};
+
+    /// The verifier evaluates these tables. They are pinned against the loop
+    /// that built them before `range_table_slots` existed, kept here word for
+    /// word, and against slots worked out by hand.
+    #[test]
+    fn range_tables_match_the_loop_they_replaced() {
+        let size = 1u64 << NUM_VARS;
+        let reduction = IRREDUCIBLE[NUM_VARS] - size;
+        let mut table = vec![F::zero(); size as usize];
+        let mut shifted = vec![F::zero(); size as usize];
+        let mut slot = 1;
+        for value in 1..=MAX_PIXEL {
+            table[slot as usize] = F::from(value);
+            slot = times_x(slot, size, reduction);
+            shifted[slot as usize] = F::from(value);
+        }
+        let (rebuilt, rebuilt_shifted) = range_tables();
+        assert!(rebuilt == table, "the lookup table changed");
+        assert!(rebuilt_shifted == shifted, "the shifted table changed");
+
+        // Slot x^(i-1) holds i. The walk leaves the powers of two after
+        // x^18, because x^19 = x^5 + x^2 + x + 1.
+        assert_eq!(NUM_VARS, 19);
+        assert_eq!(rebuilt[1], F::from(1u32));
+        assert_eq!(rebuilt[1 << 18], F::from(19u32));
+        assert_eq!(rebuilt[0b10_0111], F::from(20u32));
+        assert_eq!(rebuilt_shifted[1 << 1], F::from(1u32));
+        assert_eq!(rebuilt_shifted[0b10_0111], F::from(19u32));
+        for table in [&rebuilt, &rebuilt_shifted] {
+            let filled = table.iter().filter(|value| !value.is_zero()).count();
+            assert_eq!(filled, MAX_PIXEL as usize);
+        }
+    }
 
     #[test]
     fn weights_select_the_turned_rectangle() {

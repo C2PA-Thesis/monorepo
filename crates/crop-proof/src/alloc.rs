@@ -1,25 +1,33 @@
 //! An allocator for programs that run the prover.
 //!
-//! The prover allocates and frees many tables of 8 to 32 MiB. The system
-//! allocator on Apple platforms keeps freed blocks of that size in a cache,
-//! and those pages still count in the process's footprint: at one point the
-//! prover held 1.7 GB of live data and a footprint of 3.1 GB. Giving each
-//! large allocation its own mapping returns its pages to the kernel the
-//! moment it is freed, so the footprint follows the live data.
+//! The prover allocates and frees many large tables. Apple's system allocator
+//! keeps freed large blocks in a cache, and the cached pages still count
+//! toward the process's footprint, the number iOS compares with the app's
+//! limit. Giving each large allocation its own mapping returns its pages to
+//! the kernel the moment it is freed, so the footprint follows the live data.
 //!
-//! A program opts in with
+//! Only Apple targets (macOS and iOS) take the mapped path: the cache is
+//! Apple's and the effect was measured nowhere else. Everywhere else this is
+//! the system allocator.
+//!
+//! The footprints reported for the prover (crates/crop-proof/HILLCLIMB.md)
+//! assume `DirectLarge` is the global allocator of the final binary, the iOS
+//! static library included. A program opts in with
 //! `#[global_allocator] static A: crop_proof::alloc::DirectLarge = crop_proof::alloc::DirectLarge;`.
 
 use std::alloc::{GlobalAlloc, Layout, System};
 
-/// The system allocator, except that allocations of 1 MiB or more are
-/// anonymous mappings of their own.
+/// The system allocator, except that on Apple targets allocations of 1 MiB
+/// or more are anonymous mappings of their own.
 pub struct DirectLarge;
 
-#[cfg(unix)]
+#[cfg(target_vendor = "apple")]
 mod mapped {
     use std::alloc::Layout;
 
+    /// Lowering it to 64 KiB took the reference case's footprint from 113 MB
+    /// to 109 MB (medians of 8 interleaved probe runs on a loaded machine,
+    /// prove times within the noise): too little to map every table that small.
     const THRESHOLD: usize = 1 << 20;
     /// Mappings start on a page boundary, which is at least this.
     const MAX_ALIGN: usize = 4096;
@@ -59,7 +67,7 @@ mod mapped {
 // allocated and when it is freed. Small layouts go to the system allocator
 // unchanged. A large one gets a mapping of its own: page-aligned, zeroed,
 // and unmapped with the length it was mapped with.
-#[cfg(unix)]
+#[cfg(target_vendor = "apple")]
 unsafe impl GlobalAlloc for DirectLarge {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         if mapped::is_direct(layout) {
@@ -101,7 +109,7 @@ unsafe impl GlobalAlloc for DirectLarge {
 }
 
 // SAFETY: every call goes to the system allocator unchanged.
-#[cfg(not(unix))]
+#[cfg(not(target_vendor = "apple"))]
 unsafe impl GlobalAlloc for DirectLarge {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         System.alloc(layout)

@@ -5,7 +5,8 @@
 //!
 //! The peak footprint is the kernel's lifetime maximum for the process, the
 //! number `/usr/bin/time -l` prints as "peak memory footprint", read right
-//! after the proof so the verification that follows does not count.
+//! after the proof so the verification that follows does not count. Only
+//! Apple's kernel keeps it: elsewhere the report has no footprint.
 //!
 //! With the `mem-profile` feature a counting allocator also reports live heap
 //! bytes at each phase of the prover and over time.
@@ -27,7 +28,9 @@ struct Report {
     proof_bytes: usize,
     proof_sha256: String,
     /// Kernel lifetime maximum of the footprint, read after the proof.
-    footprint_peak: u64,
+    /// Absent where it cannot be measured, so that it never reads as zero.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    footprint_peak: Option<u64>,
     /// `None` when the proof was not checked.
     verified: Option<bool>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -46,7 +49,7 @@ pub struct Options {
 pub fn run(lab: &Lab, case: &Case, options: &Options) -> Result<()> {
     let capture = Capture::read(&lab.fixture(case))?;
     let published = crop_proof::edit(&capture.original, case.crop, case.turn)?;
-    profile::start(options.trace.is_some());
+    profile::start();
 
     profile::mark("load parameters");
     let started = Instant::now();
@@ -64,7 +67,7 @@ pub fn run(lab: &Lab, case: &Case, options: &Options) -> Result<()> {
     )?;
     let prove_seconds = started.elapsed().as_secs_f64();
     profile::mark("done");
-    let footprint_peak = footprint().1;
+    let footprint_peak = footprint().map(|(_, peak)| peak);
     drop(params);
 
     let (phases, heap_peak) = profile::finish(options.trace.as_deref())?;
@@ -106,8 +109,9 @@ pub fn run(lab: &Lab, case: &Case, options: &Options) -> Result<()> {
 }
 
 /// The footprint of this process now and its lifetime maximum, in bytes.
+/// `None` when the kernel does not answer.
 #[cfg(target_vendor = "apple")]
-pub fn footprint() -> (u64, u64) {
+pub fn footprint() -> Option<(u64, u64)> {
     let mut info = std::mem::MaybeUninit::<libc::rusage_info_v4>::zeroed();
     // SAFETY: the buffer is a rusage_info_v4, which is what the flavor asks for.
     let status = unsafe {
@@ -118,16 +122,18 @@ pub fn footprint() -> (u64, u64) {
         )
     };
     if status != 0 {
-        return (0, 0);
+        return None;
     }
     // SAFETY: the call succeeded and filled the buffer.
     let info = unsafe { info.assume_init() };
-    (info.ri_phys_footprint, info.ri_lifetime_max_phys_footprint)
+    Some((info.ri_phys_footprint, info.ri_lifetime_max_phys_footprint))
 }
 
+/// Other kernels have no footprint: the nearest figure, the resident set,
+/// counts file-backed pages too and would not compare.
 #[cfg(not(target_vendor = "apple"))]
-pub fn footprint() -> (u64, u64) {
-    (0, 0)
+pub fn footprint() -> Option<(u64, u64)> {
+    None
 }
 
 #[cfg(not(feature = "mem-profile"))]
@@ -140,7 +146,7 @@ mod profile {
     #[derive(Serialize)]
     pub struct Phase {}
 
-    pub fn start(_trace: bool) {}
+    pub fn start() {}
     pub fn mark(_name: &'static str) {}
     pub fn finish(_trace: Option<&Path>) -> Result<(Vec<Phase>, Option<usize>)> {
         Ok((Vec::new(), None))
@@ -229,20 +235,26 @@ mod profile {
         /// Largest number of live heap bytes during the phase.
         heap_peak: usize,
         /// Footprint when the phase ended.
-        footprint_end: u64,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        footprint_end: Option<u64>,
         /// Largest footprint the sampler saw during the phase.
-        footprint_peak: u64,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        footprint_peak: Option<u64>,
     }
 
     struct State {
         origin: Instant,
         marks: Vec<(&'static str, f64, usize)>,
         closed: Vec<Phase>,
-        samples: Vec<(f64, usize, u64)>,
+        samples: Vec<(f64, usize, Option<u64>)>,
     }
 
     static STATE: OnceLock<Mutex<State>> = OnceLock::new();
     static SAMPLING: AtomicBool = AtomicBool::new(false);
+
+    fn footprint_now() -> Option<u64> {
+        footprint().map(|(now, _)| now)
+    }
 
     fn state() -> &'static Mutex<State> {
         STATE.get_or_init(|| {
@@ -255,7 +267,7 @@ mod profile {
         })
     }
 
-    pub fn start(_trace: bool) {
+    pub fn start() {
         crop_proof::probe::on_mark(mark);
         state();
         SAMPLING.store(true, Relaxed);
@@ -266,7 +278,7 @@ mod profile {
                     (
                         state.origin.elapsed().as_secs_f64(),
                         LIVE.load(Relaxed),
-                        footprint().0,
+                        footprint_now(),
                     )
                 };
                 state().lock().expect("probe state").samples.push(sample);
@@ -278,7 +290,7 @@ mod profile {
     pub fn mark(name: &'static str) {
         let live = LIVE.load(Relaxed);
         let phase_peak = PHASE_PEAK.swap(live, Relaxed);
-        let footprint_end = footprint().0;
+        let footprint_end = footprint_now();
         let mut state = state().lock().expect("probe state");
         let now = state.origin.elapsed().as_secs_f64();
         if let Some(&(previous, started, heap_start)) = state.marks.last() {
@@ -287,10 +299,9 @@ mod profile {
                 .iter()
                 .rev()
                 .take_while(|(at, ..)| *at >= started)
-                .map(|&(_, _, footprint)| footprint)
-                .max()
-                .unwrap_or(0)
-                .max(footprint_end);
+                .filter_map(|&(_, _, footprint)| footprint)
+                .chain(footprint_end)
+                .max();
             state.closed.push(Phase {
                 name: previous,
                 seconds: now - started,
@@ -318,10 +329,47 @@ mod profile {
                     phase = name;
                     marks.next();
                 }
+                // An empty cell where there is no footprint, never a zero.
+                let footprint = footprint.map(|bytes| bytes.to_string()).unwrap_or_default();
                 writeln!(csv, "{at:.4},{heap},{footprint},{phase}").expect("writing to a string");
             }
             fs::write(path, csv).with_context(|| format!("writing {}", path.display()))?;
         }
         Ok((state.closed.clone(), Some(PEAK.load(Relaxed))))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn report(footprint_peak: Option<u64>) -> serde_json::Value {
+        serde_json::to_value(Report {
+            load_seconds: 0.5,
+            prove_seconds: 3.5,
+            proof_bytes: 4,
+            proof_sha256: "00".repeat(32),
+            footprint_peak,
+            verified: Some(true),
+            phases: Vec::new(),
+            heap_peak: None,
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn a_footprint_that_was_not_measured_is_absent_and_never_zero() {
+        assert_eq!(report(Some(7))["footprint_peak"], 7);
+        assert!(report(None).get("footprint_peak").is_none());
+    }
+
+    // Only Apple's kernel reports one, and there it must not fail silently.
+    #[test]
+    fn the_footprint_is_measured_exactly_on_apple_targets() {
+        let measured = footprint();
+        assert_eq!(measured.is_some(), cfg!(target_vendor = "apple"));
+        if let Some((now, peak)) = measured {
+            assert!(0 < now && now <= peak);
+        }
     }
 }

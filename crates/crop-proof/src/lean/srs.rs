@@ -16,13 +16,22 @@
 //! of the first byte are flags: 0x80 for a compressed point, which this file
 //! never holds, and 0x40 for the point at infinity.
 
-use std::{borrow::Cow, fs::File, ops::Range, path::Path};
+use std::{
+    borrow::Cow,
+    fs::File,
+    ops::Range,
+    path::Path,
+    sync::atomic::{AtomicBool, Ordering},
+};
 
 use anyhow::{ensure, Context, Result};
-use ark_bls12_381::{Bls12_381, G1Affine, G2Affine};
+#[cfg(test)]
+use ark_bls12_381::Bls12_381;
+use ark_bls12_381::{G1Affine, G2Affine};
 use ark_serialize::{CanonicalDeserialize, SerializationError};
 use memmap2::Mmap;
 use rayon::prelude::*;
+#[cfg(test)]
 use subroutines::pcs::prelude::MultilinearProverParam;
 
 use crate::iop::check;
@@ -36,8 +45,8 @@ const DECODE_TASK: usize = 1 << 10;
 // A process holds one key, so the size of the larger variant costs nothing.
 #[allow(clippy::large_enum_variant)]
 pub(crate) enum Srs {
-    /// Deserialized into memory. Only the tests load a key this way.
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// Deserialized into memory, which only the tests do.
+    #[cfg(test)]
     Loaded(MultilinearProverParam<Bls12_381>),
     /// The key file itself, decoded range by range as it is read.
     Mapped(Mapped),
@@ -50,6 +59,9 @@ pub(crate) struct Mapped {
     map: Mmap,
     /// Where the points of the basis for n variables are in the file.
     bases: Vec<Range<usize>>,
+    /// Set when a point that decoded in `open` no longer does. Never cleared:
+    /// a key that changed once cannot be trusted again.
+    changed: AtomicBool,
 }
 
 impl Srs {
@@ -62,27 +74,56 @@ impl Srs {
     /// with the one setup recorded before it proves with the key.
     pub(crate) fn open(path: &Path) -> Result<Self> {
         let file = File::open(path).with_context(|| format!("opening {}", path.display()))?;
-        // SAFETY: the mapping is only sound while nobody changes the file. The
-        // key is written once by setup and only read afterwards; rewriting or
-        // truncating it while a prover has it mapped is not supported.
+        // SAFETY: the mapping is only sound while nobody changes the file, and
+        // nothing here can stop another process from doing so. The key is
+        // written once by setup and only read afterwards, and setup replaces
+        // a file by renaming a new one over it, which leaves this mapping on
+        // the old bytes. What a change does:
+        // - Truncating the file, or an I/O error when the system reloads a
+        //   page, kills the process with SIGBUS at the next read of that page.
+        // - Rewriting the file in place puts the new bytes under the prover.
+        //   A point that no longer decodes sets `changed`, and `prove` returns
+        //   an error. Points that still decode give a proof that fails
+        //   verification, and nothing here notices.
+        // So the file must not be modified while the key is mapped.
         let map =
             unsafe { Mmap::map(&file) }.with_context(|| format!("mapping {}", path.display()))?;
         let bases =
             layout(&map).with_context(|| format!("{} is not a prover key", path.display()))?;
-        Ok(Srs::Mapped(Mapped { map, bases }))
+        Ok(Srs::Mapped(Mapped {
+            map,
+            bases,
+            changed: AtomicBool::new(false),
+        }))
     }
 
-    /// The whole key file if it is mapped, to check its digest in place.
-    pub(crate) fn bytes(&self) -> Option<&[u8]> {
+    /// The whole key file, to check its digest in place.
+    pub(crate) fn bytes(&self) -> &[u8] {
         match self {
-            Srs::Loaded(_) => None,
-            Srs::Mapped(mapped) => Some(&mapped.map),
+            #[cfg(test)]
+            Srs::Loaded(_) => panic!("a key loaded by a test has no file"),
+            Srs::Mapped(mapped) => &mapped.map,
+        }
+    }
+
+    /// Whether a point of the key has failed to decode since `open` decoded
+    /// them all, which means the file changed under the mapping. Every proof
+    /// made with the key since then may be wrong.
+    ///
+    /// A change that leaves every point decodable is not seen here. Such a
+    /// proof fails verification instead.
+    pub(crate) fn changed(&self) -> bool {
+        match self {
+            #[cfg(test)]
+            Srs::Loaded(_) => false,
+            Srs::Mapped(mapped) => mapped.changed.load(Ordering::Relaxed),
         }
     }
 
     /// The largest number of variables a polynomial may have.
     pub(crate) fn num_vars(&self) -> usize {
         match self {
+            #[cfg(test)]
             Srs::Loaded(params) => params.num_vars,
             Srs::Mapped(mapped) => mapped.bases.len() - 1,
         }
@@ -94,10 +135,14 @@ impl Srs {
     pub(crate) fn basis(&self, num_vars: usize) -> Basis<'_> {
         assert!(num_vars <= self.num_vars(), "no basis this large");
         match self {
+            #[cfg(test)]
             Srs::Loaded(params) => {
                 Basis::Points(&params.powers_of_g[params.num_vars - num_vars].evals)
             }
-            Srs::Mapped(mapped) => Basis::Mapped(&mapped.map[mapped.bases[num_vars].clone()]),
+            Srs::Mapped(mapped) => Basis::Key {
+                bytes: &mapped.map[mapped.bases[num_vars].clone()],
+                changed: &mapped.changed,
+            },
         }
     }
 }
@@ -172,23 +217,44 @@ fn decode(point: &[u8]) -> Result<G1Affine, SerializationError> {
 }
 
 /// A point `open` has already decoded once. It can only fail again if the
-/// file changed under the mapping, which the mapping does not allow.
-fn decode_checked(point: &[u8]) -> G1Affine {
-    decode(point).unwrap_or_default()
+/// file changed under the mapping. The caller then gets the identity and
+/// carries on, so the failure is recorded in `changed` for `prove` to refuse
+/// the proof. A point rewritten into another one that decodes passes
+/// unnoticed: telling would take the digest of the whole file again.
+fn decode_checked(point: &[u8], changed: Option<&AtomicBool>) -> G1Affine {
+    decode(point).unwrap_or_else(|_| {
+        if let Some(changed) = changed {
+            changed.store(true, Ordering::Relaxed);
+        }
+        G1Affine::default()
+    })
 }
 
 #[derive(Clone, Copy)]
 pub(crate) enum Basis<'a> {
+    /// Decoded points, which only the tests hold.
+    #[cfg(test)]
     Points(&'a [G1Affine]),
-    /// The points as the key file stores them.
+    /// Points as a key file stores them, with no key to tell of a point that
+    /// does not decode. Only the tests read bytes this way.
+    #[cfg(test)]
     Mapped(&'a [u8]),
+    /// Points of a mapped key as its file stores them, and the flag of that
+    /// key.
+    Key {
+        bytes: &'a [u8],
+        changed: &'a AtomicBool,
+    },
 }
 
 impl<'a> Basis<'a> {
     pub(crate) fn len(&self) -> usize {
         match self {
+            #[cfg(test)]
             Basis::Points(points) => points.len(),
+            #[cfg(test)]
             Basis::Mapped(bytes) => bytes.len() / POINT_BYTES,
+            Basis::Key { bytes, .. } => bytes.len() / POINT_BYTES,
         }
     }
 
@@ -199,7 +265,7 @@ impl<'a> Basis<'a> {
     pub(crate) fn points(&self, range: Range<usize>) -> Cow<'a, [G1Affine]> {
         match self {
             Basis::Points(points) => Cow::Borrowed(&points[range]),
-            Basis::Mapped(_) => {
+            Basis::Mapped(_) | Basis::Key { .. } => {
                 let mut decoded = Vec::new();
                 self.read(range, &mut decoded);
                 Cow::Owned(decoded)
@@ -217,28 +283,33 @@ impl<'a> Basis<'a> {
     where
         'a: 'b,
     {
-        match self {
-            Basis::Points(points) => &points[range],
-            Basis::Mapped(bytes) => {
-                buffer.clear();
-                buffer.par_extend(
-                    bytes[range.start * POINT_BYTES..range.end * POINT_BYTES]
-                        .par_chunks_exact(POINT_BYTES)
-                        .with_min_len(DECODE_TASK)
-                        .map(decode_checked),
-                );
-                buffer
-            }
-        }
+        let (bytes, changed) = match self {
+            #[cfg(test)]
+            Basis::Points(points) => return &points[range],
+            #[cfg(test)]
+            Basis::Mapped(bytes) => (*bytes, None),
+            Basis::Key { bytes, changed } => (*bytes, Some(*changed)),
+        };
+        buffer.clear();
+        buffer.par_extend(
+            bytes[range.start * POINT_BYTES..range.end * POINT_BYTES]
+                .par_chunks_exact(POINT_BYTES)
+                .with_min_len(DECODE_TASK)
+                .map(|point| decode_checked(point, changed)),
+        );
+        buffer
     }
 
     /// One point, decoded if it is mapped.
     pub(crate) fn point(&self, index: usize) -> Cow<'a, G1Affine> {
+        let stored = index * POINT_BYTES..(index + 1) * POINT_BYTES;
         match self {
+            #[cfg(test)]
             Basis::Points(points) => Cow::Borrowed(&points[index]),
-            Basis::Mapped(bytes) => {
-                let start = index * POINT_BYTES;
-                Cow::Owned(decode_checked(&bytes[start..start + POINT_BYTES]))
+            #[cfg(test)]
+            Basis::Mapped(bytes) => Cow::Owned(decode_checked(&bytes[stored], None)),
+            Basis::Key { bytes, changed } => {
+                Cow::Owned(decode_checked(&bytes[stored], Some(changed)))
             }
         }
     }
@@ -246,7 +317,10 @@ impl<'a> Basis<'a> {
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use std::io::Write;
+    use std::{
+        fs::OpenOptions,
+        io::{Seek, SeekFrom, Write},
+    };
 
     use ark_ec::AffineRepr;
     use ark_serialize::CanonicalSerialize;
@@ -294,13 +368,12 @@ pub(crate) mod tests {
         params.powers_of_g[3].evals[0] = G1Affine::zero();
         let bytes = serialized(&params);
         let (_file, srs) = mapped(&params);
-        assert_eq!(srs.bytes(), Some(bytes.as_slice()));
+        assert_eq!(srs.bytes(), bytes.as_slice());
 
         let reloaded =
             MultilinearProverParam::<Bls12_381>::deserialize_uncompressed_unchecked(&bytes[..])
                 .unwrap();
         let loaded = Srs::Loaded(reloaded);
-        assert!(loaded.bytes().is_none());
         assert_eq!(srs.num_vars(), 6);
         assert_eq!(loaded.num_vars(), 6);
         for num_vars in 0..=6 {
@@ -321,6 +394,83 @@ pub(crate) mod tests {
                 assert_eq!(basis.points(middle.clone()).as_ref(), &expected[middle]);
             }
         }
+        assert!(!srs.changed());
+    }
+
+    /// Writes `bytes` at `offset` of the file, in place, as a careless writer
+    /// would under a prover that has the file mapped.
+    fn overwrite(path: &Path, offset: usize, bytes: &[u8]) {
+        let mut handle = OpenOptions::new().write(true).open(path).unwrap();
+        handle.seek(SeekFrom::Start(offset as u64)).unwrap();
+        handle.write_all(bytes).unwrap();
+        handle.sync_all().unwrap();
+    }
+
+    /// Overwrites point `index` of the basis for `num_vars` variables in the
+    /// file at `path`, which `srs` has mapped, with an x above the modulus.
+    /// `open` would have refused it.
+    pub(crate) fn spoil_point(srs: &Srs, path: &Path, num_vars: usize, index: usize) {
+        let Srs::Mapped(mapped) = srs else {
+            panic!("a key loaded by a test has no file");
+        };
+        let point = mapped.bases[num_vars].start + index * POINT_BYTES;
+        overwrite(path, point, &[0x1f]);
+    }
+
+    /// Where point `index` of the largest basis is in a key file.
+    fn largest_basis_point(index: usize) -> usize {
+        16 + 8 + index * POINT_BYTES
+    }
+
+    #[test]
+    fn a_point_that_stops_decoding_sets_the_changed_flag() {
+        let params = params(4);
+        let expected = &params.powers_of_g[0].evals;
+        // One key reads point by point and the other range by range.
+        let (file, single) = mapped(&params);
+        let ranged = Srs::open(file.path()).unwrap();
+        let mut buffer = Vec::new();
+        assert_eq!(single.basis(4).point(3).as_ref(), &expected[3]);
+        assert_eq!(ranged.basis(4).read(0..16, &mut buffer), &expected[..]);
+        assert!(!single.changed() && !ranged.changed());
+
+        spoil_point(&single, file.path(), 4, 3);
+        assert_eq!(single.basis(4).point(2).as_ref(), &expected[2]);
+        assert!(!single.changed());
+        assert!(single.basis(4).point(3).is_zero());
+        assert!(single.changed());
+
+        let read = ranged.basis(4).read(0..16, &mut buffer);
+        assert!(read[3].is_zero());
+        assert_eq!(read[..3], expected[..3]);
+        assert_eq!(read[4..], expected[4..]);
+        assert!(ranged.changed());
+        // The other bases still decode, and the flag stays set.
+        assert_eq!(
+            ranged.basis(3).read(0..8, &mut buffer),
+            &params.powers_of_g[1].evals[..]
+        );
+        assert!(ranged.changed());
+    }
+
+    #[test]
+    fn a_point_rewritten_into_another_point_goes_unnoticed() {
+        // The limit of the flag: these bytes decode, so only the digest of
+        // the file or the verifier can tell that the key is wrong.
+        let params = params(4);
+        let expected = &params.powers_of_g[0].evals;
+        let bytes = serialized(&params);
+        let (file, srs) = mapped(&params);
+        let other = largest_basis_point(5);
+        overwrite(
+            file.path(),
+            largest_basis_point(3),
+            &bytes[other..other + POINT_BYTES],
+        );
+        assert_eq!(srs.basis(4).point(3).as_ref(), &expected[5]);
+        let mut buffer = Vec::new();
+        assert_eq!(srs.basis(4).read(3..4, &mut buffer), &expected[5..6]);
+        assert!(!srs.changed());
     }
 
     #[test]

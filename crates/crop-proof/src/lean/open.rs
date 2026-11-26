@@ -36,12 +36,11 @@ use subroutines::pcs::prelude::MultilinearKzgProof;
 use transcript::IOPTranscript;
 
 use super::{
-    dense::Dense,
     eq::{self, SplitEq},
-    msm,
+    fold_in_place, msm, multiples, product_round,
     srs::Srs,
     sumcheck::{self, Rounds},
-    Values,
+    times_index, window, Values, BYTE_VALUES,
 };
 use crate::{
     iop::{check, Opening},
@@ -77,7 +76,7 @@ const BYTE_BLOCK_VARS: usize = 12;
 /// A polynomial of a batch. The opening reads one source at a time and is
 /// done with its values when the read returns, so a source can build its
 /// values for each read.
-pub(crate) trait Source {
+pub(super) trait Source {
     /// Calls `read` once with the values of the polynomial. Every call
     /// passes the same values. An opening refuses a source whose first read
     /// does not pass its values exactly once, and relies on the later reads
@@ -95,7 +94,7 @@ impl Source for Values<'_> {
 /// Opens `polynomials[opening.commitment]` at `points[opening.point]` for
 /// every opening, with the transcript and the proof of hyperplonk's
 /// `multi_open`. Every polynomial an opening names has `num_vars` variables.
-pub(crate) fn open(
+pub(super) fn open(
     srs: &Srs,
     num_vars: usize,
     polynomials: &[&dyn Source],
@@ -335,7 +334,7 @@ fn fix_high(values: Values<'_>, low_vars: usize, eq: &SplitEq) -> Vec<F> {
         // byte value. One multiplication per byte value settles a block.
         Values::Bytes(values) => eq.sum_rows(
             width,
-            || vec![F::zero(); width << 8],
+            || vec![F::zero(); width * BYTE_VALUES],
             |buckets, first, low, sums| {
                 let rows = values.get(first << low_vars..).unwrap_or(&[]);
                 if rows.is_empty() {
@@ -344,28 +343,15 @@ fn fix_high(values: Values<'_>, low_vars: usize, eq: &SplitEq) -> Vec<F> {
                 buckets.fill(F::zero());
                 for (row, weight) in rows.chunks(width).zip(low) {
                     for (column, &byte) in row.iter().enumerate() {
-                        buckets[column << 8 | usize::from(byte)] += weight;
+                        buckets[column * BYTE_VALUES + usize::from(byte)] += weight;
                     }
                 }
-                for (sum, bucket) in sums.iter_mut().zip(buckets.chunks(1 << 8)) {
-                    *sum = weighted_by_index(bucket);
+                for (sum, bucket) in sums.iter_mut().zip(buckets.chunks(BYTE_VALUES)) {
+                    *sum = times_index(bucket);
                 }
             },
         ),
     }
-}
-
-/// `sum of i * values[i]` by additions only. Going down from the last value,
-/// the running sum holds the values from the current index up, and
-/// `values[i]` is in the `i` running sums taken at indices `i` down to 1.
-fn weighted_by_index(values: &[F]) -> F {
-    let mut running = F::zero();
-    let mut total = F::zero();
-    for value in values.iter().skip(1).rev() {
-        running += value;
-        total += running;
-    }
-    total
 }
 
 /// One opening inside the sumcheck: its coefficient, and where its
@@ -387,8 +373,9 @@ struct Batch<'a> {
     points: Vec<&'a [F]>,
     terms: Vec<Term>,
     /// The first rounds, over the polynomials with their high variables
-    /// fixed: by then they are small tables and need no care.
-    lazy: Dense,
+    /// fixed: by then they are small tables and need no care. Per point, the
+    /// combination of the heads opened there and eq of its low coordinates.
+    lazy: Vec<(Vec<F>, Vec<F>)>,
     lazy_vars: usize,
     challenges: Vec<F>,
     /// Per point, eq of the challenges so far and its first coordinates.
@@ -411,19 +398,23 @@ impl<'a> Batch<'a> {
     ) -> Self {
         // Over the low variables the claim is a sum of eq times a table per
         // point: the heads of the openings at that point, combined.
-        let mut tables = vec![vec![F::zero(); 1 << lazy_vars]; points.len()];
+        let mut lazy: Vec<(Vec<F>, Vec<F>)> = points
+            .iter()
+            .map(|point| {
+                (
+                    vec![F::zero(); 1 << lazy_vars],
+                    eq::table(&point[..lazy_vars]),
+                )
+            })
+            .collect();
         for (term, head) in terms.iter().zip(heads) {
-            for (sum, value) in tables[term.point].iter_mut().zip(*head) {
+            for (sum, value) in lazy[term.point].0.iter_mut().zip(*head) {
                 *sum += term.coefficient * value;
             }
         }
-        tables.extend(points.iter().map(|point| eq::table(&point[..lazy_vars])));
-        let products = (0..points.len())
-            .map(|slot| (F::one(), vec![slot, points.len() + slot]))
-            .collect();
         Self {
             num_vars,
-            lazy: Dense::new(lazy_vars, tables, products),
+            lazy,
             lazy_vars,
             challenges: Vec::with_capacity(num_vars),
             scalars: vec![F::one(); points.len()],
@@ -466,7 +457,17 @@ impl Rounds for Batch<'_> {
         }
         let round = self.challenges.len();
         if round < self.lazy_vars {
-            return self.lazy.round(challenge);
+            let mut evaluations = vec![F::zero(); 3];
+            for (combined, eq) in &mut self.lazy {
+                if let Some(r) = challenge {
+                    fold(combined, r);
+                    fold(eq, r);
+                }
+                for (sum, value) in evaluations.iter_mut().zip(product_round(combined, eq)) {
+                    *sum += value;
+                }
+            }
+            return evaluations;
         }
         if round == self.lazy_vars {
             let len = 1 << (self.num_vars - round);
@@ -477,9 +478,7 @@ impl Rounds for Batch<'_> {
                 });
             }
         } else if let Some(r) = challenge {
-            self.tables
-                .par_iter_mut()
-                .for_each(|table| fold_in_place(table, r));
+            self.tables.par_iter_mut().for_each(|table| fold(table, r));
         }
 
         // Per opening, the inner products of eq over the later variables
@@ -523,12 +522,9 @@ impl Rounds for Batch<'_> {
 }
 
 /// `table` with its lowest variable fixed to `r`, in the same allocation.
-fn fold_in_place(table: &mut Vec<F>, r: F) {
-    let half = table.len() / 2;
-    for b in 0..half {
-        table[b] = table[2 * b] + (table[2 * b + 1] - table[2 * b]) * r;
-    }
-    table.truncate(half);
+fn fold(table: &mut Vec<F>, r: F) {
+    fold_in_place(table, r);
+    table.truncate(table.len() / 2);
 }
 
 /// A polynomial times a weight, with its lowest variables fixed to
@@ -542,9 +538,9 @@ enum Weighted<'a> {
     /// Field elements, and `weight * eq(c, challenges)` for every setting
     /// `c` of the fixed variables.
     Field(&'a [F], Vec<F>),
-    /// Bytes, and the same times every byte value, at `c * 256 + byte`: an
-    /// entry is then a sum of table entries.
-    Bytes(&'a [u8], Vec<F>),
+    /// Bytes, and the same times every byte value, per `c`: an entry is then
+    /// a sum of table entries.
+    Bytes(&'a [u8], Vec<[F; BYTE_VALUES]>),
 }
 
 impl<'a> Folded<'a> {
@@ -553,13 +549,7 @@ impl<'a> Folded<'a> {
         let weights = eq.iter().map(|eq| *eq * weight);
         let weighted = match values {
             Values::Field(values) => Weighted::Field(values, weights.collect()),
-            Values::Bytes(values) => {
-                let multiples = weights.flat_map(|weight| {
-                    std::iter::successors(Some(F::zero()), move |multiple| Some(*multiple + weight))
-                        .take(1 << 8)
-                });
-                Weighted::Bytes(values, multiples.collect())
-            }
+            Values::Bytes(values) => Weighted::Bytes(values, weights.map(multiples).collect()),
         };
         Self {
             fixed_vars: challenges.len(),
@@ -572,15 +562,15 @@ impl<'a> Folded<'a> {
         let start = index << self.fixed_vars;
         let width = 1 << self.fixed_vars;
         match &self.weighted {
-            Weighted::Field(values, weights) => row(values, start, width)
+            Weighted::Field(values, weights) => window(values, start, width)
                 .iter()
                 .zip(weights)
                 .map(|(value, weight)| *weight * value)
                 .sum(),
-            Weighted::Bytes(values, multiples) => row(values, start, width)
+            Weighted::Bytes(values, multiples) => window(values, start, width)
                 .iter()
-                .enumerate()
-                .map(|(setting, &byte)| multiples[setting << 8 | usize::from(byte)])
+                .zip(multiples)
+                .map(|(&byte, multiples)| multiples[usize::from(byte)])
                 .sum(),
         }
     }
@@ -592,8 +582,8 @@ impl<'a> Folded<'a> {
         let start = (2 * index) << self.fixed_vars;
         match &self.weighted {
             Weighted::Field(values, weights) => {
-                let odd = row(values, start + width, width);
-                row(values, start, width)
+                let odd = window(values, start + width, width);
+                window(values, start, width)
                     .iter()
                     .zip(weights)
                     .enumerate()
@@ -603,14 +593,14 @@ impl<'a> Folded<'a> {
                     .sum()
             }
             Weighted::Bytes(values, multiples) => {
-                let odd = row(values, start + width, width);
-                row(values, start, width)
+                let odd = window(values, start + width, width);
+                window(values, start, width)
                     .iter()
+                    .zip(multiples)
                     .enumerate()
-                    .map(|(setting, &even)| {
+                    .map(|(setting, (&even, multiples))| {
                         let odd = odd.get(setting).copied().unwrap_or_default();
-                        multiples[setting << 8 | usize::from(odd)]
-                            - multiples[setting << 8 | usize::from(even)]
+                        multiples[usize::from(odd)] - multiples[usize::from(even)]
                     })
                     .sum()
             }
@@ -624,13 +614,6 @@ impl<'a> Folded<'a> {
             .map(|index| self.entry(index))
             .collect()
     }
-}
-
-/// `values[start..start + width]`, or as much of it as is stored: the values
-/// past the end are zero and add nothing.
-fn row<T>(values: &[T], start: usize, width: usize) -> &[T] {
-    let end = values.len().min(start + width);
-    values.get(start..end).unwrap_or(&[])
 }
 
 /// The polynomial a batch reduces to: `sum of weights[i] * sources[i]`.
@@ -691,7 +674,7 @@ impl Combination<'_> {
                     }
                 });
                 proofs.push(quotient.into_affine());
-                fold_in_place(&mut table, coordinate);
+                fold(&mut table, coordinate);
             }
         }
         MultilinearKzgProof { proofs }
@@ -708,7 +691,10 @@ mod tests {
     use subroutines::pcs::prelude::{MultilinearProverParam, PolynomialCommitmentScheme};
 
     use super::*;
-    use crate::{iop::Poly, Pcs};
+    use crate::{
+        iop::{field_values, Poly},
+        Pcs,
+    };
 
     const MAX_VARS: usize = 10;
 
@@ -727,8 +713,11 @@ mod tests {
 
         /// The polynomial as hyperplonk takes it: every value, padded.
         fn poly(&self, num_vars: usize) -> Poly {
-            let values = self.values();
-            let evaluations = (0..1 << num_vars).map(|x| values.get(x)).collect();
+            let mut evaluations = match self {
+                Data::Bytes(values) => field_values(values),
+                Data::Field(values) => values.clone(),
+            };
+            evaluations.resize(1 << num_vars, F::zero());
             Arc::new(DenseMultilinearExtension::from_evaluations_vec(
                 num_vars,
                 evaluations,

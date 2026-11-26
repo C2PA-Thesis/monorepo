@@ -2,6 +2,7 @@
 //! `reference.rs`, which the tests keep to compare proofs byte for byte.
 
 use anyhow::Result;
+use ark_bls12_381::Bls12_381;
 use ark_ec::CurveGroup;
 use subroutines::pcs::prelude::Commitment;
 
@@ -14,6 +15,11 @@ use crate::{
     Rect, RgbImage, Turn, NUM_VARS,
 };
 
+/// The commitment to one channel of the original.
+pub(crate) fn commit_channel(srs: &Srs, pixels: &[u8]) -> Commitment<Bls12_381> {
+    Commitment(msm::msm_bytes(&srs.basis(NUM_VARS), pixels).into_affine())
+}
+
 pub(crate) fn prove_core(
     srs: &Srs,
     original: &RgbImage,
@@ -24,10 +30,9 @@ pub(crate) fn prove_core(
     let size = original.size();
     let pixels = original.channels().each_ref().map(Vec::as_slice);
     mark("commit image");
-    let basis = srs.basis(NUM_VARS);
     let mut commitments: Vec<_> = pixels
         .iter()
-        .map(|channel| Commitment(msm::msm_bytes(&basis, channel).into_affine()))
+        .map(|channel| commit_channel(srs, channel))
         .collect();
     let mut transcript = new_transcript(statement)?;
     for commitment in &commitments {

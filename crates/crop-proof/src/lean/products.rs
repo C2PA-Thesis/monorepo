@@ -9,8 +9,9 @@ use rayon::prelude::*;
 use transcript::IOPTranscript;
 
 use super::{
-    eq,
+    eq, fold_in_place, multiples, product_round,
     sumcheck::{self, Rounds},
+    times_index, window, BYTE_VALUES,
 };
 use crate::{wire::Sumcheck, F, NUM_VARS};
 
@@ -32,12 +33,10 @@ const FOLD_CHUNK: usize = 1 << 12;
 const _: () = assert!(LAZY_ROUNDS >= 1 && LAZY_CHUNK.is_multiple_of(1 << LAZY_ROUNDS));
 const _: () = assert!(FOLD_CHUNK.is_power_of_two() && FOLD_CHUNK >= 4);
 
-const BYTE_VALUES: usize = 256;
-
 /// One sumcheck per channel of `sum over x of weights(x) * channel(x)`, in
 /// channel order on the same transcript. A slice shorter than `2^num_vars`
 /// stands for its values followed by zeros.
-pub(crate) fn prove_products(
+pub(super) fn prove_products(
     num_vars: usize,
     weights: &[F],
     channels: [&[u8]; 3],
@@ -241,14 +240,9 @@ impl Products<'_> {
         }
         // A folded channel value is a sum of eq(r, j) * byte, one byte per
         // position j of the block: every such product, built by additions.
-        let multiples: Vec<F> = eq::table(&self.challenges)
-            .iter()
-            .flat_map(|&coefficient| {
-                std::iter::successors(Some(F::zero()), move |&multiple| {
-                    Some(multiple + coefficient)
-                })
-                .take(BYTE_VALUES)
-            })
+        let multiples: Vec<[F; BYTE_VALUES]> = eq::table(&self.challenges)
+            .into_iter()
+            .map(multiples)
             .collect();
 
         let (weights, channel, challenges) = (self.weights, self.channel, &self.challenges);
@@ -268,11 +262,11 @@ impl Products<'_> {
                     *weight = fold_block(window(weights, start, block), challenges);
                     *value = window(channel, start, block)
                         .iter()
-                        .zip(multiples.chunks_exact(BYTE_VALUES))
+                        .zip(&multiples)
                         .map(|(&byte, multiples)| multiples[usize::from(byte)])
                         .sum();
                 }
-                round_sums(weights_table, channel_table)
+                product_round(weights_table, channel_table)
             })
             .reduce(|| [F::zero(); 3], add)
     }
@@ -290,7 +284,7 @@ impl Products<'_> {
             .map(|(weights, channel)| {
                 fold_in_place(weights, r);
                 fold_in_place(channel, r);
-                round_sums(&weights[..chunk / 2], &channel[..chunk / 2])
+                product_round(&weights[..chunk / 2], &channel[..chunk / 2])
             })
             .reduce(|| [F::zero(); 3], add);
         keep_first_halves(self.weights_table, chunk);
@@ -299,31 +293,12 @@ impl Products<'_> {
     }
 }
 
-/// The values of `start..start + size`, without those past the end.
-fn window<T>(values: &[T], start: usize, size: usize) -> &[T] {
-    let end = values.len().min(start + size);
-    values.get(start..end).unwrap_or(&[])
-}
-
 /// The number whose base-3 digits are the bits of `bits`.
 fn ternary(bits: usize) -> usize {
     (0..usize::BITS)
         .filter(|bit| bits >> bit & 1 == 1)
         .map(|bit| 3usize.pow(bit))
         .sum()
-}
-
-/// `sum over v of v * values[v]` by additions alone. The running sum from the
-/// top holds `values[v]` during v of the steps, so adding it at every step
-/// counts `values[v]` v times.
-fn times_index(values: &[F]) -> F {
-    let mut from_top = F::zero();
-    let mut total = F::zero();
-    for value in values.iter().skip(1).rev() {
-        from_top += value;
-        total += from_top;
-    }
-    total
 }
 
 /// One entry of the folded weights: `values`, a block of at most
@@ -339,13 +314,6 @@ fn fold_block(values: &[F], challenges: &[F]) -> F {
     block[0]
 }
 
-/// Writes `table` with its lowest variable fixed to `r` into its first half.
-fn fold_in_place(table: &mut [F], r: F) {
-    for b in 0..table.len() / 2 {
-        table[b] = table[2 * b] + (table[2 * b + 1] - table[2 * b]) * r;
-    }
-}
-
 /// Moves the first half of every chunk of `table` to the front and drops the
 /// rest.
 fn keep_first_halves(table: &mut Vec<F>, chunk: usize) {
@@ -354,17 +322,6 @@ fn keep_first_halves(table: &mut Vec<F>, chunk: usize) {
         table.copy_within(index * chunk..index * chunk + half, index * half);
     }
     table.truncate(table.len() / 2);
-}
-
-/// The round's polynomial at 0, 1 and 2 from two tables of even length.
-fn round_sums(weights: &[F], channel: &[F]) -> [F; 3] {
-    let mut sums = [F::zero(); 3];
-    for (weights, channel) in weights.chunks_exact(2).zip(channel.chunks_exact(2)) {
-        sums[0] += weights[0] * channel[0];
-        sums[1] += weights[1] * channel[1];
-        sums[2] += (weights[1].double() - weights[0]) * (channel[1].double() - channel[0]);
-    }
-    sums
 }
 
 fn add(mut left: [F; 3], right: [F; 3]) -> [F; 3] {

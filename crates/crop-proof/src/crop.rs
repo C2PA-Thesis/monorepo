@@ -36,14 +36,14 @@ pub fn prove(
     fingerprint: &Fingerprint,
 ) -> Result<Vec<u8>> {
     let statement = checked_statement(original, published, rect, turn, fingerprint)?;
-    wire::encode(&lean::prover::prove_core(
-        &params.srs,
-        original,
-        rect,
-        turn,
-        &statement,
-    )?)
+    let proof = lean::prover::prove_core(&params.srs, original, rect, turn, &statement)?;
+    // A point that stopped decoding was read as the identity, so the proof
+    // is wrong and would only fail later, at the verifier.
+    ensure!(!params.srs.changed(), KEY_CHANGED);
+    wire::encode(&proof)
 }
+
+const KEY_CHANGED: &str = "the prover key changed while proving";
 
 /// `prove` with the reference prover, which must write the same bytes.
 #[cfg(feature = "attack-hooks")]
@@ -187,16 +187,21 @@ pub(crate) fn replay_crop_challenges(
     Ok(verify_prefix(rect, turn, original, hashes, published, proof)?.crop_challenges)
 }
 
-/// Commits to one channel exactly as `prove_core` does, for the linkage test.
+/// Commits to one channel with the prover's own function, for the linkage test.
 #[cfg(feature = "attack-hooks")]
 pub(crate) fn commit_channel(
-    pcs: &subroutines::pcs::prelude::MultilinearProverParam<Bls12_381>,
+    params: &ProverParams,
     pixels: &[u8],
 ) -> Result<Commitment<Bls12_381>> {
-    check(
-        Pcs::commit(pcs, &image_poly(iop::field_values(pixels))),
-        "committing to the image",
-    )
+    ensure!(
+        pixels.len() <= 1 << NUM_VARS,
+        "a channel of {} pixels, at most {} fit",
+        pixels.len(),
+        1 << NUM_VARS
+    );
+    let commitment = lean::prover::commit_channel(&params.srs, pixels);
+    ensure!(!params.srs.changed(), KEY_CHANGED);
+    Ok(commitment)
 }
 
 pub(crate) fn evaluate(polynomial: &Poly, point: &[F]) -> Result<F> {
@@ -633,6 +638,7 @@ mod tests {
     use rand::SeedableRng;
 
     use super::*;
+    use crate::{lean::srs::tests as srs, params::PROVER, setup_with_rng};
 
     #[test]
     fn no_turn_leaves_the_statement_as_before_turns() {
@@ -667,6 +673,53 @@ mod tests {
         };
         let mut transcript = new_transcript(&[0; 32]).unwrap();
         assert!(verify_sumcheck(F::zero(), &proof, &aux_info(1), &mut transcript).is_err());
+    }
+
+    #[test]
+    #[ignore = "sets up and proves over 2^19 pixels twice; run with --release --ignored"]
+    fn a_key_that_changes_under_the_prover_is_refused() {
+        let mut rng = rand::rngs::StdRng::seed_from_u64(13);
+        let dir = tempfile::tempdir().unwrap();
+        setup_with_rng(dir.path(), &mut rng).unwrap();
+        let params = ProverParams::load(dir.path()).unwrap();
+        // A second mapping, so the hook is refused by a flag it set itself.
+        #[cfg(feature = "attack-hooks")]
+        let hook = ProverParams::load(dir.path()).unwrap();
+
+        let size = Size {
+            width: 4,
+            height: 2,
+        };
+        let pixels = std::array::from_fn(|_| vec![1; size.pixels()]);
+        let original = RgbImage::new(size, pixels).unwrap();
+        let rect = Rect {
+            x: 1,
+            y: 0,
+            width: 2,
+            height: 2,
+        };
+        let published = edit(&original, rect, Turn::NONE).unwrap();
+        let fingerprint = Fingerprint::of(&original).unwrap();
+        let attempt = || {
+            prove(
+                &params,
+                &original,
+                &published,
+                rect,
+                Turn::NONE,
+                &fingerprint,
+            )
+        };
+        attempt().unwrap();
+
+        // The first pixel is not zero, so its commitment reads this point.
+        srs::spoil_point(&params.srs, &dir.path().join(PROVER), NUM_VARS, 0);
+        assert!(matches!(attempt(), Err(error) if error.to_string() == KEY_CHANGED));
+        #[cfg(feature = "attack-hooks")]
+        assert!(matches!(
+            commit_channel(&hook, &[1]),
+            Err(error) if error.to_string() == KEY_CHANGED
+        ));
     }
 
     #[test]

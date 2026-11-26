@@ -14,7 +14,7 @@ use crate::{
 
 /// The prover's side of one sumcheck: a polynomial over `num_vars` variables
 /// whose degree in each is at most `max_degree`.
-pub(crate) trait Rounds {
+pub(super) trait Rounds {
     fn num_vars(&self) -> usize;
 
     fn max_degree(&self) -> usize;
@@ -26,7 +26,7 @@ pub(crate) trait Rounds {
 }
 
 /// Runs the sumcheck as `SumCheck::prove` of hyperplonk does, byte for byte.
-pub(crate) fn prove(
+pub(super) fn prove(
     rounds: &mut impl Rounds,
     transcript: &mut IOPTranscript<F>,
 ) -> Result<Sumcheck> {

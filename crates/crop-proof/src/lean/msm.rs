@@ -36,7 +36,7 @@ const _: () = assert!(MAX_WINDOW <= 15);
 /// multiplications, so a batch this long pays a third of one per addition.
 /// A longer batch meets more buckets twice; 512 and 2048 measured 2% to 4%
 /// slower. It is also how many additions wait for a busy bucket before they
-/// are retried, which bounds every queue of a `Batch`.
+/// are retried, which bounds every queue of an `Adder`.
 const BATCH: usize = 1 << 10;
 // A bucket's sum aside is found through a u16.
 const _: () = assert!(BATCH <= u16::MAX as usize);
@@ -53,7 +53,7 @@ const BYTE_TASK: usize = 1 << 12;
 ///
 /// A scalar is a byte, so there are 255 buckets, one addition per non-zero
 /// scalar, and nothing is allocated in proportion to the input.
-pub(crate) fn msm_bytes(basis: &Basis, scalars: &[u8]) -> G1Projective {
+pub(super) fn msm_bytes(basis: &Basis, scalars: &[u8]) -> G1Projective {
     assert!(
         scalars.len() <= basis.len(),
         "more scalars than basis points"
@@ -76,7 +76,7 @@ pub(crate) fn msm_bytes(basis: &Basis, scalars: &[u8]) -> G1Projective {
 }
 
 /// `sum of scalars[i] * basis[i]`. Scalars past the end of the slice are zero.
-pub(crate) fn msm(basis: &Basis, scalars: &[F]) -> G1Projective {
+pub(super) fn msm(basis: &Basis, scalars: &[F]) -> G1Projective {
     msm_with(basis, scalars.len(), |start, out| {
         out.copy_from_slice(&scalars[start..start + out.len()])
     })
@@ -85,7 +85,7 @@ pub(crate) fn msm(basis: &Basis, scalars: &[F]) -> G1Projective {
 /// `sum of scalar(i) * basis[i]` for `i < len`, where `fill(start, out)`
 /// writes the scalars of `start..start + out.len()`. It is called once per
 /// index, in any order and from several threads.
-pub(crate) fn msm_with(
+pub(super) fn msm_with(
     basis: &Basis,
     len: usize,
     fill: impl Fn(usize, &mut [F]) + Sync,
@@ -101,9 +101,9 @@ pub(crate) fn msm_with(
 /// cost no extra additions.
 ///
 /// Memory is the buckets, one chunk of digits and decoded points, and one
-/// `Batch` per window. All of it is kept from chunk to chunk instead of
-/// allocated again, and none of it depends on the number of threads. A
-/// `Batch` holds 0.2 MB for scalars that spread over the buckets and at
+/// `Adder` per window. All of it is kept from chunk to chunk instead of
+/// allocated again, and none of it depends on the number of threads. An
+/// `Adder` holds 0.2 MB for scalars that spread over the buckets and at
 /// most 0.5 MB for scalars that crowd them, so the 17 windows of 2^20
 /// scalars hold 3 MB to 8 MB.
 ///
@@ -125,8 +125,8 @@ fn pippenger(
     let windows = window_count(window);
     let per_window = 1 << (window - 1);
     let mut buckets = vec![G1Affine::identity(); windows * per_window];
-    let mut batches: Vec<Batch> = (0..windows)
-        .map(|_| Batch::new(per_window, chunk.min(len)))
+    let mut adders: Vec<Adder> = (0..windows)
+        .map(|_| Adder::new(per_window, chunk.min(len)))
         .collect();
     let mut digits = vec![0i16; chunk.min(len) * windows];
     let mut decoded = Vec::new();
@@ -159,9 +159,9 @@ fn pippenger(
         let digits = &*digits;
         buckets
             .par_chunks_mut(per_window)
-            .zip(batches.par_iter_mut())
+            .zip(adders.par_iter_mut())
             .enumerate()
-            .for_each(|(index, (buckets, batch))| {
+            .for_each(|(index, (buckets, adder))| {
                 for (point, digits) in digits.chunks_exact(windows).enumerate() {
                     let digit = digits[index];
                     // Bucket i holds the points to multiply by i + 1.
@@ -171,10 +171,10 @@ fn pippenger(
                             point,
                             negative: digit < 0,
                         };
-                        batch.add(addition, buckets, points);
+                        adder.add(addition, buckets, points);
                     }
                 }
-                batch.finish(buckets, points);
+                adder.finish(buckets, points);
             });
     }
     let sums: Vec<G1Projective> = buckets.par_chunks(per_window).map(weighted_sum).collect();
@@ -220,11 +220,11 @@ impl Addition {
 /// that digit, and waiting would cost a batch per addition: such points are
 /// summed aside in projective form and that sum is added to the bucket later.
 ///
-/// Every queue holds at most `BATCH` entries whatever the scalars, so a
-/// `Batch` is at most 0.5 MB at the widest window. Runs of equal scalars,
+/// Every queue holds at most `BATCH` entries whatever the scalars, so an
+/// `Adder` is at most 0.5 MB at the widest window. Runs of equal scalars,
 /// which a flat area of an image gives, would otherwise make the queues as
 /// long as a chunk.
-struct Batch {
+struct Adder {
     /// The additions of the batch and the divisors of their slopes.
     additions: Vec<Addition>,
     divisors: Vec<Fq>,
@@ -241,8 +241,8 @@ struct Batch {
     prefixes: Vec<Fq>,
 }
 
-impl Batch {
-    /// A batch for `buckets` buckets that gets `chunk` additions at a time.
+impl Adder {
+    /// An adder for `buckets` buckets that gets `chunk` additions at a time.
     /// The queues every input fills are allocated here, once; the sums aside
     /// only take room when scalars crowd a bucket.
     fn new(buckets: usize, chunk: usize) -> Self {

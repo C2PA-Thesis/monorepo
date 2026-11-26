@@ -18,11 +18,12 @@ use subroutines::pcs::prelude::Commitment;
 use transcript::IOPTranscript;
 
 use super::{
-    eq, msm,
+    eq::{self, SplitEq},
+    msm, multiples,
     open::Source,
     srs::Srs,
     sumcheck::{self, Rounds},
-    Values,
+    Values, BYTE_VALUES,
 };
 use crate::{
     crop::append,
@@ -30,9 +31,6 @@ use crate::{
     wire::Sumcheck,
     F,
 };
-
-/// How many values a pixel or a count can take.
-const VALUES: usize = 256;
 
 /// Rounds of the zero check that read the original data instead of folded
 /// tables. The folded tables are `2^LAZY_ROUNDS` times smaller than the
@@ -43,8 +41,8 @@ const LAZY_ROUNDS: usize = 3;
 /// Stretches of a table shorter than this stay on one thread.
 const MIN_PARALLEL_ROWS: usize = 1 << 10;
 
-pub(crate) struct RangeCheck<'a> {
-    pub sumcheck: Sumcheck,
+pub(super) struct RangeCheck<'a> {
+    pub(super) sumcheck: Sumcheck,
     counts_commitment: Commitment<Bls12_381>,
     product_commitment: Commitment<Bls12_381>,
     fraction_commitment: Commitment<Bls12_381>,
@@ -58,7 +56,7 @@ impl RangeCheck<'_> {
     /// the polynomial an opening of it reads. The prover takes both from
     /// here, so its list of polynomials cannot fall out of step with its
     /// list of commitments.
-    pub(crate) fn committed(&self) -> [(Commitment<Bls12_381>, Committed<'_>); 3] {
+    pub(super) fn committed(&self) -> [(Commitment<Bls12_381>, Committed<'_>); 3] {
         let read_as = |polynomial| Committed {
             lookup: &self.lookup,
             polynomial,
@@ -74,7 +72,7 @@ impl RangeCheck<'_> {
 /// Proves that every pixel of one channel is in 0..=255, as
 /// `reference::prove_range` does for an image over `num_vars` variables,
 /// with the same transcript. The range polynomials have one variable more.
-pub(crate) fn prove_range<'a>(
+pub(super) fn prove_range<'a>(
     srs: &Srs,
     num_vars: usize,
     pixels: &'a [u8],
@@ -143,7 +141,7 @@ fn prove<'a>(
 fn sorted_counts(num_vars: usize, pixels: &[u8]) -> (Vec<u8>, Vec<u8>) {
     let size = 1u64 << (num_vars + 1);
     let reduction = iop::IRREDUCIBLE[num_vars + 1] - size;
-    let mut occurrences = [0usize; VALUES];
+    let mut occurrences = [0usize; BYTE_VALUES];
     for &pixel in pixels {
         occurrences[usize::from(pixel)] += 1;
     }
@@ -158,16 +156,6 @@ fn sorted_counts(num_vars: usize, pixels: &[u8]) -> (Vec<u8>, Vec<u8>) {
         }
     }
     (counts, shifted)
-}
-
-/// `step * value` for every byte value, by additions.
-fn multiples(step: F) -> [F; VALUES] {
-    let mut multiple = F::zero();
-    std::array::from_fn(|_| {
-        let current = multiple;
-        multiple += step;
-        current
-    })
 }
 
 /// The two sides of the product check, read from bytes and never stored:
@@ -200,7 +188,7 @@ struct Ratio<'a> {
     /// 1 / g for every pair of a count and a shifted count.
     inverses: Vec<F>,
     /// f for every pixel value.
-    numerators: [F; VALUES],
+    numerators: [F; BYTE_VALUES],
 }
 
 impl Ratio<'_> {
@@ -276,7 +264,7 @@ impl<'a> Lookup<'a> {
     /// Where the count and the shifted count at x put g(x) in
     /// `denominators`.
     fn pair(&self, x: usize) -> usize {
-        usize::from(self.counts[x]) << 8 | usize::from(self.shifted_counts[x])
+        usize::from(self.counts[x]) * BYTE_VALUES + usize::from(self.shifted_counts[x])
     }
 
     /// g for every pair of a count and a shifted count: g depends on these
@@ -350,7 +338,7 @@ impl<'a> Lookup<'a> {
 /// A polynomial a range check committed to, as an opening reads it. The
 /// counts are bytes the range check holds. The product and the fraction are
 /// built for the read and freed after it.
-pub(crate) struct Committed<'a> {
+pub(super) struct Committed<'a> {
     lookup: &'a Lookup<'a>,
     polynomial: Polynomial,
 }
@@ -462,11 +450,11 @@ struct Level {
     constant: F,
     /// Per weight and byte: `alpha * weight * byte`, which is what a count
     /// adds to `alpha * g`.
-    counts: Vec<[F; VALUES]>,
+    counts: Vec<[F; BYTE_VALUES]>,
     /// The same for a shifted count: `alpha * mix * weight * byte`.
-    shifted_counts: Vec<[F; VALUES]>,
+    shifted_counts: Vec<[F; BYTE_VALUES]>,
     /// The same for a pixel in `alpha * f`: `alpha * (1 + mix) * weight * byte`.
-    pixels: Vec<[F; VALUES]>,
+    pixels: Vec<[F; BYTE_VALUES]>,
     /// `alpha * (f - offset)` over the table walk, folded: `(index, value)`.
     walk: Vec<(usize, F)>,
 }
@@ -499,53 +487,6 @@ impl Level {
             weights,
             walk,
         }
-    }
-}
-
-/// eq(x, point) as `low[x mod 2^k] * high[x div 2^k]`.
-struct RestEq {
-    low: Vec<F>,
-    high: Vec<F>,
-    low_vars: usize,
-}
-
-impl RestEq {
-    fn new(point: &[F]) -> Self {
-        let low_vars = point.len() / 2;
-        Self {
-            low: eq::table(&point[..low_vars]),
-            high: eq::table(&point[low_vars..]),
-            low_vars,
-        }
-    }
-
-    fn at(&self, x: usize) -> F {
-        self.low[x & (self.low.len() - 1)] * self.high[x >> self.low_vars]
-    }
-
-    /// `sum over x of eq(x, point) * terms(x)`, one sum per term.
-    fn sum<const N: usize>(&self, terms: impl Fn(usize) -> [F; N] + Sync) -> [F; N] {
-        let add = |mut sums: [F; N], terms: [F; N]| {
-            for (sum, term) in sums.iter_mut().zip(terms) {
-                *sum += term;
-            }
-            sums
-        };
-        self.high
-            .par_iter()
-            .enumerate()
-            .map(|(high_index, high)| {
-                let base = high_index << self.low_vars;
-                let sums =
-                    self.low
-                        .iter()
-                        .enumerate()
-                        .fold([F::zero(); N], |sums, (low_index, low)| {
-                            add(sums, terms(base | low_index).map(|term| term * low))
-                        });
-                sums.map(|sum| sum * high)
-            })
-            .reduce(|| [F::zero(); N], add)
     }
 }
 
@@ -653,7 +594,7 @@ impl<'a> ZeroCheck<'a> {
     }
 
     /// t at 0 and 1 and its coefficient of X^2, from the original data.
-    fn lazy_terms(&self, eq: &RestEq) -> [F; 3] {
+    fn lazy_terms(&self, eq: &SplitEq) -> [F; 3] {
         let level = Level::new(self.lookup, self.alpha, &self.challenges);
         if level.vars > 0 {
             let mut terms = eq.sum(|b| self.row(&level, 2 * b).terms(&self.row(&level, 2 * b + 1)));
@@ -703,7 +644,7 @@ impl Rounds for ZeroCheck<'_> {
             self.rows = Some(self.store());
         }
         let round = self.challenges.len();
-        let eq = RestEq::new(&self.point[round + 1..]);
+        let eq = SplitEq::new(&self.point[round + 1..]);
         let [at_zero, at_one, square] = match &self.rows {
             Some(rows) => eq.sum(|b| rows[2 * b].terms(&rows[2 * b + 1])),
             None => self.lazy_terms(&eq),

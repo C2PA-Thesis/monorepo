@@ -8,7 +8,7 @@ use crate::F;
 
 /// `eq(x, point)` for every x of the hypercube, with bit i of the index as
 /// the value of variable i, as hyperplonk's `build_eq_x_r_vec` lays it out.
-pub(crate) fn table(point: &[F]) -> Vec<F> {
+pub(super) fn table(point: &[F]) -> Vec<F> {
     let mut table = Vec::with_capacity(1 << point.len());
     table.push(F::one());
     for &coordinate in point {
@@ -27,7 +27,7 @@ pub(crate) fn table(point: &[F]) -> Vec<F> {
 const TASK_VALUES: usize = 1 << 12;
 
 /// `eq(x, point)` as `low[x mod 2^k] * high[x div 2^k]`.
-pub(crate) struct SplitEq {
+pub(super) struct SplitEq {
     low: Vec<F>,
     high: Vec<F>,
     low_vars: usize,
@@ -35,13 +35,13 @@ pub(crate) struct SplitEq {
 
 impl SplitEq {
     /// Two tables of about the same size, which keeps both small.
-    pub(crate) fn new(point: &[F]) -> Self {
+    pub(super) fn new(point: &[F]) -> Self {
         Self::with_low_vars(point, point.len() / 2)
     }
 
     /// As `new`, with the first `low_vars` coordinates in the low table. A
     /// caller that keeps state per entry of the high table picks the split.
-    pub(crate) fn with_low_vars(point: &[F], low_vars: usize) -> Self {
+    pub(super) fn with_low_vars(point: &[F], low_vars: usize) -> Self {
         let low_vars = low_vars.min(point.len());
         Self {
             low: table(&point[..low_vars]),
@@ -50,30 +50,35 @@ impl SplitEq {
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn len(&self) -> usize {
-        self.low.len() * self.high.len()
+    /// `eq(x, point)`.
+    pub(super) fn at(&self, x: usize) -> F {
+        self.low[x & (self.low.len() - 1)] * self.high[x >> self.low_vars]
     }
 
-    /// `sum over x of eq(x, point) * value(x)`, where `value` is cheap to
-    /// call in any order.
-    #[cfg(test)]
-    pub(crate) fn sum(&self, value: impl Fn(usize) -> F + Sync) -> F {
+    /// `sum over x of eq(x, point) * terms(x)`, one sum per term, where
+    /// `terms` is cheap to call in any order.
+    pub(super) fn sum<const N: usize>(&self, terms: impl Fn(usize) -> [F; N] + Sync) -> [F; N] {
+        let add = |mut sums: [F; N], terms: [F; N]| {
+            for (sum, term) in sums.iter_mut().zip(terms) {
+                *sum += term;
+            }
+            sums
+        };
         self.high
             .par_iter()
             .enumerate()
             .map(|(high_index, high)| {
                 let base = high_index << self.low_vars;
-                let inner = self
-                    .low
-                    .iter()
-                    .enumerate()
-                    .fold(F::zero(), |sum, (low_index, low)| {
-                        sum + *low * value(base | low_index)
-                    });
-                inner * high
+                let sums =
+                    self.low
+                        .iter()
+                        .enumerate()
+                        .fold([F::zero(); N], |sums, (low_index, low)| {
+                            add(sums, terms(base | low_index).map(|term| term * low))
+                        });
+                sums.map(|sum| sum * high)
             })
-            .sum()
+            .reduce(|| [F::zero(); N], add)
     }
 
     /// `sum over x of eq(x, point) * row(x)`, where a row is `width` values.
@@ -83,7 +88,7 @@ impl SplitEq {
     /// entry is zero are skipped, so a point that ends in zeros and ones
     /// costs its share of the hypercube only. Each task gets its own
     /// `scratch`, and enough blocks to be worth starting.
-    pub(crate) fn sum_rows<S: Send>(
+    pub(super) fn sum_rows<S: Send>(
         &self,
         width: usize,
         scratch: impl Fn() -> S + Sync,
@@ -122,12 +127,12 @@ impl SplitEq {
 }
 
 /// `eq(x, y)` for two points of the same length.
-pub(crate) fn eval(x: &[F], y: &[F]) -> F {
+pub(super) fn eval(x: &[F], y: &[F]) -> F {
     x.iter().zip(y).map(|(x, y)| line(*x, *y)).product()
 }
 
 /// `eq` of one coordinate: `x * y + (1 - x) * (1 - y)`.
-pub(crate) fn line(x: F, y: F) -> F {
+pub(super) fn line(x: F, y: F) -> F {
     let product = x * y;
     product + product - x - y + F::one()
 }
@@ -147,15 +152,30 @@ mod tests {
             let point: Vec<F> = (0..num_vars).map(|_| F::rand(&mut rng)).collect();
             let expected = build_eq_x_r_vec(&point).unwrap();
             assert_eq!(table(&point), expected);
+            // The zero check of the range check sums several terms at once
+            // and reads single entries.
             let split = SplitEq::new(&point);
-            assert_eq!(split.len(), expected.len());
-            let values: Vec<F> = expected.iter().map(|_| F::rand(&mut rng)).collect();
-            let direct = expected
+            for (x, eq) in expected.iter().enumerate() {
+                assert_eq!(split.at(x), *eq);
+            }
+            let terms: Vec<[F; 3]> = expected
                 .iter()
-                .zip(&values)
-                .fold(F::zero(), |sum, (eq, value)| sum + *eq * value);
-            assert_eq!(split.sum(|x| values[x]), direct);
+                .map(|_| std::array::from_fn(|_| F::rand(&mut rng)))
+                .collect();
+            let mut direct = [F::zero(); 3];
+            for (eq, terms) in expected.iter().zip(&terms) {
+                for (sum, term) in direct.iter_mut().zip(terms) {
+                    *sum += *eq * term;
+                }
+            }
+            assert_eq!(split.sum(|x| terms[x]), direct);
+            assert_eq!(split.sum(|x| [terms[x][1]]), [direct[1]]);
         }
+        // hyperplonk has no table for no variables. The last round of a
+        // sumcheck asks for it: eq is one.
+        let empty = SplitEq::new(&[]);
+        assert_eq!(empty.at(0), F::one());
+        assert_eq!(empty.sum(|x| [F::from(x as u64 + 7)]), [F::from(7u64)]);
     }
 
     #[test]

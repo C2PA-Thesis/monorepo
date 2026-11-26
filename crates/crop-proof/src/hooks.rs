@@ -1,6 +1,8 @@
 //! Read-only hooks that expose what a third party can recompute from a
-//! published proof. Compiled only under the `attack-hooks` feature and used by
-//! the soundness attack tests. They never relax or change verification.
+//! published proof, and the reference prover, which takes the private
+//! original as `prove` does. Compiled only under the `attack-hooks` feature
+//! and used by the soundness attack tests and the comparison of the two
+//! provers. They never relax or change verification.
 
 use anyhow::Result;
 
@@ -36,7 +38,7 @@ pub fn image_commitments(proof: &[u8]) -> Result<[Vec<u8>; 3]> {
 /// prover does, so a candidate image can be matched against the proof's
 /// commitments byte for byte.
 pub fn channel_commitment(params: &ProverParams, pixels: &[u8]) -> Result<Vec<u8>> {
-    wire::canonical_bytes(&crop::commit_channel(params.pcs(), pixels)?)
+    wire::canonical_bytes(&crop::commit_channel(params, pixels)?)
 }
 
 /// The proof the reference prover writes for the same inputs as `prove`. The

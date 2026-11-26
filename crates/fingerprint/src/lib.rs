@@ -194,7 +194,7 @@ pub fn combine_rows(weights: &[F], pixels: usize) -> Vec<F> {
     combined
 }
 
-#[cfg(any(test, not(target_arch = "wasm32")))]
+#[cfg(not(target_arch = "wasm32"))]
 fn worker_count(tasks: usize) -> usize {
     std::thread::available_parallelism()
         .map_or(1, usize::from)
@@ -361,68 +361,34 @@ mod tests {
         assert!(Fingerprint::of(&image).is_err());
     }
 
-    /// `combine_rows` as first written: one vector as long as the result per
-    /// worker, summed at the end.
-    fn combine_rows_per_worker(weights: &[F], pixels: usize) -> Vec<F> {
-        // One accumulator per worker: a vector per row would need 128 x 2^19 elements.
-        let workers = worker_count(weights.len());
-        let rows_per_worker = weights.len().div_ceil(workers);
-        let partial = parallel_map(workers, |worker| {
-            let mut combined = vec![F::zero(); pixels];
-            let rows =
-                worker * rows_per_worker..((worker + 1) * rows_per_worker).min(weights.len());
-            for row in rows {
+    /// `combine_rows` is `r^T A`: entry by entry, the sum the definition gives.
+    #[test]
+    fn combined_rows_match_the_definition() {
+        let mut rng = ChaCha8Rng::seed_from_u64(8);
+        let weights: Vec<F> = (0..HASH_ROWS).map(|_| F::rand(&mut rng)).collect();
+        let by_definition = |weights: &[F], pixels: usize| {
+            let mut expected = vec![F::zero(); pixels];
+            for (row, weight) in weights.iter().enumerate() {
                 let mut entries = matrix_row(row);
-                for value in &mut combined {
-                    *value += F::rand(&mut entries) * weights[row];
+                for sum in &mut expected {
+                    *sum += F::rand(&mut entries) * weight;
                 }
             }
-            combined
-        });
-        partial
-            .into_iter()
-            .reduce(|mut total, part| {
-                total
-                    .iter_mut()
-                    .zip(part)
-                    .for_each(|(sum, value)| *sum += value);
-                total
-            })
-            .unwrap_or_else(|| vec![F::zero(); pixels])
-    }
-
-    #[test]
-    fn combined_rows_match_the_first_implementation() {
-        let mut rng = ChaCha8Rng::seed_from_u64(7);
-        let weights: Vec<F> = (0..HASH_ROWS).map(|_| F::rand(&mut rng)).collect();
-        for pixels in [0, 1, 1000, 1 << 14] {
+            expected
+        };
+        // No pixels, less than a block, a block and a part, many blocks.
+        for pixels in [0, 1, 1000, COMBINE_BLOCK + 5, 1 << 14] {
             assert_eq!(
                 combine_rows(&weights, pixels),
-                combine_rows_per_worker(&weights, pixels),
+                by_definition(&weights, pixels),
                 "{pixels} pixels"
             );
         }
         // Fewer rows than workers, and none.
         assert_eq!(
             combine_rows(&weights[..3], 3000),
-            combine_rows_per_worker(&weights[..3], 3000)
+            by_definition(&weights[..3], 3000)
         );
         assert_eq!(combine_rows(&[], 5), vec![F::zero(); 5]);
-    }
-
-    /// `combine_rows` is `r^T A`: entry by entry, the sum the definition gives.
-    #[test]
-    fn combined_rows_match_the_definition() {
-        let mut rng = ChaCha8Rng::seed_from_u64(8);
-        let pixels = COMBINE_BLOCK + 5;
-        let weights: Vec<F> = (0..HASH_ROWS).map(|_| F::rand(&mut rng)).collect();
-        let mut expected = vec![F::zero(); pixels];
-        for (row, weight) in weights.iter().enumerate() {
-            let mut entries = matrix_row(row);
-            for sum in &mut expected {
-                *sum += F::rand(&mut entries) * weight;
-            }
-        }
-        assert_eq!(combine_rows(&weights, pixels), expected);
     }
 }
