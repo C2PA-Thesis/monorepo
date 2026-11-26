@@ -17,9 +17,13 @@
 //!   product of two short tables.
 //! - The final opening fixes the variables of the combination to the
 //!   sumcheck's challenges, one per round, and commits to a quotient each
-//!   time. The first quotients are computed from the polynomials, entry by
-//!   entry, as the commitment asks for them. Only then is the combination
-//!   stored, as a small table.
+//!   time. The first quotients are computed from the polynomials. Only then
+//!   is the combination stored, with those variables fixed.
+//!
+//! Each of these three steps reads one polynomial after the other, and what
+//! it keeps of a polynomial is small. So the values of a polynomial need to
+//! exist only while it is read: the tables of the range checks are built
+//! for each read and dropped after it.
 
 use std::collections::BTreeMap;
 
@@ -55,17 +59,38 @@ use crate::{
 const LAZY_ROUNDS: usize = 5;
 
 /// Rounds of the final opening whose quotient is computed from the
-/// polynomials. The table of the combination stored afterwards is
-/// `2^LAZY_QUOTIENTS` times smaller than a polynomial. Each round costs one
-/// multiplication per two values of every polynomial of field elements. On
-/// the range batch over 18 variables, three rounds and building the table
-/// measured about 4% of the time of committing to the quotients.
-const LAZY_QUOTIENTS: usize = 3;
+/// polynomials, into a table of its own. Each of them reads every polynomial
+/// once more. With one such round, the largest table held next to the
+/// polynomial being read is half its size: first that quotient, then the
+/// combination with one variable fixed. With none it is the combination in
+/// full. More rounds save nothing, because the first quotient stays the
+/// largest table. Measured on the range batch over 20 variables, the live
+/// heap of the opening peaks at 80 MB with no such round and at 64 MB with
+/// one or with three.
+const LAZY_QUOTIENTS: usize = 1;
 
 /// Variables of the low eq table when the values are bytes. Sums are kept
 /// per byte value and settled once per block, so a block must hold many more
 /// values than there are byte values.
 const BYTE_BLOCK_VARS: usize = 12;
+
+/// A polynomial of a batch. The opening reads one source at a time and is
+/// done with its values when the read returns, so a source can build its
+/// values for each read.
+pub(crate) trait Source {
+    /// Calls `read` once with the values of the polynomial. Every call
+    /// passes the same values. An opening refuses a source whose first read
+    /// does not pass its values exactly once, and relies on the later reads
+    /// to repeat the first.
+    fn read(&self, read: &mut dyn FnMut(Values<'_>));
+}
+
+/// Values that are in memory anyway.
+impl Source for Values<'_> {
+    fn read(&self, read: &mut dyn FnMut(Values<'_>)) {
+        read(*self);
+    }
+}
 
 /// Opens `polynomials[opening.commitment]` at `points[opening.point]` for
 /// every opening, with the transcript and the proof of hyperplonk's
@@ -73,7 +98,7 @@ const BYTE_BLOCK_VARS: usize = 12;
 pub(crate) fn open(
     srs: &Srs,
     num_vars: usize,
-    polynomials: &[Values<'_>],
+    polynomials: &[&dyn Source],
     points: &[Vec<F>],
     openings: &[Opening],
     transcript: &mut IOPTranscript<F>,
@@ -96,7 +121,7 @@ pub(crate) fn open(
 fn open_with(
     srs: &Srs,
     num_vars: usize,
-    polynomials: &[Values<'_>],
+    polynomials: &[&dyn Source],
     points: &[Vec<F>],
     openings: &[Opening],
     transcript: &mut IOPTranscript<F>,
@@ -113,12 +138,9 @@ fn open_with(
         "the parameters do not cover {num_vars} variables"
     );
     for opening in openings {
-        let values = polynomials
-            .get(opening.commitment)
-            .with_context(|| format!("no polynomial {} to open", opening.commitment))?;
         ensure!(
-            values.len() <= 1 << num_vars,
-            "polynomial {} has more than 2^{num_vars} values",
+            opening.commitment < polynomials.len(),
+            "no polynomial {} to open",
             opening.commitment
         );
         let point = points
@@ -131,6 +153,8 @@ fn open_with(
             point.len()
         );
     }
+    let (source_ids, source_slots) = distinct(openings.iter().map(|opening| opening.commitment));
+    let sources: Vec<&dyn Source> = source_ids.iter().map(|&id| polynomials[id]).collect();
 
     // One pass over a polynomial serves the evaluation and the lazy rounds
     // of every opening of it at points that agree in their high coordinates.
@@ -138,12 +162,10 @@ fn open_with(
     let (passes, pass_slots) = distinct(
         openings
             .iter()
-            .map(|opening| (opening.commitment, &points[opening.point][lazy_vars..])),
+            .zip(&source_slots)
+            .map(|(opening, &source)| (source, &points[opening.point][lazy_vars..])),
     );
-    let pass_heads: Vec<Vec<F>> = passes
-        .par_iter()
-        .map(|&(commitment, tail)| head(polynomials[commitment], lazy_vars, tail))
-        .collect();
+    let (pass_heads, lengths) = heads(&sources, &source_ids, num_vars, lazy_vars, &passes)?;
     let heads: Vec<&[F]> = pass_slots
         .iter()
         .map(|&slot| pass_heads[slot].as_slice())
@@ -180,7 +202,6 @@ fn open_with(
     )?;
     let coefficients = eq::table(&t);
 
-    let (source_ids, source_slots) = distinct(openings.iter().map(|opening| opening.commitment));
     let (point_ids, point_slots) = distinct(openings.iter().map(|opening| opening.point));
     let terms = coefficients
         .iter()
@@ -193,7 +214,7 @@ fn open_with(
         .collect();
     let mut batch = Batch::new(
         num_vars,
-        source_ids.iter().map(|&id| polynomials[id]).collect(),
+        &sources,
         point_ids.iter().map(|&id| points[id].as_slice()).collect(),
         terms,
         lazy_vars,
@@ -201,8 +222,15 @@ fn open_with(
     );
     let sumcheck = sumcheck::prove(&mut batch, transcript)?;
 
-    let combination = batch.into_combination(&sumcheck.point);
-    let kzg = open_combination(srs, num_vars, &combination, &sumcheck.point, lazy_quotients);
+    let combination = Combination {
+        sources: &sources,
+        weights: batch.weights(&sumcheck.point),
+        // Short polynomials end in zeros, and so does their combination.
+        live: lengths.iter().copied().max().unwrap_or(0),
+    };
+    // Its folded tables keep their allocations to the last round.
+    drop(batch);
+    let kzg = combination.open(srs, num_vars, &sumcheck.point, lazy_quotients);
     Ok(BatchOpening {
         sumcheck,
         evaluations,
@@ -224,6 +252,55 @@ fn distinct<T: Ord + Copy>(ids: impl Iterator<Item = T>) -> (Vec<T>, Vec<usize>)
         })
         .collect();
     (order, slots)
+}
+
+/// Per pass `(source, tail)`, the source with every variable from `low_vars`
+/// up fixed to `tail`; and per source, how many values it has.
+///
+/// This is the first read of every source, so it is where a source the batch
+/// cannot open is refused: one with more than `2^num_vars` values, and one
+/// that does not pass its values exactly once. Without its values a
+/// polynomial would be opened as zero, in a proof that does not verify.
+/// `ids` names the sources in these errors.
+fn heads(
+    sources: &[&dyn Source],
+    ids: &[usize],
+    num_vars: usize,
+    low_vars: usize,
+    passes: &[(usize, &[F])],
+) -> Result<(Vec<Vec<F>>, Vec<usize>)> {
+    let mut heads = vec![Vec::new(); passes.len()];
+    let mut lengths = Vec::with_capacity(sources.len());
+    for (source, (polynomial, id)) in sources.iter().zip(ids).enumerate() {
+        let wanted: Vec<usize> = (0..passes.len())
+            .filter(|&pass| passes[pass].0 == source)
+            .collect();
+        let (mut reads, mut length) = (0, 0);
+        polynomial.read(&mut |values| {
+            reads += 1;
+            length = values.len();
+            if length > 1 << num_vars {
+                return;
+            }
+            let computed: Vec<Vec<F>> = wanted
+                .par_iter()
+                .map(|&pass| head(values, low_vars, passes[pass].1))
+                .collect();
+            for (&pass, head) in wanted.iter().zip(computed) {
+                heads[pass] = head;
+            }
+        });
+        ensure!(
+            reads == 1,
+            "polynomial {id} passed its values {reads} times, not once"
+        );
+        ensure!(
+            length <= 1 << num_vars,
+            "polynomial {id} has more than 2^{num_vars} values"
+        );
+        lengths.push(length);
+    }
+    Ok((heads, lengths))
 }
 
 /// `values` as a polynomial with every variable from `low_vars` up fixed to
@@ -306,7 +383,7 @@ struct Term {
 /// the point.
 struct Batch<'a> {
     num_vars: usize,
-    sources: Vec<Values<'a>>,
+    sources: &'a [&'a dyn Source],
     points: Vec<&'a [F]>,
     terms: Vec<Term>,
     /// The first rounds, over the polynomials with their high variables
@@ -326,7 +403,7 @@ impl<'a> Batch<'a> {
     /// `lazy_vars` up fixed to its point.
     fn new(
         num_vars: usize,
-        sources: Vec<Values<'a>>,
+        sources: &'a [&'a dyn Source],
         points: Vec<&'a [F]>,
         terms: Vec<Term>,
         lazy_vars: usize,
@@ -357,16 +434,16 @@ impl<'a> Batch<'a> {
         }
     }
 
-    /// The polynomial the batch reduces to at the sumcheck's point `a`: each
-    /// source with the sum of `eq(a, point) * coefficient` over its openings.
-    /// Gives up the folded tables.
-    fn into_combination(self, a: &[F]) -> Vec<(F, Values<'a>)> {
+    /// The polynomial the batch reduces to at the sumcheck's point `a` is a
+    /// sum of the sources, each times the sum of `eq(a, point) * coefficient`
+    /// over its openings. Returns that weight per source.
+    fn weights(&self, a: &[F]) -> Vec<F> {
         let at_points: Vec<F> = self.points.iter().map(|point| eq::eval(a, point)).collect();
         let mut weights = vec![F::zero(); self.sources.len()];
         for term in &self.terms {
             weights[term.source] += term.coefficient * at_points[term.point];
         }
-        weights.into_iter().zip(self.sources).collect()
+        weights
     }
 }
 
@@ -393,11 +470,12 @@ impl Rounds for Batch<'_> {
         }
         if round == self.lazy_vars {
             let len = 1 << (self.num_vars - round);
-            self.tables = self
-                .sources
-                .iter()
-                .map(|&source| Folded::new([(F::one(), source)], &self.challenges).table(len))
-                .collect();
+            self.tables = vec![Vec::new(); self.sources.len()];
+            for (source, table) in self.sources.iter().zip(&mut self.tables) {
+                source.read(&mut |values| {
+                    *table = Folded::new(F::one(), values, &self.challenges).table(len);
+                });
+            }
         } else if let Some(r) = challenge {
             self.tables
                 .par_iter_mut()
@@ -453,61 +531,58 @@ fn fold_in_place(table: &mut Vec<F>, r: F) {
     table.truncate(half);
 }
 
-/// A weighted sum of polynomials with their lowest variables fixed to
-/// challenges, computed entry by entry from the values of the polynomials.
+/// A polynomial times a weight, with its lowest variables fixed to
+/// challenges, computed entry by entry from its values.
 struct Folded<'a> {
     fixed_vars: usize,
-    /// Per polynomial of field elements, `weight * eq(c, challenges)` for
-    /// every setting `c` of the fixed variables.
-    fields: Vec<(&'a [F], Vec<F>)>,
-    /// Per polynomial of bytes, the same times every byte value, at
-    /// `c * 256 + byte`: an entry is then a sum of table entries.
-    bytes: Vec<(&'a [u8], Vec<F>)>,
+    weighted: Weighted<'a>,
+}
+
+enum Weighted<'a> {
+    /// Field elements, and `weight * eq(c, challenges)` for every setting
+    /// `c` of the fixed variables.
+    Field(&'a [F], Vec<F>),
+    /// Bytes, and the same times every byte value, at `c * 256 + byte`: an
+    /// entry is then a sum of table entries.
+    Bytes(&'a [u8], Vec<F>),
 }
 
 impl<'a> Folded<'a> {
-    fn new(terms: impl IntoIterator<Item = (F, Values<'a>)>, challenges: &[F]) -> Self {
+    fn new(weight: F, values: Values<'a>, challenges: &[F]) -> Self {
         let eq = eq::table(challenges);
-        let mut fields = Vec::new();
-        let mut bytes = Vec::new();
-        for (weight, values) in terms {
-            let weights = eq.iter().map(|eq| *eq * weight);
-            match values {
-                Values::Field(values) => fields.push((values, weights.collect())),
-                Values::Bytes(values) => {
-                    let multiples = weights.flat_map(|weight| {
-                        std::iter::successors(Some(F::zero()), move |multiple| {
-                            Some(*multiple + weight)
-                        })
+        let weights = eq.iter().map(|eq| *eq * weight);
+        let weighted = match values {
+            Values::Field(values) => Weighted::Field(values, weights.collect()),
+            Values::Bytes(values) => {
+                let multiples = weights.flat_map(|weight| {
+                    std::iter::successors(Some(F::zero()), move |multiple| Some(*multiple + weight))
                         .take(1 << 8)
-                    });
-                    bytes.push((values, multiples.collect()));
-                }
+                });
+                Weighted::Bytes(values, multiples.collect())
             }
-        }
+        };
         Self {
             fixed_vars: challenges.len(),
-            fields,
-            bytes,
+            weighted,
         }
     }
 
-    /// The entry at `index` of the folded sum.
+    /// The entry at `index` of the folded polynomial.
     fn entry(&self, index: usize) -> F {
         let start = index << self.fixed_vars;
         let width = 1 << self.fixed_vars;
-        let mut sum = F::zero();
-        for (values, weights) in &self.fields {
-            for (value, weight) in row(values, start, width).iter().zip(weights) {
-                sum += *weight * value;
-            }
+        match &self.weighted {
+            Weighted::Field(values, weights) => row(values, start, width)
+                .iter()
+                .zip(weights)
+                .map(|(value, weight)| *weight * value)
+                .sum(),
+            Weighted::Bytes(values, multiples) => row(values, start, width)
+                .iter()
+                .enumerate()
+                .map(|(setting, &byte)| multiples[setting << 8 | usize::from(byte)])
+                .sum(),
         }
-        for (values, multiples) in &self.bytes {
-            for (setting, &byte) in row(values, start, width).iter().enumerate() {
-                sum += multiples[setting << 8 | usize::from(byte)];
-            }
-        }
-        sum
     }
 
     /// `entry(2 * index + 1) - entry(2 * index)`, the quotient an opening
@@ -515,24 +590,31 @@ impl<'a> Folded<'a> {
     fn quotient(&self, index: usize) -> F {
         let width = 1 << self.fixed_vars;
         let start = (2 * index) << self.fixed_vars;
-        let mut sum = F::zero();
-        for (values, weights) in &self.fields {
-            let odd = row(values, start + width, width);
-            for (setting, (even, weight)) in
-                row(values, start, width).iter().zip(weights).enumerate()
-            {
-                sum += *weight * (odd.get(setting).copied().unwrap_or_default() - even);
+        match &self.weighted {
+            Weighted::Field(values, weights) => {
+                let odd = row(values, start + width, width);
+                row(values, start, width)
+                    .iter()
+                    .zip(weights)
+                    .enumerate()
+                    .map(|(setting, (even, weight))| {
+                        *weight * (odd.get(setting).copied().unwrap_or_default() - even)
+                    })
+                    .sum()
+            }
+            Weighted::Bytes(values, multiples) => {
+                let odd = row(values, start + width, width);
+                row(values, start, width)
+                    .iter()
+                    .enumerate()
+                    .map(|(setting, &even)| {
+                        let odd = odd.get(setting).copied().unwrap_or_default();
+                        multiples[setting << 8 | usize::from(odd)]
+                            - multiples[setting << 8 | usize::from(even)]
+                    })
+                    .sum()
             }
         }
-        for (values, multiples) in &self.bytes {
-            let odd = row(values, start + width, width);
-            for (setting, &even) in row(values, start, width).iter().enumerate() {
-                let odd = odd.get(setting).copied().unwrap_or_default();
-                sum += multiples[setting << 8 | usize::from(odd)];
-                sum -= multiples[setting << 8 | usize::from(even)];
-            }
-        }
-        sum
     }
 
     /// The first `len` entries.
@@ -551,56 +633,74 @@ fn row<T>(values: &[T], start: usize, width: usize) -> &[T] {
     values.get(start..end).unwrap_or(&[])
 }
 
-/// hyperplonk's opening of one polynomial at `point`, for the polynomial
-/// `sum of weight * values` over `terms`. Round i commits to the quotient
-/// `f[2b + 1] - f[2b]` and fixes the lowest variable of f to `point[i]`.
-fn open_combination(
-    srs: &Srs,
-    num_vars: usize,
-    terms: &[(F, Values<'_>)],
-    point: &[F],
-    lazy_quotients: usize,
-) -> MultilinearKzgProof<Bls12_381> {
-    let lazy = lazy_quotients.min(num_vars);
-    // Entries of f that can be nonzero. Short polynomials end in zeros, and
-    // a quotient of zeros needs no work.
-    let mut live = terms
-        .iter()
-        .map(|(_, values)| values.len())
-        .max()
-        .unwrap_or(0);
-    let mut proofs = Vec::with_capacity(num_vars);
-    for round in 0..lazy {
-        let folded = Folded::new(terms.iter().copied(), &point[..round]);
-        live = live.div_ceil(2);
-        let quotient = msm::msm_with(&srs.basis(num_vars - 1 - round), live, |start, out| {
-            for (offset, quotient) in out.iter_mut().enumerate() {
-                *quotient = folded.quotient(start + offset);
-            }
-        });
-        proofs.push(quotient.into_affine());
-    }
-    if lazy < num_vars {
-        let mut table =
-            Folded::new(terms.iter().copied(), &point[..lazy]).table(1 << (num_vars - lazy));
-        for (round, &coordinate) in point.iter().enumerate().skip(lazy) {
-            live = live.div_ceil(2);
-            let quotient = msm::msm_with(&srs.basis(num_vars - 1 - round), live, |start, out| {
-                for (offset, quotient) in out.iter_mut().enumerate() {
-                    let b = start + offset;
-                    *quotient = table[2 * b + 1] - table[2 * b];
-                }
+/// The polynomial a batch reduces to: `sum of weights[i] * sources[i]`.
+struct Combination<'a> {
+    sources: &'a [&'a dyn Source],
+    weights: Vec<F>,
+    /// Entries that can be nonzero: no source has more values.
+    live: usize,
+}
+
+impl Combination<'_> {
+    /// `sum of of(weights[i] * sources[i], index)` for every index below
+    /// `len`, where `of` reads a polynomial with its lowest variables fixed
+    /// to `fixed`. One source is read at a time and added to the sums.
+    fn sum(&self, fixed: &[F], len: usize, of: impl Fn(&Folded<'_>, usize) -> F + Sync) -> Vec<F> {
+        let mut sums = vec![F::zero(); len];
+        for (source, &weight) in self.sources.iter().zip(&self.weights) {
+            source.read(&mut |values| {
+                let folded = Folded::new(weight, values, fixed);
+                sums.par_iter_mut()
+                    .enumerate()
+                    .for_each(|(index, sum)| *sum += of(&folded, index));
             });
-            proofs.push(quotient.into_affine());
-            fold_in_place(&mut table, coordinate);
         }
+        sums
     }
-    MultilinearKzgProof { proofs }
+
+    /// hyperplonk's opening of one polynomial at `point`, for this
+    /// polynomial f. Round i commits to the quotient `f[2b + 1] - f[2b]` and
+    /// fixes the lowest variable of f to `point[i]`.
+    fn open(
+        &self,
+        srs: &Srs,
+        num_vars: usize,
+        point: &[F],
+        lazy_quotients: usize,
+    ) -> MultilinearKzgProof<Bls12_381> {
+        let lazy = lazy_quotients.min(num_vars);
+        // A quotient of zeros needs no work.
+        let mut live = self.live;
+        let mut proofs = Vec::with_capacity(num_vars);
+        for round in 0..lazy {
+            live = live.div_ceil(2);
+            let quotient = self.sum(&point[..round], live, |folded, b| folded.quotient(b));
+            let basis = srs.basis(num_vars - 1 - round);
+            proofs.push(msm::msm(&basis, &quotient).into_affine());
+        }
+        if lazy < num_vars {
+            let len = 1 << (num_vars - lazy);
+            let mut table = self.sum(&point[..lazy], len, |folded, index| folded.entry(index));
+            for (round, &coordinate) in point.iter().enumerate().skip(lazy) {
+                live = live.div_ceil(2);
+                let basis = srs.basis(num_vars - 1 - round);
+                let quotient = msm::msm_with(&basis, live, |start, out| {
+                    for (offset, quotient) in out.iter_mut().enumerate() {
+                        let b = start + offset;
+                        *quotient = table[2 * b + 1] - table[2 * b];
+                    }
+                });
+                proofs.push(quotient.into_affine());
+                fold_in_place(&mut table, coordinate);
+            }
+        }
+        MultilinearKzgProof { proofs }
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::{cell::Cell, sync::Arc};
 
     use ark_ff::UniformRand;
     use ark_poly::{DenseMultilinearExtension, MultilinearExtension};
@@ -634,6 +734,58 @@ mod tests {
                 evaluations,
             ))
         }
+    }
+
+    /// A source that builds its values for each read, as the tables of a
+    /// range check are: here they are a copy, which is gone when the read
+    /// returns.
+    struct Rebuilt<'a> {
+        data: &'a Data,
+        /// Set while any source of the batch is being read.
+        reading: &'a Cell<bool>,
+        reads: Cell<usize>,
+    }
+
+    impl Source for Rebuilt<'_> {
+        fn read(&self, read: &mut dyn FnMut(Values<'_>)) {
+            assert!(!self.reading.replace(true), "two sources read at once");
+            let copy = match self.data {
+                Data::Bytes(values) => Data::Bytes(values.clone()),
+                Data::Field(values) => Data::Field(values.clone()),
+            };
+            read(copy.values());
+            self.reading.set(false);
+            self.reads.set(self.reads.get() + 1);
+        }
+    }
+
+    /// A source that breaks the contract unless `times` is one: it passes
+    /// its values that many times per read.
+    struct Repeated<'a> {
+        values: Values<'a>,
+        times: usize,
+    }
+
+    impl Source for Repeated<'_> {
+        fn read(&self, read: &mut dyn FnMut(Values<'_>)) {
+            for _ in 0..self.times {
+                read(self.values);
+            }
+        }
+    }
+
+    fn rebuilt<'a>(data: &'a [Data], reading: &'a Cell<bool>) -> Vec<Rebuilt<'a>> {
+        data.iter()
+            .map(|data| Rebuilt {
+                data,
+                reading,
+                reads: Cell::new(0),
+            })
+            .collect()
+    }
+
+    fn as_sources<T: Source>(sources: &[T]) -> Vec<&dyn Source> {
+        sources.iter().map(|source| source as &dyn Source).collect()
     }
 
     struct Instance {
@@ -817,27 +969,37 @@ mod tests {
     }
 
     /// Opens `instance` here and with hyperplonk, each on a fresh transcript,
-    /// and asserts that the proofs and the transcripts agree. Returns ours.
+    /// and asserts that the proofs and the transcripts agree. Here it is
+    /// opened twice: from values held in memory, and from sources that build
+    /// theirs for each read. Returns ours.
     fn assert_opens_as_hyperplonk(
         pcs: &MultilinearProverParam<Bls12_381>,
         instance: &Instance,
         case: &str,
     ) -> BatchOpening {
-        let polynomials: Vec<Values<'_>> = instance.data.iter().map(Data::values).collect();
+        let srs = Srs::Loaded(pcs.clone());
         let mut theirs_transcript = transcript();
         let theirs = hyperplonk(pcs, instance, &mut theirs_transcript);
-        let mut ours_transcript = transcript();
-        let ours = open(
-            &Srs::Loaded(pcs.clone()),
-            instance.num_vars,
-            &polynomials,
-            &instance.points,
-            &instance.openings,
-            &mut ours_transcript,
-        )
-        .unwrap();
-        assert_same(&ours, &theirs, case);
-        assert_same_state(ours_transcript, theirs_transcript, case);
+        let open = |polynomials: &[&dyn Source], case: &str| {
+            let mut ours_transcript = transcript();
+            let ours = open(
+                &srs,
+                instance.num_vars,
+                polynomials,
+                &instance.points,
+                &instance.openings,
+                &mut ours_transcript,
+            )
+            .unwrap();
+            assert_same(&ours, &theirs, case);
+            assert_same_state(ours_transcript, theirs_transcript.clone(), case);
+            ours
+        };
+        let held: Vec<Values<'_>> = instance.data.iter().map(Data::values).collect();
+        let ours = open(&as_sources(&held), case);
+        let reading = Cell::new(false);
+        let built = rebuilt(&instance.data, &reading);
+        open(&as_sources(&built), &format!("rebuilt, {case}"));
         ours
     }
 
@@ -992,7 +1154,17 @@ mod tests {
             openings: crate::iop::image_openings(),
         };
         for case in ["image batch", "range batch"] {
-            let polynomials: Vec<Values<'_>> = instance.data.iter().map(Data::values).collect();
+            // As the prover holds them: the image and the counts in memory,
+            // the products and the fractions built for each read.
+            let held: Vec<Values<'_>> = instance.data.iter().map(Data::values).collect();
+            let reading = Cell::new(false);
+            let built = rebuilt(&instance.data, &reading);
+            let polynomials: Vec<&dyn Source> = (0..held.len())
+                .map(|index| match instance.data[index] {
+                    Data::Bytes(_) => &held[index] as &dyn Source,
+                    Data::Field(_) => &built[index],
+                })
+                .collect();
             let theirs = hyperplonk(&pcs, &instance, &mut theirs_transcript);
             let ours = open(
                 &srs,
@@ -1017,16 +1189,17 @@ mod tests {
         let pcs = keys(&mut rng, num_vars);
         let srs = Srs::Loaded(pcs.clone());
         let instance = instance(&mut rng, num_vars, 9);
-        let polynomials: Vec<Values<'_>> = instance.data.iter().map(Data::values).collect();
         let mut theirs_transcript = transcript();
         let theirs = hyperplonk(&pcs, &instance, &mut theirs_transcript);
         for (lazy_rounds, lazy_quotients) in [(1, 0), (2, 1), (3, 6), (6, 7), (7, 2), (9, 9)] {
             let case = format!("{lazy_rounds} lazy rounds, {lazy_quotients} lazy quotients");
+            let reading = Cell::new(false);
+            let built = rebuilt(&instance.data, &reading);
             let mut ours_transcript = transcript();
             let ours = open_with(
                 &srs,
                 num_vars,
-                &polynomials,
+                &as_sources(&built),
                 &instance.points,
                 &instance.openings,
                 &mut ours_transcript,
@@ -1036,6 +1209,51 @@ mod tests {
             .unwrap();
             assert_same(&ours, &theirs, &case);
             assert_same_state(ours_transcript, theirs_transcript.clone(), &case);
+        }
+    }
+
+    /// What a source that builds its values costs: one read for the
+    /// evaluations and the lazy rounds, one for the fold, one per lazy
+    /// quotient and one for the table of the combination. A polynomial the
+    /// batch does not open is never read.
+    #[test]
+    fn reads_a_source_once_per_step() {
+        let mut rng = StdRng::seed_from_u64(14);
+        let num_vars = 6;
+        let srs = Srs::Loaded(keys(&mut rng, num_vars));
+        let mut instance = instance(&mut rng, num_vars, 9);
+        // Polynomials 0 to 3 are opened, 4 and 5 are not.
+        for (index, opening) in instance.openings.iter_mut().enumerate() {
+            opening.commitment = index % 4;
+            opening.fixed = None;
+        }
+        for (lazy_rounds, lazy_quotients, expected) in [
+            (2, 0, 1 + 1 + 1),
+            (2, 3, 1 + 1 + 3 + 1),
+            // No fold when the lazy rounds are all the rounds, and no table
+            // when the lazy quotients are all the quotients.
+            (6, 3, 1 + 3 + 1),
+            (2, 6, 1 + 1 + 6),
+        ] {
+            let reading = Cell::new(false);
+            let built = rebuilt(&instance.data, &reading);
+            open_with(
+                &srs,
+                num_vars,
+                &as_sources(&built),
+                &instance.points,
+                &instance.openings,
+                &mut transcript(),
+                lazy_rounds,
+                lazy_quotients,
+            )
+            .unwrap();
+            let reads: Vec<usize> = built.iter().map(|source| source.reads.get()).collect();
+            assert_eq!(
+                reads,
+                [expected, expected, expected, expected, 0, 0],
+                "{lazy_rounds} lazy rounds, {lazy_quotients} lazy quotients"
+            );
         }
     }
 
@@ -1062,7 +1280,7 @@ mod tests {
             open(
                 &srs,
                 num_vars,
-                polynomials,
+                &as_sources(polynomials),
                 points,
                 openings,
                 &mut transcript(),
@@ -1094,5 +1312,47 @@ mod tests {
         let too_long = vec![0u8; (1 << num_vars) + 1];
         let oversized = vec![Values::Bytes(&too_long); polynomials.len()];
         assert!(attempt(num_vars, &oversized, &instance.points, &instance.openings).is_err());
+    }
+
+    /// A source that keeps its values to itself would be opened as the zero
+    /// polynomial, and one that passes them twice would be read twice. Both
+    /// are refused before anything is written to the transcript.
+    #[test]
+    fn refuses_a_source_that_does_not_pass_its_values_once() {
+        let mut rng = StdRng::seed_from_u64(15);
+        let num_vars = 4;
+        let srs = Srs::Loaded(keys(&mut rng, num_vars));
+        let instance = instance(&mut rng, num_vars, 3);
+        let untouched = transcript().get_and_append_challenge(b"next").unwrap();
+        for times in 0..=2 {
+            // Only the first polynomial an opening names misbehaves.
+            let polynomials: Vec<Repeated<'_>> = (0..instance.data.len())
+                .map(|index| Repeated {
+                    values: instance.data[index].values(),
+                    times: if index == instance.openings[0].commitment {
+                        times
+                    } else {
+                        1
+                    },
+                })
+                .collect();
+            let mut transcript = transcript();
+            let opened = open(
+                &srs,
+                num_vars,
+                &as_sources(&polynomials),
+                &instance.points,
+                &instance.openings,
+                &mut transcript,
+            );
+            assert_eq!(opened.is_ok(), times == 1, "{times} times");
+            if times != 1 {
+                assert_eq!(
+                    transcript.get_and_append_challenge(b"next").unwrap(),
+                    untouched,
+                    "{times} times"
+                );
+            }
+        }
     }
 }

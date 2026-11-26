@@ -1,7 +1,11 @@
 //! The range check: a HyperPlonk lookup, proved as a product check that ends
 //! in a zero check. Pixels and counts stay bytes, and what depends on them
 //! is computed when it is read. Only the fraction and the product are full
-//! tables of field elements: the proof commits to them and opens them later.
+//! tables of field elements, and both are functions of the bytes and two
+//! challenges. Each is built when it is needed and dropped after: one at a
+//! time to commit to it, both for the zero check, and one at a time again
+//! when the openings read them. Building a table is much cheaper than
+//! holding the tables of three channels until the openings.
 
 use std::collections::BTreeMap;
 
@@ -15,8 +19,10 @@ use transcript::IOPTranscript;
 
 use super::{
     eq, msm,
+    open::Source,
     srs::Srs,
     sumcheck::{self, Rounds},
+    Values,
 };
 use crate::{
     crop::append,
@@ -37,35 +43,53 @@ const LAZY_ROUNDS: usize = 3;
 /// Stretches of a table shorter than this stay on one thread.
 const MIN_PARALLEL_ROWS: usize = 1 << 10;
 
-pub(crate) struct RangeCheck {
+pub(crate) struct RangeCheck<'a> {
     pub sumcheck: Sumcheck,
-    pub counts: Vec<u8>,
-    pub counts_commitment: Commitment<Bls12_381>,
-    pub product: Vec<F>,
-    pub product_commitment: Commitment<Bls12_381>,
-    pub fraction: Vec<F>,
-    pub fraction_commitment: Commitment<Bls12_381>,
+    counts_commitment: Commitment<Bls12_381>,
+    product_commitment: Commitment<Bls12_381>,
+    fraction_commitment: Commitment<Bls12_381>,
+    /// The counts, and what builds the product and the fraction again when
+    /// they are opened.
+    lookup: Lookup<'a>,
+}
+
+impl RangeCheck<'_> {
+    /// The three commitments in the order the proof lists them, each with
+    /// the polynomial an opening of it reads. The prover takes both from
+    /// here, so its list of polynomials cannot fall out of step with its
+    /// list of commitments.
+    pub(crate) fn committed(&self) -> [(Commitment<Bls12_381>, Committed<'_>); 3] {
+        let read_as = |polynomial| Committed {
+            lookup: &self.lookup,
+            polynomial,
+        };
+        [
+            (self.counts_commitment, read_as(Polynomial::Counts)),
+            (self.product_commitment, read_as(Polynomial::Product)),
+            (self.fraction_commitment, read_as(Polynomial::Fraction)),
+        ]
+    }
 }
 
 /// Proves that every pixel of one channel is in 0..=255, as
 /// `reference::prove_range` does for an image over `num_vars` variables,
 /// with the same transcript. The range polynomials have one variable more.
-pub(crate) fn prove_range(
+pub(crate) fn prove_range<'a>(
     srs: &Srs,
     num_vars: usize,
-    pixels: &[u8],
+    pixels: &'a [u8],
     transcript: &mut IOPTranscript<F>,
-) -> Result<RangeCheck> {
+) -> Result<RangeCheck<'a>> {
     prove(srs, num_vars, pixels, LAZY_ROUNDS, transcript)
 }
 
-fn prove(
+fn prove<'a>(
     srs: &Srs,
     num_vars: usize,
-    pixels: &[u8],
+    pixels: &'a [u8],
     lazy_rounds: usize,
     transcript: &mut IOPTranscript<F>,
-) -> Result<RangeCheck> {
+) -> Result<RangeCheck<'a>> {
     ensure!(
         (2..iop::IRREDUCIBLE.len() - 1).contains(&num_vars),
         "no range table for images over {num_vars} variables"
@@ -88,11 +112,11 @@ fn prove(
     let offset = challenge(transcript, b"alpha")?;
     let mix = challenge(transcript, b"alpha")?;
 
-    let lookup = Lookup::new(num_vars, pixels, &counts, &shifted_counts, offset, mix);
-    let fraction = lookup.fraction()?;
-    let product = product(&fraction);
-    let fraction_commitment = Commitment(msm::msm(&basis, &fraction).into_affine());
-    let product_commitment = Commitment(msm::msm(&basis, &product).into_affine());
+    let lookup = Lookup::new(num_vars, pixels, counts, shifted_counts, offset, mix)?;
+    // Each table lives for its own commitment only: a commitment needs
+    // about as much memory again as the table it commits to.
+    let fraction_commitment = Commitment(msm::msm(&basis, &lookup.fraction()).into_affine());
+    let product_commitment = Commitment(msm::msm(&basis, &lookup.product()).into_affine());
     append(transcript, b"frac(x)", &fraction_commitment)?;
     append(transcript, b"prod(x)", &product_commitment)?;
     let alpha = challenge(transcript, b"alpha")?;
@@ -101,16 +125,15 @@ fn prove(
         transcript.get_and_append_challenge_vectors(b"0check r", num_vars + 1),
         "deriving the zero check point",
     )?;
+    let (fraction, product) = (lookup.fraction(), lookup.product());
     let mut rounds = ZeroCheck::new(&lookup, &fraction, &product, alpha, point, lazy_rounds);
     let sumcheck = sumcheck::prove(&mut rounds, transcript)?;
     Ok(RangeCheck {
         sumcheck,
-        counts,
         counts_commitment,
-        product,
         product_commitment,
-        fraction,
         fraction_commitment,
+        lookup,
     })
 }
 
@@ -154,27 +177,69 @@ fn multiples(step: F) -> [F; VALUES] {
 ///
 /// In its second half f is `offset` everywhere but on the slots of the
 /// table walk.
+///
+/// The fraction and the product are functions of these bytes and the two
+/// challenges, so this is also all it takes to build them, any number of
+/// times. `fraction` and `product` are the only code that does, so a table
+/// that is opened is the table that was committed to.
 struct Lookup<'a> {
     /// Size of the image polynomial, half of the range polynomials.
     half: usize,
     pixels: &'a [u8],
-    counts: &'a [u8],
-    shifted_counts: &'a [u8],
+    counts: Vec<u8>,
+    shifted_counts: Vec<u8>,
     offset: F,
     mix: F,
     /// `(x, f(x) - offset)` where the tables are not zero, in order of x.
     walk: Vec<(usize, F)>,
 }
 
+/// f / g at single points of the hypercube.
+struct Ratio<'a> {
+    lookup: &'a Lookup<'a>,
+    /// 1 / g for every pair of a count and a shifted count.
+    inverses: Vec<F>,
+    /// f for every pixel value.
+    numerators: [F; VALUES],
+}
+
+impl Ratio<'_> {
+    fn inverse(&self, x: usize) -> F {
+        self.inverses[self.lookup.pair(x)]
+    }
+
+    /// f(x) / g(x) for an x that is not a slot of the table walk.
+    fn off_walk(&self, x: usize) -> F {
+        let lookup = self.lookup;
+        let numerator = lookup
+            .pixels
+            .get(x)
+            .map_or(lookup.offset, |&pixel| self.numerators[usize::from(pixel)]);
+        numerator * self.inverse(x)
+    }
+
+    /// f(x) / g(x) for any x.
+    fn at(&self, x: usize) -> F {
+        let lookup = self.lookup;
+        match lookup.walk.binary_search_by_key(&x, |&(slot, _)| slot) {
+            Ok(step) => (lookup.offset + lookup.walk[step].1) * self.inverse(x),
+            Err(_) => self.off_walk(x),
+        }
+    }
+}
+
 impl<'a> Lookup<'a> {
+    /// Fails if g is zero somewhere, as hyperplonk does when it builds the
+    /// fraction. Checking here leaves nothing that can fail when the tables
+    /// are built, the first time or again.
     fn new(
         num_vars: usize,
         pixels: &'a [u8],
-        counts: &'a [u8],
-        shifted_counts: &'a [u8],
+        counts: Vec<u8>,
+        shifted_counts: Vec<u8>,
         offset: F,
         mix: F,
-    ) -> Self {
+    ) -> Result<Self> {
         let half = 1 << num_vars;
         // Later values overwrite earlier ones when the walk wraps around, as
         // they do in the tables of `iop::range_tables`. It wraps under 8
@@ -189,7 +254,7 @@ impl<'a> Lookup<'a> {
             .into_iter()
             .map(|(slot, (value, shifted))| (half + slot, F::from(value) + mix * F::from(shifted)))
             .collect();
-        Self {
+        let lookup = Self {
             half,
             pixels,
             counts,
@@ -197,72 +262,113 @@ impl<'a> Lookup<'a> {
             offset,
             mix,
             walk,
-        }
+        };
+        let denominators = lookup.denominators();
+        ensure!(
+            !(0..2 * half)
+                .into_par_iter()
+                .any(|x| denominators[lookup.pair(x)].is_zero()),
+            "range product check: a denominator is zero"
+        );
+        Ok(lookup)
     }
 
-    /// f / g over the hypercube. Fails if g is zero somewhere, as hyperplonk
-    /// does.
-    fn fraction(&self) -> Result<Vec<F>> {
-        // g depends on two bytes: invert it once for each pair of them.
-        let pair = |count: u8, shifted: u8| usize::from(count) << 8 | usize::from(shifted);
+    /// Where the count and the shifted count at x put g(x) in
+    /// `denominators`.
+    fn pair(&self, x: usize) -> usize {
+        usize::from(self.counts[x]) << 8 | usize::from(self.shifted_counts[x])
+    }
+
+    /// g for every pair of a count and a shifted count: g depends on these
+    /// two bytes only.
+    fn denominators(&self) -> Vec<F> {
         let by_count = multiples(F::one());
         let by_shifted = multiples(self.mix);
-        let mut inverses: Vec<F> = by_count
+        by_count
             .iter()
             .flat_map(|count| by_shifted.iter().map(move |shifted| (count, shifted)))
             .map(|(count, shifted)| self.offset + count + shifted)
-            .collect();
-        batch_inversion(&mut inverses);
-        // A zero stays a zero through the inversion.
-        let inverse = |x: usize| inverses[pair(self.counts[x], self.shifted_counts[x])];
-        ensure!(
-            !(0..2 * self.half)
-                .into_par_iter()
-                .any(|x| inverse(x).is_zero()),
-            "range product check: a denominator is zero"
-        );
+            .collect()
+    }
 
-        let numerators = multiples(F::one() + self.mix).map(|multiple| self.offset + multiple);
+    fn ratio(&self) -> Ratio<'_> {
+        // One inversion for all the values g can take. `new` saw that g is
+        // not zero on the hypercube.
+        let mut inverses = self.denominators();
+        batch_inversion(&mut inverses);
+        Ratio {
+            lookup: self,
+            inverses,
+            numerators: multiples(F::one() + self.mix).map(|multiple| self.offset + multiple),
+        }
+    }
+
+    /// f / g over the hypercube.
+    fn fraction(&self) -> Vec<F> {
+        let ratio = self.ratio();
         let mut fraction: Vec<F> = (0..2 * self.half)
             .into_par_iter()
-            .map(|x| {
-                let numerator = self
-                    .pixels
-                    .get(x)
-                    .map_or(self.offset, |&pixel| numerators[usize::from(pixel)]);
-                numerator * inverse(x)
-            })
+            .map(|x| ratio.off_walk(x))
             .collect();
-        for &(x, value) in &self.walk {
-            fraction[x] = (self.offset + value) * inverse(x);
+        for &(x, _) in &self.walk {
+            fraction[x] = ratio.at(x);
         }
-        Ok(fraction)
+        fraction
+    }
+
+    /// hyperplonk's `compute_product_poly` of the fraction: entry x is the
+    /// product of entries 2x and 2x + 1 of (fraction | product), and the last
+    /// entry is zero. The first half reads the fraction, which is computed
+    /// for it and not stored. Each later stretch of entries reads the
+    /// stretch before it.
+    fn product(&self) -> Vec<F> {
+        let ratio = self.ratio();
+        let mut product = vec![F::zero(); 2 * self.half];
+        let mut length = self.half;
+        product[..length]
+            .par_iter_mut()
+            .enumerate()
+            .for_each(|(x, product)| *product = ratio.off_walk(2 * x) * ratio.off_walk(2 * x + 1));
+        for &(x, _) in &self.walk {
+            product[x / 2] = ratio.at(x & !1) * ratio.at(x | 1);
+        }
+        let mut start = 0;
+        while length > 1 {
+            let (read, write) = product[start..].split_at_mut(length);
+            write[..length / 2]
+                .par_iter_mut()
+                .zip(read.par_chunks_exact(2))
+                .with_min_len(MIN_PARALLEL_ROWS)
+                .for_each(|(product, pair)| *product = pair[0] * pair[1]);
+            start += length;
+            length /= 2;
+        }
+        product
     }
 }
 
-/// hyperplonk's `compute_product_poly`: entry x is the product of entries
-/// 2x and 2x + 1 of (fraction | product), and the last entry is zero. Each
-/// stretch of entries reads only the stretch before it.
-fn product(fraction: &[F]) -> Vec<F> {
-    let multiply = |(product, pair): (&mut F, &[F])| *product = pair[0] * pair[1];
-    let mut product = vec![F::zero(); fraction.len()];
-    let mut length = fraction.len() / 2;
-    product[..length]
-        .par_iter_mut()
-        .zip(fraction.par_chunks_exact(2))
-        .for_each(multiply);
-    let mut start = 0;
-    while length > 1 {
-        let (read, write) = product[start..].split_at_mut(length);
-        write[..length / 2]
-            .par_iter_mut()
-            .zip(read.par_chunks_exact(2))
-            .with_min_len(MIN_PARALLEL_ROWS)
-            .for_each(multiply);
-        start += length;
-        length /= 2;
+/// A polynomial a range check committed to, as an opening reads it. The
+/// counts are bytes the range check holds. The product and the fraction are
+/// built for the read and freed after it.
+pub(crate) struct Committed<'a> {
+    lookup: &'a Lookup<'a>,
+    polynomial: Polynomial,
+}
+
+enum Polynomial {
+    Counts,
+    Product,
+    Fraction,
+}
+
+impl Source for Committed<'_> {
+    fn read(&self, read: &mut dyn FnMut(Values<'_>)) {
+        match self.polynomial {
+            Polynomial::Counts => read(Values::Bytes(&self.lookup.counts)),
+            Polynomial::Product => read(Values::Field(&self.lookup.product())),
+            Polynomial::Fraction => read(Values::Field(&self.lookup.fraction())),
+        }
     }
-    product
 }
 
 /// The five tables of the zero check at one index. With p1 and p2 the even
@@ -565,9 +671,9 @@ impl<'a> ZeroCheck<'a> {
         let [square] = eq.sum(|b| {
             let (x, next) = (2 * b, 2 * b + 1);
             let pairs = self.pairs(x);
-            let g = by_count[byte(lookup.counts, next)] - by_count[byte(lookup.counts, x)]
-                + by_shifted[byte(lookup.shifted_counts, next)]
-                - by_shifted[byte(lookup.shifted_counts, x)];
+            let g = by_count[byte(&lookup.counts, next)] - by_count[byte(&lookup.counts, x)]
+                + by_shifted[byte(&lookup.shifted_counts, next)]
+                - by_shifted[byte(&lookup.shifted_counts, x)];
             [g * (self.fraction[next] - self.fraction[x])
                 - (pairs[2] - pairs[0]) * (pairs[3] - pairs[1])]
         });
@@ -774,12 +880,25 @@ mod tests {
         let mut transcript = new_transcript(&[7; 32]).unwrap();
         let range = prove(srs, num_vars, pixels, lazy_rounds, &mut transcript).unwrap();
 
-        assert_eq!(field_values(&range.counts), expected.counts.evaluations);
+        assert_eq!(
+            field_values(&range.lookup.counts),
+            expected.counts.evaluations
+        );
         assert_eq!(range.counts_commitment, expected.counts_commitment);
-        assert_eq!(range.fraction, expected.fraction.evaluations, "{case}");
         assert_eq!(range.fraction_commitment, expected.proof.frac_comm);
-        assert_eq!(range.product, expected.product.evaluations, "{case}");
         assert_eq!(range.product_commitment, expected.proof.prod_x_comm);
+        // The tables an opening will read are built again: the range check
+        // has dropped the ones it committed to.
+        assert_eq!(
+            range.lookup.fraction(),
+            expected.fraction.evaluations,
+            "{case}"
+        );
+        assert_eq!(
+            range.lookup.product(),
+            expected.product.evaluations,
+            "{case}"
+        );
         assert_eq!(
             range.sumcheck,
             Sumcheck::from(expected.proof.zero_check_proof),
@@ -865,7 +984,8 @@ mod tests {
         let copies = range_tables(NUM_VARS);
         assert!(copies.0 == table && copies.1 == shifted_table);
         let (offset, mix) = (F::rand(&mut rng), F::rand(&mut rng));
-        let lookup = Lookup::new(NUM_VARS, &[], &[], &[], offset, mix);
+        let (counts, shifted_counts) = sorted_counts(NUM_VARS, &[]);
+        let lookup = Lookup::new(NUM_VARS, &[], counts, shifted_counts, offset, mix).unwrap();
         let expected: Vec<(usize, F)> = table
             .iter()
             .zip(&shifted_table)
@@ -885,8 +1005,7 @@ mod tests {
         let (counts, shifted_counts) = sorted_counts(num_vars, &pixels);
         // g is zero where both counts are zero.
         let (offset, mix) = (F::zero(), F::rand(&mut rng));
-        let lookup = Lookup::new(num_vars, &pixels, &counts, &shifted_counts, offset, mix);
-        assert!(lookup.fraction().is_err());
+        assert!(Lookup::new(num_vars, &pixels, counts, shifted_counts, offset, mix).is_err());
 
         let (f, g, _) = sides(num_vars, &pixels, offset, mix);
         let mut transcript = new_transcript(&[7; 32]).unwrap();
@@ -897,6 +1016,51 @@ mod tests {
             &mut transcript
         )
         .is_err());
+    }
+
+    /// What an opening reads from a range check is what the range check
+    /// committed to, at every read: `committed` pairs each commitment with
+    /// its own polynomial, and lists them as the verifier takes them.
+    #[test]
+    fn every_read_gives_the_committed_polynomial() {
+        let mut rng = StdRng::seed_from_u64(24);
+        // A size where the table walk wraps around, one that stays on one
+        // thread, and one where the tables are built on several.
+        for num_vars in [4, 7, 12] {
+            let params = prover_key(num_vars);
+            let srs = Srs::Loaded(params.clone());
+            let basis = srs.basis(num_vars + 1);
+            for pixels in inputs(num_vars, &mut rng) {
+                let mut transcript = new_transcript(&[7; 32]).unwrap();
+                let range = prove_range(&srs, num_vars, &pixels, &mut transcript).unwrap();
+                let committed = range.committed();
+                // `crop::verify_prefix` reads the counts, the product and
+                // the fraction of a channel in this order.
+                assert_eq!(
+                    committed.each_ref().map(|(commitment, _)| *commitment),
+                    [
+                        range.counts_commitment,
+                        range.product_commitment,
+                        range.fraction_commitment
+                    ]
+                );
+                for (commitment, source) in &committed {
+                    let mut reads = 0;
+                    for _ in 0..2 {
+                        source.read(&mut |values| {
+                            assert_eq!(values.len(), 2 << num_vars);
+                            let read = match values {
+                                Values::Bytes(values) => msm::msm_bytes(&basis, values),
+                                Values::Field(values) => msm::msm(&basis, values),
+                            };
+                            assert_eq!(Commitment(read.into_affine()), *commitment);
+                            reads += 1;
+                        });
+                    }
+                    assert_eq!(reads, 2);
+                }
+            }
+        }
     }
 
     #[test]

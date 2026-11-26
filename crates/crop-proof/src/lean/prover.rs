@@ -55,30 +55,29 @@ pub(crate) fn prove_core(
     let crop = products::prove_products(NUM_VARS, &weights, pixels, &mut transcript)?;
     drop(weights);
 
-    for range in &ranges {
-        commitments.extend([
-            range.counts_commitment,
-            range.product_commitment,
-            range.fraction_commitment,
-        ]);
-    }
-
     let OpeningPoints { points, .. } = iop::opening_points(
         hash.each_ref().map(|sumcheck| sumcheck.point.as_slice()),
         std::array::from_fn(|i| ranges[i].sumcheck.point.as_slice()),
         crop.each_ref().map(|sumcheck| sumcheck.point.as_slice()),
     );
-    let polynomials: Vec<Values> = pixels
+    // The openings name a polynomial by the place of its commitment. So far
+    // the commitments are those of the image, channel by channel. Each range
+    // check adds its commitments together with their polynomials: the
+    // products and the fractions are built for each read of an opening, one
+    // table at a time.
+    let image = pixels.map(Values::Bytes);
+    let committed: Vec<_> = ranges
         .iter()
-        .map(|channel| Values::Bytes(channel))
-        .chain(ranges.iter().flat_map(|range| {
-            [
-                Values::Bytes(&range.counts),
-                Values::Field(&range.product),
-                Values::Field(&range.fraction),
-            ]
-        }))
+        .flat_map(range::RangeCheck::committed)
         .collect();
+    let mut polynomials: Vec<&dyn open::Source> = Vec::with_capacity(image.len() + committed.len());
+    for channel in &image {
+        polynomials.push(channel);
+    }
+    for (commitment, polynomial) in &committed {
+        commitments.push(*commitment);
+        polynomials.push(polynomial);
+    }
     mark("image opening");
     let image_openings = open::open(
         srs,
