@@ -21,6 +21,7 @@ hex.workspace = true
 # Only for the lattice solver of the security analysis.
 num-bigint = { version = "0.4", optional = true }
 rand = "0.8"
+rayon = "1"
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true

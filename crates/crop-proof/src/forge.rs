@@ -34,10 +34,11 @@ use subroutines::{
 use transcript::IOPTranscript;
 
 use crate::{
-    crop::{self, append, new_transcript, open},
+    crop::{self, append, new_transcript},
     hooks,
-    iop::{self, challenge, check, image_poly, poly, OpeningPoints, Poly, RangeCheck, IRREDUCIBLE},
+    iop::{self, challenge, check, image_poly, poly, OpeningPoints, Poly, IRREDUCIBLE},
     lattice,
+    reference::{self, open, RangeCheck},
     wire::{self, CropProof, Sumcheck},
     Fingerprint, Pcs, ProverParams, Rect, RgbImage, Size, Turn, F, NUM_VARS,
 };
@@ -283,13 +284,13 @@ fn prove_forged(
     }
 
     let (_, combined_rows) = iop::hash_weights(&mut transcript, size)?;
-    let hash = iop::prove_products(&image_poly(combined_rows), &channels, &mut transcript)?;
+    let hash = reference::prove_products(&image_poly(combined_rows), &channels, &mut transcript)?;
     let mut ranges = Vec::with_capacity(3);
     for channel in &channels {
         ranges.push(forged_range(channel, pcs, &mut transcript)?);
     }
     let crop_challenges = crop::crop_challenges(&mut transcript, rect, Turn::NONE)?;
-    let crop = iop::prove_products(
+    let crop = reference::prove_products(
         &image_poly(iop::crop_weights(size, rect, Turn::NONE, &crop_challenges)),
         &channels,
         &mut transcript,

@@ -20,11 +20,14 @@ pub mod hooks;
 mod iop;
 #[cfg(feature = "attack-hooks")]
 pub mod lattice;
+mod lean;
 mod params;
 #[cfg(feature = "probe")]
 pub mod probe;
 #[cfg(not(feature = "probe"))]
 mod probe;
+#[cfg(feature = "attack-hooks")]
+mod reference;
 mod wire;
 
 pub use crop::{prove, verify};

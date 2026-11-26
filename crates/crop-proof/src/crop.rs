@@ -11,9 +11,7 @@ use ark_ff::{BigInteger, One, PrimeField, Zero};
 use ark_poly::MultilinearExtension;
 use sha2::{Digest, Sha256};
 use subroutines::{
-    pcs::prelude::{
-        Commitment, MultilinearProverParam, MultilinearVerifierParam, PolynomialCommitmentScheme,
-    },
+    pcs::prelude::{Commitment, MultilinearVerifierParam, PolynomialCommitmentScheme},
     poly_iop::{prelude::ProductCheck, PolyIOP},
 };
 use transcript::IOPTranscript;
@@ -21,7 +19,7 @@ use transcript::IOPTranscript;
 use crate::{
     edit,
     iop::{self, challenge, check, image_poly, poly, Opening, OpeningPoints, Poly},
-    probe::mark,
+    lean,
     wire::{self, BatchOpening, CropProof, Sumcheck},
     Fingerprint, Pcs, ProverParams, Rect, RgbImage, Size, Turn, VerifierParams, F, NUM_VARS,
     PROTOCOL,
@@ -37,6 +35,44 @@ pub fn prove(
     turn: Turn,
     fingerprint: &Fingerprint,
 ) -> Result<Vec<u8>> {
+    let statement = checked_statement(original, published, rect, turn, fingerprint)?;
+    wire::encode(&lean::prover::prove_core(
+        &params.pcs,
+        original,
+        rect,
+        turn,
+        &statement,
+    )?)
+}
+
+/// `prove` with the reference prover, which must write the same bytes.
+#[cfg(feature = "attack-hooks")]
+pub(crate) fn prove_reference(
+    params: &ProverParams,
+    original: &RgbImage,
+    published: &RgbImage,
+    rect: Rect,
+    turn: Turn,
+    fingerprint: &Fingerprint,
+) -> Result<Vec<u8>> {
+    let statement = checked_statement(original, published, rect, turn, fingerprint)?;
+    wire::encode(&crate::reference::prove_core(
+        &params.pcs,
+        original,
+        rect,
+        turn,
+        &statement,
+    )?)
+}
+
+/// The statement of an honest proof; refuses inputs that do not match.
+fn checked_statement(
+    original: &RgbImage,
+    published: &RgbImage,
+    rect: Rect,
+    turn: Turn,
+    fingerprint: &Fingerprint,
+) -> Result<[u8; 32]> {
     ensure!(
         Fingerprint::of(original)? == *fingerprint,
         "the fingerprint does not match the original image"
@@ -45,14 +81,13 @@ pub fn prove(
         edit(original, rect, turn)? == *published,
         "the published image is not the {rect} of the original turned {turn}"
     );
-    let statement = statement(
+    Ok(statement(
         rect,
         turn,
         fingerprint.size,
         &fingerprint.elements()?,
         published,
-    );
-    wire::encode(&prove_core(&params.pcs, original, rect, turn, &statement)?)
+    ))
 }
 
 /// Checks a crop proof against the published pixels, the claimed rectangle
@@ -138,98 +173,6 @@ pub(crate) fn append(
     )
 }
 
-fn prove_core(
-    pcs: &MultilinearProverParam<Bls12_381>,
-    original: &RgbImage,
-    rect: Rect,
-    turn: Turn,
-    statement: &[u8; 32],
-) -> Result<CropProof> {
-    let size = original.size();
-    mark("commit image");
-    let channels: [Poly; 3] = original
-        .channels()
-        .each_ref()
-        .map(|pixels| image_poly(iop::field_values(pixels)));
-    let mut commitments = channels
-        .iter()
-        .map(|channel| check(Pcs::commit(pcs, channel), "committing to the image"))
-        .collect::<Result<Vec<_>>>()?;
-    let mut transcript = new_transcript(statement)?;
-    for commitment in &commitments {
-        append(&mut transcript, b"img(x)", commitment)?;
-    }
-
-    mark("hash weights");
-    let (_, combined_rows) = iop::hash_weights(&mut transcript, size)?;
-    mark("hash sumcheck");
-    let hash = iop::prove_products(&image_poly(combined_rows), &channels, &mut transcript)?;
-    let mut ranges = Vec::with_capacity(3);
-    const RANGE: [&str; 3] = ["range check 0", "range check 1", "range check 2"];
-    for (i, (channel, pixels)) in channels.iter().zip(original.channels()).enumerate() {
-        mark(RANGE[i]);
-        ranges.push(iop::prove_range(channel, pixels, pcs, &mut transcript)?);
-    }
-    mark("crop sumcheck");
-    let crop_challenges = crop_challenges(&mut transcript, rect, turn)?;
-    let crop = iop::prove_products(
-        &image_poly(iop::crop_weights(size, rect, turn, &crop_challenges)),
-        &channels,
-        &mut transcript,
-    )?;
-
-    for range in &ranges {
-        commitments.extend([
-            range.counts_commitment,
-            range.proof.prod_x_comm,
-            range.proof.frac_comm,
-        ]);
-    }
-
-    let OpeningPoints { points, .. } = iop::opening_points(
-        hash.each_ref().map(|sumcheck| sumcheck.point.as_slice()),
-        std::array::from_fn(|i| ranges[i].proof.zero_check_proof.point.as_slice()),
-        crop.each_ref().map(|sumcheck| sumcheck.point.as_slice()),
-    );
-    let polynomials: Vec<&Poly> = channels
-        .iter()
-        .chain(
-            ranges
-                .iter()
-                .flat_map(|range| [&range.counts, &range.product, &range.fraction]),
-        )
-        .collect();
-    mark("image opening");
-    let image_openings = open(
-        pcs,
-        &polynomials,
-        &points,
-        &iop::image_openings(),
-        &mut transcript,
-    )?;
-    mark("range opening");
-    let range_openings = open(
-        pcs,
-        &polynomials,
-        &points,
-        &iop::range_openings(),
-        &mut transcript,
-    )?;
-
-    mark("encode");
-    let mut range_sumchecks = ranges
-        .into_iter()
-        .map(|range| Sumcheck::from(range.proof.zero_check_proof));
-    Ok(CropProof {
-        commitments,
-        hash: hash.map(Sumcheck::from),
-        range: std::array::from_fn(|_| range_sumchecks.next().expect("three range checks")),
-        crop: crop.map(Sumcheck::from),
-        image_openings,
-        range_openings,
-    })
-}
-
 /// Replays the verifier up to the crop challenges. Read-only: it runs the same
 /// shared prefix the verifier runs, it does not relax any check.
 #[cfg(feature = "attack-hooks")]
@@ -247,7 +190,7 @@ pub(crate) fn replay_crop_challenges(
 /// Commits to one channel exactly as `prove_core` does, for the linkage test.
 #[cfg(feature = "attack-hooks")]
 pub(crate) fn commit_channel(
-    pcs: &MultilinearProverParam<Bls12_381>,
+    pcs: &subroutines::pcs::prelude::MultilinearProverParam<Bls12_381>,
     pixels: &[u8],
 ) -> Result<Commitment<Bls12_381>> {
     check(
@@ -256,35 +199,7 @@ pub(crate) fn commit_channel(
     )
 }
 
-pub(crate) fn open(
-    pcs: &MultilinearProverParam<Bls12_381>,
-    polynomials: &[&Poly],
-    points: &[Vec<F>],
-    openings: &[Opening],
-    transcript: &mut IOPTranscript<F>,
-) -> Result<BatchOpening> {
-    let mut selected = Vec::with_capacity(openings.len());
-    let mut at = Vec::with_capacity(openings.len());
-    let mut values = Vec::with_capacity(openings.len());
-    for opening in openings {
-        let polynomial = polynomials[opening.commitment];
-        let point = &points[opening.point];
-        let value = match opening.fixed {
-            Some(value) => value,
-            None => evaluate(polynomial, point)?,
-        };
-        selected.push(polynomial.clone());
-        at.push(point.clone());
-        values.push(value);
-    }
-    Ok(check(
-        Pcs::multi_open(pcs, &selected, &at, &values, transcript),
-        "opening commitments",
-    )?
-    .into())
-}
-
-fn evaluate(polynomial: &Poly, point: &[F]) -> Result<F> {
+pub(crate) fn evaluate(polynomial: &Poly, point: &[F]) -> Result<F> {
     polynomial
         .evaluate(point)
         .ok_or_else(|| anyhow!("evaluation point has {} coordinates", point.len()))

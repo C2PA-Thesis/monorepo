@@ -38,3 +38,16 @@ pub fn image_commitments(proof: &[u8]) -> Result<[Vec<u8>; 3]> {
 pub fn channel_commitment(params: &ProverParams, pixels: &[u8]) -> Result<Vec<u8>> {
     wire::canonical_bytes(&crop::commit_channel(&params.pcs, pixels)?)
 }
+
+/// The proof the reference prover writes for the same inputs as `prove`. The
+/// two must agree byte for byte. The reference prover needs about 6 GB.
+pub fn prove_reference(
+    params: &ProverParams,
+    original: &RgbImage,
+    published: &RgbImage,
+    rect: Rect,
+    turn: Turn,
+    fingerprint: &Fingerprint,
+) -> Result<Vec<u8>> {
+    crop::prove_reference(params, original, published, rect, turn, fingerprint)
+}
