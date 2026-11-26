@@ -28,6 +28,16 @@ final class NativeTests: XCTestCase {
         XCTAssertTrue(Native.zklocLinked, "ZKLoc.xcframework is not linked; run ios/scripts/build-go.sh")
     }
 
+    /// A whole crop proof needs the parameters, so BenchmarkTests makes one.
+    /// This shows that the library is linked and that its reasons arrive.
+    func testCropProverSaysWhyItDidNotLoad() {
+        XCTAssertTrue(Native.cropProofLinked, "CropProof.xcframework is not linked; run ios/scripts/build-rust.sh")
+        let empty = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        XCTAssertThrowsError(try CropProver(params: empty)) { error in
+            XCTAssertTrue(describe(error).contains("metadata.json"), describe(error))
+        }
+    }
+
     func testMaxPixelsMatchesTheHeader() {
         XCTAssertEqual(Native.headerMaxPixels, OriginalSize.maxPixels)
     }

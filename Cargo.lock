@@ -976,6 +976,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "crop-proof-ffi"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "crop-proof",
+ "tempfile",
+]
+
+[[package]]
 name = "crossbeam-deque"
 version = "0.8.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"

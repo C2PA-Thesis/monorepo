@@ -4,6 +4,7 @@ members = [
     "crates/app-attest",
     "crates/bench",
     "crates/crop-proof",
+    "crates/crop-proof-ffi",
     "crates/fingerprint",
     "crates/fingerprint-ffi",
     "crates/provenance",

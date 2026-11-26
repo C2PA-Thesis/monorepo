@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		C0A000000000000000000031 /* Fingerprint.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = C0A000000000000000000014 /* Fingerprint.xcframework */; };
 		C0A000000000000000000032 /* ZKLoc.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = C0A000000000000000000015 /* ZKLoc.xcframework */; };
+		C0A000000000000000000033 /* CropProof.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = C0A000000000000000000016 /* CropProof.xcframework */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -27,6 +28,7 @@
 		C0A000000000000000000013 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		C0A000000000000000000014 /* Fingerprint.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; path = Fingerprint.xcframework; sourceTree = "<group>"; };
 		C0A000000000000000000015 /* ZKLoc.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; path = ZKLoc.xcframework; sourceTree = "<group>"; };
+		C0A000000000000000000016 /* CropProof.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; path = CropProof.xcframework; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -49,6 +51,7 @@
 			files = (
 				C0A000000000000000000031 /* Fingerprint.xcframework in Frameworks */,
 				C0A000000000000000000032 /* ZKLoc.xcframework in Frameworks */,
+				C0A000000000000000000033 /* CropProof.xcframework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -95,6 +98,7 @@
 			children = (
 				C0A000000000000000000014 /* Fingerprint.xcframework */,
 				C0A000000000000000000015 /* ZKLoc.xcframework */,
+				C0A000000000000000000016 /* CropProof.xcframework */,
 			);
 			path = Frameworks;
 			sourceTree = "<group>";

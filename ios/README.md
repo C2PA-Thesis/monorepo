@@ -287,16 +287,22 @@ the payload. Anything else cancels the connection.
 
 ## Native libraries
 
-The fingerprint (Rust, `crates/fingerprint-ffi`) and the location circuit (Go,
+The fingerprint (Rust, `crates/fingerprint-ffi`), the crop proof (Rust,
+`crates/crop-proof-ffi`) and the location circuit (Go,
 `location-proof/mobile`) are static XCFrameworks that the app target links
 with "Do Not Embed" (they are in its Frameworks build phase, not in an embed
-phase). They are build outputs, about 17 MB (Fingerprint) and 26 MB (ZKLoc)
-per slice, so they are not committed. Build them before the first build in Xcode:
+phase). They are build outputs, about 17 MB (Fingerprint), 19 MB (CropProof)
+and 26 MB (ZKLoc) per slice, so they are not committed. Build them before the
+first build in Xcode:
 
 ```
 ios/scripts/build-go.sh     # ios/Frameworks/ZKLoc.xcframework, needs Go
-ios/scripts/build-rust.sh   # ios/Frameworks/Fingerprint.xcframework, needs rustup
+ios/scripts/build-rust.sh   # ios/Frameworks/Fingerprint.xcframework and CropProof.xcframework, needs rustup
 ```
+
+The capture does not make the crop proof: the laptop still makes it from the
+original. `CropProver` and `CropVerifier` in `NativeBridge.swift` exist for
+the benchmark below, which measures whether the phone could.
 
 Without them the build stops with "There is no XCFramework found at ...". CI
 runs both scripts before it builds (`.github/workflows/ios.yml`), so the
@@ -306,8 +312,8 @@ build setting that depends on a file existing, and a CI build without them
 would compile and test none of the native calls.
 
 Each XCFramework carries its own module map in a folder named after the
-module (`Headers/ZKLocFFI/module.modulemap`), so Swift imports `ZKLocFFI` and
-`FingerprintFFI` with no search path settings. `NativeBridge.swift` is the
+module (`Headers/ZKLocFFI/module.modulemap`), so Swift imports `ZKLocFFI`,
+`FingerprintFFI` and `CropProofFFI` with no search path settings. `NativeBridge.swift` is the
 only file that calls them; it still guards each import with `#if canImport`,
 so a copy of the project without the libraries compiles and signing stops
 with "the native library ... is not built into this app".
@@ -390,7 +396,54 @@ lists them.
   `FINGERPRINT_MAX_PIXELS`, and `zkloc_hints`, `zkloc_envelope` and
   `zkloc_cell` on the UTDT coordinate with salt 1 give the hints, envelope
   and resolution 7 cell pinned in `location-proof/main_test.go`. Hints of
-  another coordinate are refused.
+  another coordinate are refused. The crop prover, asked to load a folder
+  with no parameters, fails with the reason Rust gives.
+
+`BenchmarkTests` are skipped unless they are asked for. `scripts/bench.sh
+--group phone` runs them on a paired iPhone and reads their `BENCH` lines
+(see `crates/bench/README.md`). Each test must run alone, with its own
+`-only-testing:`, because the peak footprint it prints is the largest of the
+whole process:
+
+- `testMeasureACapture`: the fingerprint, the envelope and the location proof.
+- `testMeasureACropProof`: the crop proof of a 1024x512 original, checked on
+  the device. It also prints the footprint and `os_proc_available_memory()`
+  twice a second as `CROP-MEMORY` lines, and the SHA-256 of each proof as a
+  `CROP-PROOF` line.
+- `testMeasureTheMemoryLimit`: how much memory iOS gives the app. It takes
+  memory until about 200 MB of headroom is left and prints the limit last.
+  The process it measures is the app as `xcodebuild` starts it for a test,
+  with a development signature. Check the figure against a jetsam report or
+  an app started by hand before you rely on it.
+
+By hand, from `ios/`, with the parameters of `provenance setup` copied into
+`ProvenanceCaptureTests/Fixtures/bench/crop` (`metadata.json`, `prover.bin`
+and `verifier.bin`; the folder is not committed). Build the Rust libraries
+first, every time: the app links the `CropProof.xcframework` that is on disk,
+and one from before a change to `crates/crop-proof` gives the old prover's
+numbers.
+
+```
+scripts/build-rust.sh
+
+TEST_RUNNER_BENCH_SAMPLES=3 xcodebuild test -project ProvenanceCapture.xcodeproj \
+  -scheme ProvenanceCapture -allowProvisioningUpdates -parallel-testing-enabled NO \
+  -destination 'platform=iOS,name=<the iPhone>' DEVELOPMENT_TEAM=<team id> \
+  -only-testing:ProvenanceCaptureTests/BenchmarkTests/testMeasureACropProof
+
+TEST_RUNNER_BENCH_MEMORY_LIMIT=1 xcodebuild test -project ProvenanceCapture.xcodeproj \
+  -scheme ProvenanceCapture -allowProvisioningUpdates -parallel-testing-enabled NO \
+  -destination 'platform=iOS,name=<the iPhone>' DEVELOPMENT_TEAM=<team id> \
+  -only-testing:ProvenanceCaptureTests/BenchmarkTests/testMeasureTheMemoryLimit
+```
+
+The proof is the same bytes for the same image and parameters, and the test
+proves the image of `crates/crop-proof-ffi/c/check.sh`. That script makes the
+proof on the laptop and prints its SHA-256. The digest in the `CROP-PROOF`
+line must be the same; another digest means the phone ran another prover.
+
+On a Simulator the crop test shows that the library loads, proves and
+verifies, but its numbers are the Mac's, and the limit test is skipped.
 
 CI (`.github/workflows/ios.yml`) builds for the Simulator and for a device
 without signing, then runs the tests on the first iPhone Simulator of the

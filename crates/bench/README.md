@@ -52,7 +52,7 @@ The paper figures in the report, as each paper states them:
 | `resolution` | Does the H3 resolution change the cost of the location proof? |
 | `threads` | What happens with 1, 2, 4 and 8 threads? |
 | `baseline` | What do upstream HyperVerITAS and ZKLP cost on this machine? What does the fingerprint cost as WebAssembly? |
-| `phone` | What do the fingerprint, the envelope and the location proof cost on a real iPhone? |
+| `phone` | What do the fingerprint, the envelope, the location proof and the crop proof cost on a real iPhone? |
 
 Each sweep changes one input. The other inputs stay at the reference case, so
 a difference between two rows has one cause.
@@ -92,6 +92,22 @@ separates loading the crop parameters from proving.
   repository. Sources are pinned to one revision.
 - **The phone pauses between rounds.** Each round is one capture, not a hot
   phone. Each sample records the thermal state.
+- **The phone runs the capture and the crop proof in two processes.** Its peak
+  memory is the largest footprint of the process so far, so in one process
+  the crop proof would set the figure of the capture too. The crop proof is
+  the reference case, checked on the phone before its sample counts.
+- **The phone always gets the current prover.** Each run builds the Rust
+  libraries again before it builds the app, so a change to the prover cannot
+  be measured with the library from before it. The run prints the SHA-256 of
+  the proof the phone made. The proof is the same bytes for the same image and
+  parameters, and the phone proves the test image of
+  `crates/crop-proof-ffi/c/check.sh`. Run that script on the laptop: it must
+  print the same digest.
+- **The phone's output is kept.** Everything a test prints goes to
+  `target/bench/<run id>/phone-<test>.log`. The crop test prints its footprint
+  and its headroom (`os_proc_available_memory`) twice a second as
+  `CROP-MEMORY` lines. If iOS kills the proof for its memory, these lines show
+  how far it got.
 
 ## Results
 
@@ -116,6 +132,11 @@ Fixtures and upstream builds go in `target/bench`.
   `--resume` continues and loses at most one sample.
 - A missing nightly toolchain, Node, network or iPhone skips only the scenarios
   that need it. The report gives the reason.
+- A phone test that fails or passes its timeout keeps the rounds it finished.
+  The round it stopped in is recorded as a failed sample, with the path of the
+  test's output. The timeout grows with the number of samples: 20 minutes to
+  build and install, then 2 minutes for each capture round and 6 minutes for
+  each crop proof round.
 - `bench run` exits with an error if a sample failed or a required scenario has
   no samples. CI runs it in this way.
 
@@ -128,6 +149,18 @@ Fixtures and upstream builds go in `target/bench`.
   repository's location prover is a separate process that loads its keys.
 - The WebAssembly row runs in Node on this laptop, on one thread. It is not
   Safari on a phone.
-- The phone does not make crop proofs. No build of the crop proof for iOS exists.
+- The phone's crop proof loads the parameters and proves in each round, as a
+  laptop sample does. It computes the fingerprint once more than the laptop
+  does, inside the library, so its time is a little higher for the same proof.
+- The phone's peak memory is the largest footprint of the test process up to
+  the end of that round's proof. Round 0, the warmup, is the only round that
+  no check of a proof ran before. The test frees the prover before it checks
+  a proof, so a check stays far below a proof today. If the prover ever needs
+  less memory than a check, the later rounds report the check; compare them
+  with round 0 in `samples.jsonl` and with the `CROP-MEMORY` lines.
+- A phone run copies only the parameters of the tests it runs. Parameters
+  from an earlier run stay in `ios/ProvenanceCaptureTests/Fixtures/bench` and
+  in the test bundle (the crop prover's are 201 MB) until that folder is
+  deleted.
 - The phone signature is not measured, because it waits for Face ID.
 - Two runs compare only on the same machine in the same state.

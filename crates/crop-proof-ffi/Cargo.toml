@@ -1,0 +1,19 @@
+[package]
+name = "crop-proof-ffi"
+description = "C ABI over the crop proof for native callers, like the iOS capture app"
+version = "0.1.0"
+license = "MIT"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lib]
+# staticlib is what the iOS app links; rlib lets the tests call the same functions.
+crate-type = ["staticlib", "rlib"]
+
+[dependencies]
+anyhow.workspace = true
+crop-proof = { path = "../crop-proof" }
+
+[dev-dependencies]
+tempfile = "3"

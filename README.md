@@ -87,6 +87,7 @@ flowchart LR
 | `crates/fingerprint` | The lattice fingerprint, built natively for the prover and for WebAssembly for the capture page |
 | `crates/fingerprint-ffi` | A C ABI over `crates/fingerprint`, built as a static library for the iOS app |
 | `crates/crop-proof` | The PST crop proof, extracted from HyperVerITAS |
+| `crates/crop-proof-ffi` | A C ABI over `crates/crop-proof`, built as a static library for the iOS app. Only the app's benchmark calls it |
 | `location-proof` | Go CLI for the location proof, built against the zk-Location fork |
 | `location-proof/zkloc` | The CLI's logic as a Go package: setup, cell, outline, hints, commit, prove, verify |
 | `location-proof/mobile` | `zkloc` behind C functions that take and return JSON, built as a static library for the iOS app |

@@ -107,7 +107,7 @@ pub fn execute(lab: &Lab, task: &Task) -> Result<Measured> {
         Op::UpstreamCrop => baseline::crop(&lab.work, &mut measured)?,
         Op::UpstreamLocation => baseline::location(&lab.work, &mut measured)?,
         Op::WasmFingerprint => baseline::wasm_fingerprint(lab, case, &mut measured)?,
-        Op::PhoneFingerprint | Op::PhoneEnvelope | Op::PhoneLocationProve => {
+        Op::PhoneFingerprint | Op::PhoneEnvelope | Op::PhoneLocationProve | Op::PhoneCropProve => {
             anyhow::bail!("phone operations run on the phone")
         }
     }

@@ -7,6 +7,8 @@ on:
       # The app links static libraries built from these.
       - 'crates/fingerprint/**'
       - 'crates/fingerprint-ffi/**'
+      - 'crates/crop-proof/**'
+      - 'crates/crop-proof-ffi/**'
       - 'location-proof/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
@@ -59,11 +61,11 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      # The project links both XCFrameworks, so they must exist before any build.
+      # The project links every XCFramework, so they must exist before any build.
       - name: Build ZKLoc.xcframework from location-proof/mobile
         run: scripts/build-go.sh
 
-      - name: Build Fingerprint.xcframework from crates/fingerprint-ffi
+      - name: Build Fingerprint.xcframework and CropProof.xcframework from crates/*-ffi
         run: scripts/build-rust.sh
 
       - name: Check that the project opens
@@ -80,7 +82,7 @@ jobs:
           -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO
 
       # Simulator builds sign ad hoc, which needs no team, so the tests can run.
-      # NativeTests fail unless both libraries are linked.
+      # NativeTests fail unless every library is linked.
       - name: Run the unit tests on an iPhone Simulator
         run: |
           udid=$(xcrun simctl list devices available --json | jq -r \
