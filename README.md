@@ -85,9 +85,9 @@ flowchart LR
 | Path | Contents |
 | --- | --- |
 | `crates/fingerprint` | The lattice fingerprint, built natively for the prover and for WebAssembly for the capture page |
-| `crates/fingerprint-ffi` | A C ABI over `crates/fingerprint`, built as a static library for the iOS app |
+| `crates/fingerprint-ffi` | A C ABI over `crates/fingerprint`. Its functions reach the iOS app inside the static library of `crates/crop-proof-ffi` |
 | `crates/crop-proof` | The PST crop proof, extracted from HyperVerITAS |
-| `crates/crop-proof-ffi` | A C ABI over `crates/crop-proof`, built as a static library for the iOS app. Only the app's benchmark calls it |
+| `crates/crop-proof-ffi` | A C ABI over `crates/crop-proof`, built as the one Rust static library of the iOS app (it carries `fingerprint-ffi` too). Only the app's benchmark calls the crop proof |
 | `location-proof` | Go CLI for the location proof, built against the zk-Location fork |
 | `location-proof/zkloc` | The CLI's logic as a Go package: setup, cell, outline, hints, commit, prove, verify |
 | `location-proof/mobile` | `zkloc` behind C functions that take and return JSON, built as a static library for the iOS app |
@@ -167,7 +167,7 @@ With the browser: scan the small QR code with the phone's camera. The capture
 page opens over HTTPS through the tunnel and pairs the phone with the code in
 the QR code. The free ngrok plan shows a notice first; tap Visit Site. The
 page uploads the coordinate and the salt with the capture, and the laptop
-makes both proofs, in about 20 s. See [web/README.md](web/README.md).
+makes both proofs. See [web/README.md](web/README.md).
 
 The presenter page also has a Verify a file tab: drop any PNG, such as a
 forged copy from `out/attacks`, to run the reader checks on it. Ctrl-C stops
@@ -588,16 +588,21 @@ lists the `c2pa.orientation` action, next to `c2pa.cropped`.
   about the location or the photo. The server checks the metric once, at
   registration, and does not refresh it. An attestation that carries no
   validation category registers and is recorded without one.
-- **The crop proof, and so the original, stays on the laptop.** [3] reports a
-  prover peak memory of 6.4 GB for HyperVerITAS PST on a full-system crop of
-  a 2^19-pixel image (Table 3), the largest original this project takes. On
-  2026-10-30, `/usr/bin/time -l` on the laptop measured a peak memory
-  footprint of 5.9 GB for the crop proof, and 75 MB and 0.33 s for
-  `location-proof prove`. The app therefore proves the location on the phone
-  and uploads the original for the crop proof. The laptop sees the whole
-  original, but receives neither the coordinate nor the salt from the app: an
-  app capture directory holds `location_proof.json` and no `secrets.json`.
-  The capture page still sends both. A crop proof on the phone was not tried.
+- **The crop proof, and so the original, stays on the laptop, for now.** [3]
+  reports a prover peak memory of 6.4 GB for HyperVerITAS PST on a
+  full-system crop of a 2^19-pixel image (Table 3), the largest original this
+  project takes, and this project's prover had a peak memory footprint of
+  5.9 GB (`/usr/bin/time -l`, 2026-10-30). That is why the app proves the
+  location on the phone and uploads the original for the crop proof. The
+  prover was then rewritten to write the same proof bytes with a peak
+  footprint of 116 MB on the laptop
+  ([crates/crop-proof/HILLCLIMB.md](crates/crop-proof/HILLCLIMB.md) has every
+  step and its measurement). It is built for iOS, and the app's benchmark runs
+  it in the Simulator, but it was not measured on a phone, and the app does
+  not call it when it captures. So the laptop still sees the whole original.
+  It receives neither the coordinate nor the salt from the app: an app
+  capture directory holds `location_proof.json` and no `secrets.json`. The
+  capture page still sends both.
 - **One edit, at reduced resolution.** Only a rectangular crop of the
   original, optionally turned by a multiple of 90 degrees. Turns by other
   angles, blur and grayscale are not proved. The original is the camera frame scaled down to at most 2^19
@@ -612,18 +617,25 @@ lists the `c2pa.orientation` action, next to `c2pa.cropped`.
 `crates/bench/results`. [crates/bench/README.md](crates/bench/README.md) says
 what it measures and how.
 
-Medians of run `20261106T161115Z-01046cbe`, on 2026-11-06, at commit `01046cb`
-(PR #21), on an Apple M5 Max with 128 GB, macOS 26.6.2, at the reference case:
-a 1024x512 original and a 512x512 crop. Each sample ran in its own process with
-a warm file cache.
+Medians of run `20261126T034428Z-07775e64`, on 2026-11-26, on an Apple M5 Max
+with 128 GB, macOS 26.6.2, at the reference case: a 1024x512 original and a
+512x512 crop. Each sample ran in its own process with a warm file cache. The
+run was taken on the branch that rewrote the crop prover, before its last
+commits: its record lists the paths that were not committed yet. Run
+`20261106T161115Z-01046cbe` has the numbers of the prover before that.
 
 | Step | Time | Peak memory |
 | --- | ---: | ---: |
 | Capture: fingerprint, envelope, receipt | 0.39 s | 15 MB |
-| Location proof | 0.34 s | 93 MB |
-| Crop proof | 9.25 s | 5.92 GB |
-| Reader verification | 0.72 s | 329 MB |
-| Capture to verified file | 10.68 s | 5.92 GB |
+| Location proof | 0.34 s | 94 MB |
+| Crop proof | 4.16 s | 321 MB |
+| Reader verification | 0.68 s | 109 MB |
+| Capture to verified file | 5.58 s | 320 MB |
+
+Peak memory is the largest resident set of the process. For the crop proof
+it counts the prover's key, a 201 MB file that is mapped and not copied; the
+peak memory footprint of that process, which leaves such pages out, is
+116 MB. Before the rewrite the crop proof took 9.25 s and 5.92 GB.
 
 | Output | Size |
 | --- | ---: |
@@ -631,14 +643,17 @@ a warm file cache.
 | Crop proof | 36.7 KB |
 | Signed PNG | 207.1 KB |
 
-The crop proof takes 86% of capture to verified file. Its peak memory does not
+The crop proof takes 75% of capture to verified file. Its peak memory does not
 change with the size of the original, because smaller originals are padded to
-2^19 pixels. Upstream HyperVerITAS on the same machine and the same pixels took
-10.92 s to prove, 2.59 s to verify and 6.37 GB, and its proof is 49.1 KB.
+2^19 pixels; its time does, from 1.67 s at 2^15 pixels. On one core it takes
+30.95 s. Upstream HyperVerITAS on the same machine and the same pixels took
+10.37 s to prove, 2.53 s to verify and 6.37 GB, and its proof is 49.1 KB.
 
 On an iPhone 17 Pro with iOS 27.0, at the 836x627 original of a 4:3 photo, the
 fingerprint took 1.85 s and the location proof 1.33 s, with a peak footprint
-of 89 MB. The crop proof does not run on the phone.
+of 89 MB (run `20261106T161115Z-01046cbe`). The crop proof was not measured
+on a phone: the benchmark has the scenario, and no phone was reachable for
+this run.
 
 ## References
 

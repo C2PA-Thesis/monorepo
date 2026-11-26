@@ -1,0 +1,1520 @@
+{
+  "id": "20261126T034428Z-07775e64",
+  "label": "lean crop prover, working tree of the memory hill-climb (uncommitted on 07775e6)",
+  "started_at": "2026-11-26T03:44:28Z",
+  "timeout_seconds": 900,
+  "environment": {
+    "commit": "07775e6442ebc105d8fa94a5aded1a7e54f01946",
+    "branch": "perf/crop-prover-memory",
+    "uncommitted": [
+      "M  .github/workflows/ios.yml",
+      "M  .github/workflows/provenance.yml",
+      "M  .github/workflows/scripts.yml",
+      "M  Cargo.lock",
+      "M  Cargo.toml",
+      "M  README.md",
+      "M  commitlint.config.mjs",
+      "M  crates/bench/README.md",
+      "M  crates/bench/src/main.rs",
+      "M  crates/bench/src/phone.rs",
+      "M  crates/bench/src/probe.rs",
+      "M  crates/bench/src/run.rs",
+      "M  crates/bench/src/suite.rs",
+      "M  crates/bench/src/workload.rs",
+      "A  crates/crop-proof-ffi/Cargo.toml",
+      "A  crates/crop-proof-ffi/c/check.c",
+      "A  crates/crop-proof-ffi/c/check.sh",
+      "A  crates/crop-proof-ffi/src/lib.rs",
+      "A  crates/crop-proof-ffi/tests/c_abi.rs",
+      "M  crates/crop-proof/Cargo.toml",
+      "M  crates/crop-proof/HILLCLIMB.md",
+      "A  crates/crop-proof/src/alloc.rs",
+      "M  crates/crop-proof/src/crop.rs",
+      "M  crates/crop-proof/src/forge.rs",
+      "M  crates/crop-proof/src/hooks.rs",
+      "M  crates/crop-proof/src/iop.rs",
+      "D  crates/crop-proof/src/lean/dense.rs",
+      "M  crates/crop-proof/src/lean/eq.rs",
+      "M  crates/crop-proof/src/lean/mod.rs",
+      "A  crates/crop-proof/src/lean/msm.rs",
+      "A  crates/crop-proof/src/lean/open.rs",
+      "A  crates/crop-proof/src/lean/products.rs",
+      "M  crates/crop-proof/src/lean/prover.rs",
+      "A  crates/crop-proof/src/lean/range.rs",
+      "A  crates/crop-proof/src/lean/srs.rs",
+      "M  crates/crop-proof/src/lean/sumcheck.rs",
+      "M  crates/crop-proof/src/lib.rs",
+      "M  crates/crop-proof/src/params.rs",
+      "M  crates/crop-proof/tests/same_proof.rs",
+      "M  crates/fingerprint/src/lib.rs",
+      "M  crates/provenance/src/main.rs",
+      "M  deploy/env.yml",
+      "M  deploy/release.sh",
+      "A  ios/Frameworks/include/crop_proof.h",
+      "M  ios/ProvenanceCapture.xcodeproj/project.pbxproj",
+      "M  ios/ProvenanceCapture/Native/NativeBridge.swift",
+      "M  ios/ProvenanceCaptureTests/BenchmarkTests.swift",
+      "M  ios/ProvenanceCaptureTests/NativeTests.swift",
+      "M  ios/README.md",
+      "M  ios/scripts/build-rust.sh",
+      "M  scripts/hillclimb-measure.sh"
+    ],
+    "os": "macOS 26.6.2",
+    "chip": "Apple M5 Max",
+    "memory_bytes": 137438953472,
+    "logical_cores": 18,
+    "performance_cores": "6",
+    "power_source": "AC Power",
+    "power_mode": "0",
+    "phone": "iPhone 13 mini, iOS 26.6.1",
+    "rustc": "rustc 1.91.1 (ed61e7d7e 2025-11-07)",
+    "go": "go version go1.26.5 darwin/arm64",
+    "node": "v22.23.1",
+    "artifacts": {
+      "crop prover parameters": 201326968,
+      "crop verifier parameters": 4144,
+      "location circuit": 3524863,
+      "location proving key": 5190059,
+      "location verifying key": 684
+    }
+  },
+  "scenarios": [
+    {
+      "id": "pipeline-1024x512-crop512x512-turn0-res7",
+      "op": "pipeline",
+      "case": {
+        "image": {
+          "width": 1024,
+          "height": 512
+        },
+        "crop": {
+          "x": 0,
+          "y": 0,
+          "width": 512,
+          "height": 512
+        },
+        "turn": 0,
+        "resolution": 7
+      },
+      "threads": null,
+      "samples": 10,
+      "groups": [
+        "pipeline"
+      ]
+    },
+    {
+      "id": "fingerprint-1024x512-crop512x512-turn0-res7",
+      "op": "fingerprint",
+      "case": {
+        "image": {
+          "width": 1024,
+          "height": 512
+        },
+        "crop": {
+          "x": 0,
+          "y": 0,
+          "width": 512,
+          "height": 512
+        },
+        "turn": 0,
+        "resolution": 7
+      },
+      "threads": null,
+      "samples": 30,
+      "groups": [
+        "pipeline",
+        "image-size"
+      ]
+    },
+    {
+      "id": "capture-1024x512-crop512x512-turn0-res7",
+      "op": "capture",
+      "case": {
+        "image": {
+          "width": 1024,
+          "height": 512
+        },
+        "crop": {
+          "x": 0,
+          "y": 0,
+          "width": 512,
+          "height": 512
+        },
+        "turn": 0,
+        "resolution": 7
+      },
+      "threads": null,
+      "samples": 30,
+      "groups": [
+        "pipeline"
+      ]
+    },
+    {
+      "id": "location-prove-1024x512-crop512x512-turn0-res7",
+      "op": "location-prove",
+      "case": {
+        "image": {
+          "width": 1024,
+          "height": 512
+        },
+        "crop": {
+          "x": 0,
+          "y": 0,
+          "width": 512,
+          "height": 512
+        },
+        "turn": 0,
+        "resolution": 7
+      },
+      "threads": null,
+      "samples": 30,
+      "groups": [
+        "pipeline",
+        "resolution",
+        "threads"
+      ]
+    },
+    {
+      "id": "location-verify-1024x512-crop512x512-turn0-res7",
+      "op": "location-verify",
+      "case": {
+        "image": {
+          "width": 1024,
+          "height": 512
+        },
+        "crop": {
+          "x": 0,
+          "y": 0,
+          "width": 512,
+          "height": 512
+        },
+        "turn": 0,
+        "resolution": 7
+      },
+      "threads": null,
+      "samples": 30,
+      "groups": [
+        "pipeline",
+        "resolution"
+      ]
+    },
+    {
+      "id": "crop-prove-1024x512-crop512x512-turn0-res7",
+      "op": "crop-prove",
+      "case": {
+        "image": {
+          "width": 1024,
+          "height": 512
+        },
+        "crop": {
+          "x": 0,
+          "y": 0,
+          "width": 512,
+          "height": 512
+        },
+        "turn": 0,
+        "resolution": 7
+      },
+      "threads": null,
+      "samples": 10,
+      "groups": [
+        "pipeline",
+        "image-size",
+        "crop-size",
+        "turn",
+        "threads"
+      ]
+    },
+    {
+      "id": "crop-verify-1024x512-crop512x512-turn0-res7",
+      "op": "crop-verify",
+      "case": {
+        "image": {
+          "width": 1024,
+          "height": 512
+        },
+        "crop": {
+          "x": 0,
+          "y": 0,
+          "width": 512,
+          "height": 512
+        },
+        "turn": 0,
+        "resolution": 7
+      },
+      "threads": null,
+      "samples": 10,
+      "groups": [
+        "pipeline",
+        "image-size",
+        "crop-size",
+        "turn"
+      ]
+    },
+    {
+      "id": "sign-1024x512-crop512x512-turn0-res7",
+      "op": "sign",
+      "case": {
+        "image": {
+          "width": 1024,
+          "height": 512
+        },
+        "crop": {
+          "x": 0,
+          "y": 0,
+          "width": 512,
+          "height": 512
+        },
+        "turn": 0,
+        "resolution": 7
+      },
+      "threads": null,
+      "samples": 30,
+      "groups": [
+        "pipeline"
+      ]
+    },
+    {
+      "id": "read-1024x512-crop512x512-turn0-res7",
+      "op": "read",
+      "case": {
+        "image": {
+          "width": 1024,
+          "height": 512
+        },
+        "crop": {
+          "x": 0,
+          "y": 0,
+          "width": 512,
+          "height": 512
+        },
+        "turn": 0,
+        "resolution": 7
+      },
+      "threads": null,
+      "samples": 10,
+      "groups": [
+        "pipeline"
+      ]
+    },
+    {
+      "id": "attacks-1024x512-crop512x512-turn0-res7",
+      "op": "attacks",
+      "case": {
+        "image": {
+          "width": 1024,
+          "height": 512
+        },
+        "crop": {
+          "x": 0,
+          "y": 0,
+          "width": 512,
+          "height": 512
+        },
+        "turn": 0,
+        "resolution": 7
+      },
+      "threads": null,
+      "samples": 10,
+      "groups": [
+        "pipeline"
+      ]
+    },
+    {
+      "id": "fingerprint-256x128-crop128x128-turn0-res7",
+      "op": "fingerprint",
+      "case": {
+        "image": {
+          "width": 256,
+          "height": 128
+        },
+        "crop": {
+          "x": 0,
+          "y": 0,
+          "width": 128,
+          "height": 128
+        },
+        "turn": 0,
+        "resolution": 7
+      },
+      "threads": null,
+      "samples": 5,
+      "groups": [
+        "image-size"
+      ]
+    },
+    {
+      "id": "crop-prove-256x128-crop128x128-turn0-res7",
+      "op": "crop-prove",
+      "case": {
+        "image": {
+          "width": 256,
+          "height": 128
+        },
+        "crop": {
+          "x": 0,
+          "y": 0,
+          "width": 128,
+          "height": 128
+        },
+        "turn": 0,
+        "resolution": 7
+      },
+      "threads": null,
+      "samples": 5,
+      "groups": [
+        "image-size"
+      ]
+    },
+    {
+      "id": "crop-verify-256x128-crop128x128-turn0-res7",
+      "op": "crop-verify",
+      "case": {
+        "image": {
+          "width": 256,
+          "height": 128
+        },
+        "crop": {
+          "x": 0,
+          "y": 0,
+          "width": 128,
+          "height": 128
+        },
+        "turn": 0,
+        "resolution": 7
+      },
+      "threads": null,
+      "samples": 5,
+      "groups": [
+        "image-size"
+      ]
+    },
+    {
+      "id": "fingerprint-256x256-crop128x256-turn0-res7",
+      "op": "fingerprint",
+      "case": {
+        "image": {
+          "width": 256,
+          "height": 256
+        },
+        "crop": {
+          "x": 0,
+          "y": 0,
+          "width": 128,
+          "height": 256
+        },
+        "turn": 0,
+        "resolution": 7
+      },
+      "threads": null,
+      "samples": 5,
+      "groups": [
+        "image-size"
+      ]
+    },
+    {
+      "id": "crop-prove-256x256-crop128x256-turn0-res7",
+      "op": "crop-prove",
+      "case": {
+        "image": {
+          "width": 256,
+          "height": 256
+        },
+        "crop": {
+          "x": 0,
+          "y": 0,
+          "width": 128,
+          "height": 256
+        },
+        "turn": 0,
+        "resolution": 7
+      },
+      "threads": null,
+      "samples": 5,
+      "groups": [
+        "image-size"
+      ]
+    },
+    {
+      "id": "crop-verify-256x256-crop128x256-turn0-res7",
+      "op": "crop-verify",
+      "case": {
+        "image": {
+          "width": 256,
+          "height": 256
+        },
+        "crop": {
+          "x": 0,
+          "y": 0,
+          "width": 128,
+          "height": 256
+        },
+        "turn": 0,
+        "resolution": 7
+      },
+      "threads": null,
+      "samples": 5,
+      "groups": [
+        "image-size"
+      ]
+    },
+    {
+      "id": "fingerprint-512x256-crop256x256-turn0-res7",
+      "op": "fingerprint",
+      "case": {
+        "image": {
+          "width": 512,
+          "height": 256
+        },
+        "crop": {
+          "x": 0,
+          "y": 0,
+          "width": 256,
+          "height": 256
+        },
+        "turn": 0,
+        "resolution": 7
+      },
+      "threads": null,
+      "samples": 5,
+      "groups": [
+        "image-size"
+      ]
+    },
+    {
+      "id": "crop-prove-512x256-crop256x256-turn0-res7",
+      "op": "crop-prove",
+      "case": {
+        "image": {
+          "width": 512,
+          "height": 256
+        },
+        "crop": {
+          "x": 0,
+          "y": 0,
+          "width": 256,
+          "height": 256
+        },
+        "turn": 0,
+        "resolution": 7
+      },
+      "threads": null,
+      "samples": 5,
+      "groups": [
+        "image-size"
+      ]
+    },
+    {
+      "id": "crop-verify-512x256-crop256x256-turn0-res7",
+      "op": "crop-verify",
+      "case": {
+        "image": {
+          "width": 512,
+          "height": 256
+        },
+        "crop": {
+          "x": 0,
+          "y": 0,
+          "width": 256,
+          "height": 256
+        },
+        "turn": 0,
+        "resolution": 7
+      },
+      "threads": null,
+      "samples": 5,
+      "groups": [
+        "image-size"
+      ]
+    },
+    {
+      "id": "fingerprint-512x512-crop256x512-turn0-res7",
+      "op": "fingerprint",
+      "case": {
+        "image": {
+          "width": 512,
+          "height": 512
+        },
+        "crop": {
+          "x": 0,
+          "y": 0,
+          "width": 256,
+          "height": 512
+        },
+        "turn": 0,
+        "resolution": 7
+      },
+      "threads": null,
+      "samples": 5,
+      "groups": [
+        "image-size"
+      ]
+    },
+    {
+      "id": "crop-prove-512x512-crop256x512-turn0-res7",
+      "op": "crop-prove",
+      "case": {
+        "image": {
+          "width": 512,
+          "height": 512
+        },
+        "crop": {
+          "x": 0,
+          "y": 0,
+          "width": 256,
+          "height": 512
+        },
+        "turn": 0,
+        "resolution": 7
+      },
+      "threads": null,
+      "samples": 5,
+      "groups": [
+        "image-size"
+      ]
+    },
+    {
+      "id": "crop-verify-512x512-crop256x512-turn0-res7",
+      "op": "crop-verify",
+      "case": {
+        "image": {
+          "width": 512,
+          "height": 512
+        },
+        "crop": {
+          "x": 0,
+          "y": 0,
+          "width": 256,
+          "height": 512
+        },
+        "turn": 0,
+        "resolution": 7
+      },
+      "threads": null,
+      "samples": 5,
+      "groups": [
+        "image-size"
+      ]
+    },
+    {
+      "id": "fingerprint-836x627-crop418x627-turn0-res7",
+      "op": "fingerprint",
+      "case": {
+        "image": {
+          "width": 836,
+          "height": 627
+        },
+        "crop": {
+          "x": 0,
+          "y": 0,
+          "width": 418,
+          "height": 627
+        },
+        "turn": 0,
+        "resolution": 7
+      },
+      "threads": null,
+      "samples": 5,
+      "groups": [
+        "image-size"
+      ]
+    },
+    {
+      "id": "crop-prove-836x627-crop418x627-turn0-res7",
+      "op": "crop-prove",
+      "case": {
+        "image": {
+          "width": 836,
+          "height": 627
+        },
+        "crop": {
+          "x": 0,
+          "y": 0,
+          "width": 418,
+          "height": 627
+        },
+        "turn": 0,
+        "resolution": 7
+      },
+      "threads": null,
+      "samples": 5,
+      "groups": [
+        "image-size"
+      ]
+    },
+    {
+      "id": "crop-verify-836x627-crop418x627-turn0-res7",
+      "op": "crop-verify",
+      "case": {
+        "image": {
+          "width": 836,
+          "height": 627
+        },
+        "crop": {
+          "x": 0,
+          "y": 0,
+          "width": 418,
+          "height": 627
+        },
+        "turn": 0,
+        "resolution": 7
+      },
+      "threads": null,
+      "samples": 5,
+      "groups": [
+        "image-size"
+      ]
+    },
+    {
+      "id": "crop-prove-1024x512-crop64x64-turn0-res7",
+      "op": "crop-prove",
+      "case": {
+        "image": {
+          "width": 1024,
+          "height": 512
+        },
+        "crop": {
+          "x": 0,
+          "y": 0,
+          "width": 64,
+          "height": 64
+        },
+        "turn": 0,
+        "resolution": 7
+      },
+      "threads": null,
+      "samples": 5,
+      "groups": [
+        "crop-size"
+      ]
+    },
+    {
+      "id": "crop-verify-1024x512-crop64x64-turn0-res7",
+      "op": "crop-verify",
+      "case": {
+        "image": {
+          "width": 1024,
+          "height": 512
+        },
+        "crop": {
+          "x": 0,
+          "y": 0,
+          "width": 64,
+          "height": 64
+        },
+        "turn": 0,
+        "resolution": 7
+      },
+      "threads": null,
+      "samples": 5,
+      "groups": [
+        "crop-size"
+      ]
+    },
+    {
+      "id": "crop-prove-1024x512-crop256x256-turn0-res7",
+      "op": "crop-prove",
+      "case": {
+        "image": {
+          "width": 1024,
+          "height": 512
+        },
+        "crop": {
+          "x": 0,
+          "y": 0,
+          "width": 256,
+          "height": 256
+        },
+        "turn": 0,
+        "resolution": 7
+      },
+      "threads": null,
+      "samples": 5,
+      "groups": [
+        "crop-size"
+      ]
+    },
+    {
+      "id": "crop-verify-1024x512-crop256x256-turn0-res7",
+      "op": "crop-verify",
+      "case": {
+        "image": {
+          "width": 1024,
+          "height": 512
+        },
+        "crop": {
+          "x": 0,
+          "y": 0,
+          "width": 256,
+          "height": 256
+        },
+        "turn": 0,
+        "resolution": 7
+      },
+      "threads": null,
+      "samples": 5,
+      "groups": [
+        "crop-size"
+      ]
+    },
+    {
+      "id": "crop-prove-1024x512-crop1024x512-turn0-res7",
+      "op": "crop-prove",
+      "case": {
+        "image": {
+          "width": 1024,
+          "height": 512
+        },
+        "crop": {
+          "x": 0,
+          "y": 0,
+          "width": 1024,
+          "height": 512
+        },
+        "turn": 0,
+        "resolution": 7
+      },
+      "threads": null,
+      "samples": 5,
+      "groups": [
+        "crop-size"
+      ]
+    },
+    {
+      "id": "crop-verify-1024x512-crop1024x512-turn0-res7",
+      "op": "crop-verify",
+      "case": {
+        "image": {
+          "width": 1024,
+          "height": 512
+        },
+        "crop": {
+          "x": 0,
+          "y": 0,
+          "width": 1024,
+          "height": 512
+        },
+        "turn": 0,
+        "resolution": 7
+      },
+      "threads": null,
+      "samples": 5,
+      "groups": [
+        "crop-size"
+      ]
+    },
+    {
+      "id": "crop-prove-1024x512-crop512x512-turn1-res7",
+      "op": "crop-prove",
+      "case": {
+        "image": {
+          "width": 1024,
+          "height": 512
+        },
+        "crop": {
+          "x": 0,
+          "y": 0,
+          "width": 512,
+          "height": 512
+        },
+        "turn": 1,
+        "resolution": 7
+      },
+      "threads": null,
+      "samples": 5,
+      "groups": [
+        "turn"
+      ]
+    },
+    {
+      "id": "crop-verify-1024x512-crop512x512-turn1-res7",
+      "op": "crop-verify",
+      "case": {
+        "image": {
+          "width": 1024,
+          "height": 512
+        },
+        "crop": {
+          "x": 0,
+          "y": 0,
+          "width": 512,
+          "height": 512
+        },
+        "turn": 1,
+        "resolution": 7
+      },
+      "threads": null,
+      "samples": 5,
+      "groups": [
+        "turn"
+      ]
+    },
+    {
+      "id": "crop-prove-1024x512-crop512x512-turn2-res7",
+      "op": "crop-prove",
+      "case": {
+        "image": {
+          "width": 1024,
+          "height": 512
+        },
+        "crop": {
+          "x": 0,
+          "y": 0,
+          "width": 512,
+          "height": 512
+        },
+        "turn": 2,
+        "resolution": 7
+      },
+      "threads": null,
+      "samples": 5,
+      "groups": [
+        "turn"
+      ]
+    },
+    {
+      "id": "crop-verify-1024x512-crop512x512-turn2-res7",
+      "op": "crop-verify",
+      "case": {
+        "image": {
+          "width": 1024,
+          "height": 512
+        },
+        "crop": {
+          "x": 0,
+          "y": 0,
+          "width": 512,
+          "height": 512
+        },
+        "turn": 2,
+        "resolution": 7
+      },
+      "threads": null,
+      "samples": 5,
+      "groups": [
+        "turn"
+      ]
+    },
+    {
+      "id": "crop-prove-1024x512-crop512x512-turn3-res7",
+      "op": "crop-prove",
+      "case": {
+        "image": {
+          "width": 1024,
+          "height": 512
+        },
+        "crop": {
+          "x": 0,
+          "y": 0,
+          "width": 512,
+          "height": 512
+        },
+        "turn": 3,
+        "resolution": 7
+      },
+      "threads": null,
+      "samples": 5,
+      "groups": [
+        "turn"
+      ]
+    },
+    {
+      "id": "crop-verify-1024x512-crop512x512-turn3-res7",
+      "op": "crop-verify",
+      "case": {
+        "image": {
+          "width": 1024,
+          "height": 512
+        },
+        "crop": {
+          "x": 0,
+          "y": 0,
+          "width": 512,
+          "height": 512
+        },
+        "turn": 3,
+        "resolution": 7
+      },
+      "threads": null,
+      "samples": 5,
+      "groups": [
+        "turn"
+      ]
+    },
+    {
+      "id": "location-prove-1024x512-crop512x512-turn0-res4",
+      "op": "location-prove",
+      "case": {
+        "image": {
+          "width": 1024,
+          "height": 512
+        },
+        "crop": {
+          "x": 0,
+          "y": 0,
+          "width": 512,
+          "height": 512
+        },
+        "turn": 0,
+        "resolution": 4
+      },
+      "threads": null,
+      "samples": 30,
+      "groups": [
+        "resolution"
+      ]
+    },
+    {
+      "id": "location-verify-1024x512-crop512x512-turn0-res4",
+      "op": "location-verify",
+      "case": {
+        "image": {
+          "width": 1024,
+          "height": 512
+        },
+        "crop": {
+          "x": 0,
+          "y": 0,
+          "width": 512,
+          "height": 512
+        },
+        "turn": 0,
+        "resolution": 4
+      },
+      "threads": null,
+      "samples": 30,
+      "groups": [
+        "resolution"
+      ]
+    },
+    {
+      "id": "location-prove-1024x512-crop512x512-turn0-res5",
+      "op": "location-prove",
+      "case": {
+        "image": {
+          "width": 1024,
+          "height": 512
+        },
+        "crop": {
+          "x": 0,
+          "y": 0,
+          "width": 512,
+          "height": 512
+        },
+        "turn": 0,
+        "resolution": 5
+      },
+      "threads": null,
+      "samples": 30,
+      "groups": [
+        "resolution"
+      ]
+    },
+    {
+      "id": "location-verify-1024x512-crop512x512-turn0-res5",
+      "op": "location-verify",
+      "case": {
+        "image": {
+          "width": 1024,
+          "height": 512
+        },
+        "crop": {
+          "x": 0,
+          "y": 0,
+          "width": 512,
+          "height": 512
+        },
+        "turn": 0,
+        "resolution": 5
+      },
+      "threads": null,
+      "samples": 30,
+      "groups": [
+        "resolution"
+      ]
+    },
+    {
+      "id": "location-prove-1024x512-crop512x512-turn0-res6",
+      "op": "location-prove",
+      "case": {
+        "image": {
+          "width": 1024,
+          "height": 512
+        },
+        "crop": {
+          "x": 0,
+          "y": 0,
+          "width": 512,
+          "height": 512
+        },
+        "turn": 0,
+        "resolution": 6
+      },
+      "threads": null,
+      "samples": 30,
+      "groups": [
+        "resolution"
+      ]
+    },
+    {
+      "id": "location-verify-1024x512-crop512x512-turn0-res6",
+      "op": "location-verify",
+      "case": {
+        "image": {
+          "width": 1024,
+          "height": 512
+        },
+        "crop": {
+          "x": 0,
+          "y": 0,
+          "width": 512,
+          "height": 512
+        },
+        "turn": 0,
+        "resolution": 6
+      },
+      "threads": null,
+      "samples": 30,
+      "groups": [
+        "resolution"
+      ]
+    },
+    {
+      "id": "location-prove-1024x512-crop512x512-turn0-res8",
+      "op": "location-prove",
+      "case": {
+        "image": {
+          "width": 1024,
+          "height": 512
+        },
+        "crop": {
+          "x": 0,
+          "y": 0,
+          "width": 512,
+          "height": 512
+        },
+        "turn": 0,
+        "resolution": 8
+      },
+      "threads": null,
+      "samples": 30,
+      "groups": [
+        "resolution"
+      ]
+    },
+    {
+      "id": "location-verify-1024x512-crop512x512-turn0-res8",
+      "op": "location-verify",
+      "case": {
+        "image": {
+          "width": 1024,
+          "height": 512
+        },
+        "crop": {
+          "x": 0,
+          "y": 0,
+          "width": 512,
+          "height": 512
+        },
+        "turn": 0,
+        "resolution": 8
+      },
+      "threads": null,
+      "samples": 30,
+      "groups": [
+        "resolution"
+      ]
+    },
+    {
+      "id": "location-prove-1024x512-crop512x512-turn0-res9",
+      "op": "location-prove",
+      "case": {
+        "image": {
+          "width": 1024,
+          "height": 512
+        },
+        "crop": {
+          "x": 0,
+          "y": 0,
+          "width": 512,
+          "height": 512
+        },
+        "turn": 0,
+        "resolution": 9
+      },
+      "threads": null,
+      "samples": 30,
+      "groups": [
+        "resolution"
+      ]
+    },
+    {
+      "id": "location-verify-1024x512-crop512x512-turn0-res9",
+      "op": "location-verify",
+      "case": {
+        "image": {
+          "width": 1024,
+          "height": 512
+        },
+        "crop": {
+          "x": 0,
+          "y": 0,
+          "width": 512,
+          "height": 512
+        },
+        "turn": 0,
+        "resolution": 9
+      },
+      "threads": null,
+      "samples": 30,
+      "groups": [
+        "resolution"
+      ]
+    },
+    {
+      "id": "crop-prove-1024x512-crop512x512-turn0-res7-threads1",
+      "op": "crop-prove",
+      "case": {
+        "image": {
+          "width": 1024,
+          "height": 512
+        },
+        "crop": {
+          "x": 0,
+          "y": 0,
+          "width": 512,
+          "height": 512
+        },
+        "turn": 0,
+        "resolution": 7
+      },
+      "threads": 1,
+      "samples": 5,
+      "groups": [
+        "threads"
+      ]
+    },
+    {
+      "id": "location-prove-1024x512-crop512x512-turn0-res7-threads1",
+      "op": "location-prove",
+      "case": {
+        "image": {
+          "width": 1024,
+          "height": 512
+        },
+        "crop": {
+          "x": 0,
+          "y": 0,
+          "width": 512,
+          "height": 512
+        },
+        "turn": 0,
+        "resolution": 7
+      },
+      "threads": 1,
+      "samples": 5,
+      "groups": [
+        "threads"
+      ]
+    },
+    {
+      "id": "crop-prove-1024x512-crop512x512-turn0-res7-threads2",
+      "op": "crop-prove",
+      "case": {
+        "image": {
+          "width": 1024,
+          "height": 512
+        },
+        "crop": {
+          "x": 0,
+          "y": 0,
+          "width": 512,
+          "height": 512
+        },
+        "turn": 0,
+        "resolution": 7
+      },
+      "threads": 2,
+      "samples": 5,
+      "groups": [
+        "threads"
+      ]
+    },
+    {
+      "id": "location-prove-1024x512-crop512x512-turn0-res7-threads2",
+      "op": "location-prove",
+      "case": {
+        "image": {
+          "width": 1024,
+          "height": 512
+        },
+        "crop": {
+          "x": 0,
+          "y": 0,
+          "width": 512,
+          "height": 512
+        },
+        "turn": 0,
+        "resolution": 7
+      },
+      "threads": 2,
+      "samples": 5,
+      "groups": [
+        "threads"
+      ]
+    },
+    {
+      "id": "crop-prove-1024x512-crop512x512-turn0-res7-threads4",
+      "op": "crop-prove",
+      "case": {
+        "image": {
+          "width": 1024,
+          "height": 512
+        },
+        "crop": {
+          "x": 0,
+          "y": 0,
+          "width": 512,
+          "height": 512
+        },
+        "turn": 0,
+        "resolution": 7
+      },
+      "threads": 4,
+      "samples": 5,
+      "groups": [
+        "threads"
+      ]
+    },
+    {
+      "id": "location-prove-1024x512-crop512x512-turn0-res7-threads4",
+      "op": "location-prove",
+      "case": {
+        "image": {
+          "width": 1024,
+          "height": 512
+        },
+        "crop": {
+          "x": 0,
+          "y": 0,
+          "width": 512,
+          "height": 512
+        },
+        "turn": 0,
+        "resolution": 7
+      },
+      "threads": 4,
+      "samples": 5,
+      "groups": [
+        "threads"
+      ]
+    },
+    {
+      "id": "crop-prove-1024x512-crop512x512-turn0-res7-threads8",
+      "op": "crop-prove",
+      "case": {
+        "image": {
+          "width": 1024,
+          "height": 512
+        },
+        "crop": {
+          "x": 0,
+          "y": 0,
+          "width": 512,
+          "height": 512
+        },
+        "turn": 0,
+        "resolution": 7
+      },
+      "threads": 8,
+      "samples": 5,
+      "groups": [
+        "threads"
+      ]
+    },
+    {
+      "id": "location-prove-1024x512-crop512x512-turn0-res7-threads8",
+      "op": "location-prove",
+      "case": {
+        "image": {
+          "width": 1024,
+          "height": 512
+        },
+        "crop": {
+          "x": 0,
+          "y": 0,
+          "width": 512,
+          "height": 512
+        },
+        "turn": 0,
+        "resolution": 7
+      },
+      "threads": 8,
+      "samples": 5,
+      "groups": [
+        "threads"
+      ]
+    },
+    {
+      "id": "upstream-crop-1024x512-crop512x512-turn0-res7",
+      "op": "upstream-crop",
+      "case": {
+        "image": {
+          "width": 1024,
+          "height": 512
+        },
+        "crop": {
+          "x": 0,
+          "y": 0,
+          "width": 512,
+          "height": 512
+        },
+        "turn": 0,
+        "resolution": 7
+      },
+      "threads": null,
+      "samples": 10,
+      "groups": [
+        "baseline"
+      ]
+    },
+    {
+      "id": "upstream-location-1024x512-crop512x512-turn0-res7",
+      "op": "upstream-location",
+      "case": {
+        "image": {
+          "width": 1024,
+          "height": 512
+        },
+        "crop": {
+          "x": 0,
+          "y": 0,
+          "width": 512,
+          "height": 512
+        },
+        "turn": 0,
+        "resolution": 7
+      },
+      "threads": null,
+      "samples": 10,
+      "groups": [
+        "baseline"
+      ]
+    },
+    {
+      "id": "wasm-fingerprint-1024x512-crop512x512-turn0-res7",
+      "op": "wasm-fingerprint",
+      "case": {
+        "image": {
+          "width": 1024,
+          "height": 512
+        },
+        "crop": {
+          "x": 0,
+          "y": 0,
+          "width": 512,
+          "height": 512
+        },
+        "turn": 0,
+        "resolution": 7
+      },
+      "threads": null,
+      "samples": 30,
+      "groups": [
+        "baseline"
+      ]
+    },
+    {
+      "id": "phone-fingerprint-836x627-crop418x627-turn0-res7",
+      "op": "phone-fingerprint",
+      "case": {
+        "image": {
+          "width": 836,
+          "height": 627
+        },
+        "crop": {
+          "x": 0,
+          "y": 0,
+          "width": 418,
+          "height": 627
+        },
+        "turn": 0,
+        "resolution": 7
+      },
+      "threads": null,
+      "samples": 10,
+      "groups": [
+        "phone"
+      ]
+    },
+    {
+      "id": "phone-envelope-836x627-crop418x627-turn0-res7",
+      "op": "phone-envelope",
+      "case": {
+        "image": {
+          "width": 836,
+          "height": 627
+        },
+        "crop": {
+          "x": 0,
+          "y": 0,
+          "width": 418,
+          "height": 627
+        },
+        "turn": 0,
+        "resolution": 7
+      },
+      "threads": null,
+      "samples": 10,
+      "groups": [
+        "phone"
+      ]
+    },
+    {
+      "id": "phone-location-prove-836x627-crop418x627-turn0-res7",
+      "op": "phone-location-prove",
+      "case": {
+        "image": {
+          "width": 836,
+          "height": 627
+        },
+        "crop": {
+          "x": 0,
+          "y": 0,
+          "width": 418,
+          "height": 627
+        },
+        "turn": 0,
+        "resolution": 7
+      },
+      "threads": null,
+      "samples": 10,
+      "groups": [
+        "phone"
+      ]
+    },
+    {
+      "id": "phone-crop-prove-1024x512-crop512x512-turn0-res7",
+      "op": "phone-crop-prove",
+      "case": {
+        "image": {
+          "width": 1024,
+          "height": 512
+        },
+        "crop": {
+          "x": 0,
+          "y": 0,
+          "width": 512,
+          "height": 512
+        },
+        "turn": 0,
+        "resolution": 7
+      },
+      "threads": null,
+      "samples": 10,
+      "groups": [
+        "phone"
+      ]
+    }
+  ]
+}

@@ -65,7 +65,7 @@ For each scenario the report gives:
 | Middle half | The 25th to the 75th percentile of that time |
 | Process | The whole process, with start-up and reading the inputs |
 | CPU | User and system time, added over all cores |
-| Peak memory | The largest resident set of the process and its children. On the phone, the peak footprint of the test process so far |
+| Peak memory | The largest resident set of the process and its children. On the phone, the peak footprint of the test process so far. For the crop prover the two differ: its key is a read-only mapping of a 201 MB file, which the resident set counts and the footprint does not |
 | Output | The proof or file size |
 
 The report also splits the main operations into phases. For example, it
@@ -82,7 +82,8 @@ separates loading the crop parameters from proving.
 - **Round 0 is a warmup.** It fills the file cache and is not in the statistics.
   So the numbers are for a warm cache.
 - **The machine rests after each sample**, as long as the sample took, up to
-  20 seconds. Without rests, heat slowed crop proofs from 10 s to 14 s in a run.
+  20 seconds. Without rests, heat slowed crop proofs from 10 s to 14 s in a run
+  of the earlier prover.
 - **Rounds are interleaved.** Every scenario takes one sample, then every
   scenario takes the next. A slow change, such as heat, reaches all scenarios
   alike.
@@ -97,8 +98,11 @@ separates loading the crop parameters from proving.
   the crop proof would set the figure of the capture too. The crop proof is
   the reference case, checked on the phone before its sample counts.
 - **The phone always gets the current prover.** Each run builds the Rust
-  libraries again before it builds the app, so a change to the prover cannot
-  be measured with the library from before it. The run prints the SHA-256 of
+  library again before it builds the app, so a change to the prover cannot
+  be measured with the library from before it. The app links one Rust
+  static library, which sets the prover's allocator
+  (`crates/crop-proof/src/alloc.rs`), and the crop test stops before it
+  measures if that allocator is not the one in use. The run prints the SHA-256 of
   the proof the phone made. The proof is the same bytes for the same image and
   parameters, and the phone proves the test image of
   `crates/crop-proof-ffi/c/check.sh`. Run that script on the laptop: it must
@@ -108,6 +112,31 @@ separates loading the crop parameters from proving.
   and its headroom (`os_proc_available_memory`) twice a second as
   `CROP-MEMORY` lines. If iOS kills the proof for its memory, these lines show
   how far it got.
+
+## The memory probe
+
+`bench probe` is not a scenario of the suite. It proves the reference crop
+once in its own process, prints the SHA-256 of the proof and the peak memory
+footprint of the process, read from the kernel right after the proof, and
+with `--verify` checks the proof it made. The footprint is the number iOS
+compares with an app's limit. It is absent from the output on other systems
+than macOS.
+
+```bash
+scripts/bench.sh --quick          # once, for the fixtures
+scripts/hillclimb-measure.sh 3    # three probe runs, one line each
+```
+
+Built with `--features mem-profile`, the probe also counts live heap bytes
+and reports their peak and the footprint for each phase of the prover:
+
+```bash
+cargo build --release -p bench --features mem-profile --target-dir target/prof
+target/prof/release/bench probe --work target/bench/<run id> --trace heap.csv
+```
+
+[crates/crop-proof/HILLCLIMB.md](../crop-proof/HILLCLIMB.md) records what the
+probe measured while the prover's memory was cut.
 
 ## Results
 
@@ -155,9 +184,13 @@ Fixtures and upstream builds go in `target/bench`.
 - The phone's peak memory is the largest footprint of the test process up to
   the end of that round's proof. Round 0, the warmup, is the only round that
   no check of a proof ran before. The test frees the prover before it checks
-  a proof, so a check stays far below a proof today. If the prover ever needs
-  less memory than a check, the later rounds report the check; compare them
-  with round 0 in `samples.jsonl` and with the `CROP-MEMORY` lines.
+  a proof. A check is expected to stay below a proof, but its footprint was
+  not measured. If the prover needs less memory than a check, the later
+  rounds report the check; compare them with round 0 in `samples.jsonl` and
+  with the `CROP-MEMORY` lines.
+- The phone's crop proof ran in the iOS Simulator only. Every statement here
+  about what it does on a device (its time, its footprint, a kill by iOS)
+  describes the code, not a run.
 - A phone run copies only the parameters of the tests it runs. Parameters
   from an earlier run stay in `ios/ProvenanceCaptureTests/Fixtures/bench` and
   in the test bundle (the crop prover's are 201 MB) until that folder is
