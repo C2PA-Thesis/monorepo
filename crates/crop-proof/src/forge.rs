@@ -187,7 +187,7 @@ pub fn forge_crop_proof(
     // honest one for that image.
     let statement = crop::statement(rect, Turn::NONE, size, &hashes, target);
     wire::encode(&prove_forged(
-        &params.pcs,
+        params.pcs(),
         size,
         rect,
         &statement,

@@ -36,7 +36,7 @@ pub fn image_commitments(proof: &[u8]) -> Result<[Vec<u8>; 3]> {
 /// prover does, so a candidate image can be matched against the proof's
 /// commitments byte for byte.
 pub fn channel_commitment(params: &ProverParams, pixels: &[u8]) -> Result<Vec<u8>> {
-    wire::canonical_bytes(&crop::commit_channel(&params.pcs, pixels)?)
+    wire::canonical_bytes(&crop::commit_channel(params.pcs(), pixels)?)
 }
 
 /// The proof the reference prover writes for the same inputs as `prove`. The

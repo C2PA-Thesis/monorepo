@@ -7,18 +7,16 @@ use ark_std::rand::RngCore;
 use rand::SeedableRng;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use subroutines::pcs::prelude::{
-    MultilinearProverParam, MultilinearVerifierParam, PolynomialCommitmentScheme,
-};
+use subroutines::pcs::prelude::{MultilinearVerifierParam, PolynomialCommitmentScheme};
 
-use crate::{iop::check, Pcs, NUM_VARS, PROTOCOL};
+use crate::{iop::check, lean::srs::Srs, Pcs, NUM_VARS, PROTOCOL};
 
 const METADATA: &str = "metadata.json";
 const PROVER: &str = "prover.bin";
 const VERIFIER: &str = "verifier.bin";
 
 pub struct ProverParams {
-    pub(crate) pcs: MultilinearProverParam<Bls12_381>,
+    pub(crate) srs: Srs,
 }
 
 pub struct VerifierParams {
@@ -94,8 +92,16 @@ pub fn setup_with_rng(dir: &Path, rng: &mut impl RngCore) -> Result<()> {
 impl ProverParams {
     pub fn load(dir: &Path) -> Result<Self> {
         Ok(Self {
-            pcs: load_member(dir, PROVER)?,
+            srs: Srs::Loaded(load_member(dir, PROVER)?),
         })
+    }
+
+    /// The key as hyperplonk's own prover takes it.
+    #[cfg(feature = "attack-hooks")]
+    pub(crate) fn pcs(&self) -> &subroutines::pcs::prelude::MultilinearProverParam<Bls12_381> {
+        match &self.srs {
+            Srs::Loaded(pcs) => pcs,
+        }
     }
 }
 

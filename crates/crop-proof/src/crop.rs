@@ -37,7 +37,7 @@ pub fn prove(
 ) -> Result<Vec<u8>> {
     let statement = checked_statement(original, published, rect, turn, fingerprint)?;
     wire::encode(&lean::prover::prove_core(
-        &params.pcs,
+        &params.srs,
         original,
         rect,
         turn,
@@ -57,7 +57,7 @@ pub(crate) fn prove_reference(
 ) -> Result<Vec<u8>> {
     let statement = checked_statement(original, published, rect, turn, fingerprint)?;
     wire::encode(&crate::reference::prove_core(
-        &params.pcs,
+        params.pcs(),
         original,
         rect,
         turn,

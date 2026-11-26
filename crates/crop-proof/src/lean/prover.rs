@@ -1,37 +1,30 @@
 //! The crop prover. Same steps and transcript as the reference prover in
 //! `crop.rs`, which the tests keep to compare proofs byte for byte.
 
-use std::{collections::BTreeMap, sync::Arc};
-
 use anyhow::{anyhow, Result};
-use arithmetic::eq_eval;
 use ark_bls12_381::Bls12_381;
 use ark_ff::{batch_inversion, One, Zero};
-use ark_poly::DenseMultilinearExtension;
 use rayon::prelude::*;
 use subroutines::pcs::prelude::{Commitment, MultilinearProverParam, PolynomialCommitmentScheme};
 use transcript::IOPTranscript;
 
-use super::{
-    dense::Dense,
-    eq::{self, SplitEq},
-    products, sumcheck,
-};
+use super::{dense::Dense, eq, open, products, srs::Srs, sumcheck, Values};
 use crate::{
     crop::{append, crop_challenges, new_transcript},
-    iop::{self, challenge, check, image_poly, Opening, OpeningPoints, Poly},
+    iop::{self, challenge, check, image_poly, OpeningPoints, Poly},
     probe::mark,
-    wire::{BatchOpening, CropProof, Sumcheck},
+    wire::{CropProof, Sumcheck},
     Pcs, Rect, RgbImage, Turn, F, NUM_VARS,
 };
 
 pub(crate) fn prove_core(
-    pcs: &MultilinearProverParam<Bls12_381>,
+    srs: &Srs,
     original: &RgbImage,
     rect: Rect,
     turn: Turn,
     statement: &[u8; 32],
 ) -> Result<CropProof> {
+    let Srs::Loaded(pcs) = srs;
     let size = original.size();
     mark("commit image");
     let channels: [Poly; 3] = original
@@ -84,25 +77,27 @@ pub(crate) fn prove_core(
         std::array::from_fn(|i| ranges[i].sumcheck.point.as_slice()),
         crop.each_ref().map(|sumcheck| sumcheck.point.as_slice()),
     );
-    let polynomials: Vec<&Poly> = channels
+    let polynomials: Vec<Values> = pixels
         .iter()
-        .chain(
-            ranges
-                .iter()
-                .flat_map(|range| [&range.counts, &range.product, &range.fraction]),
-        )
+        .map(|channel| Values::Bytes(channel))
+        .chain(ranges.iter().flat_map(|range| {
+            [&range.counts, &range.product, &range.fraction]
+                .map(|polynomial| Values::Field(&polynomial.evaluations))
+        }))
         .collect();
     mark("image opening");
-    let image_openings = open(
-        pcs,
+    let image_openings = open::open(
+        srs,
+        NUM_VARS,
         &polynomials,
         &points,
         &iop::image_openings(),
         &mut transcript,
     )?;
     mark("range opening");
-    let range_openings = open(
-        pcs,
+    let range_openings = open::open(
+        srs,
+        NUM_VARS + 1,
         &polynomials,
         &points,
         &iop::range_openings(),
@@ -246,89 +241,5 @@ fn prove_range(
         product_commitment,
         fraction,
         fraction_commitment,
-    })
-}
-
-/// hyperplonk's `multi_open`: one sumcheck reduces every opening to a single
-/// opening of a combination of the polynomials.
-fn open(
-    pcs: &MultilinearProverParam<Bls12_381>,
-    polynomials: &[&Poly],
-    points: &[Vec<F>],
-    openings: &[Opening],
-    transcript: &mut IOPTranscript<F>,
-) -> Result<BatchOpening> {
-    let evaluations: Vec<F> = openings
-        .iter()
-        .map(|opening| {
-            opening.fixed.unwrap_or_else(|| {
-                let values = &polynomials[opening.commitment].evaluations;
-                SplitEq::new(&points[opening.point]).sum(|x| values[x])
-            })
-        })
-        .collect();
-    for opening in openings {
-        check(
-            transcript.append_serializable_element(b"eval_point", &points[opening.point]),
-            "appending to the transcript",
-        )?;
-    }
-    for evaluation in &evaluations {
-        check(
-            transcript.append_serializable_element(b"eval", evaluation),
-            "appending to the transcript",
-        )?;
-    }
-    let num_vars = polynomials[openings[0].commitment].num_vars;
-    let t = check(
-        transcript.get_and_append_challenge_vectors(b"t", ark_std::log2(openings.len()) as usize),
-        "deriving the batching point",
-    )?;
-    let coefficients = eq::table(&t);
-
-    // Openings at the same point share one term of the sumcheck.
-    let mut slots = BTreeMap::new();
-    let mut distinct = Vec::new();
-    for opening in openings {
-        let point = &points[opening.point];
-        let next = slots.len();
-        slots.entry(point).or_insert_with(|| {
-            distinct.push(point);
-            next
-        });
-    }
-    let mut tables = vec![vec![F::zero(); 1 << num_vars]; distinct.len()];
-    for (opening, coefficient) in openings.iter().zip(&coefficients) {
-        let slot = slots[&points[opening.point]];
-        tables[slot]
-            .par_iter_mut()
-            .zip(&polynomials[opening.commitment].evaluations)
-            .for_each(|(sum, value)| *sum += *coefficient * value);
-    }
-    tables.extend(distinct.iter().map(|point| eq::table(point)));
-    let terms = distinct.len();
-    let products = (0..terms)
-        .map(|term| (F::one(), vec![term, terms + term]))
-        .collect();
-    let sumcheck = sumcheck::prove(&mut Dense::new(num_vars, tables, products), transcript)?;
-
-    // g'(X) = sum of eq(a, point_i) * coefficient_i * f_i(X), opened at a.
-    let a = &sumcheck.point;
-    let mut combined = vec![F::zero(); 1 << num_vars];
-    for (opening, coefficient) in openings.iter().zip(&coefficients) {
-        let weight = check(eq_eval(a, &points[opening.point]), "evaluating eq")? * coefficient;
-        combined
-            .par_iter_mut()
-            .zip(&polynomials[opening.commitment].evaluations)
-            .for_each(|(sum, value)| *sum += weight * value);
-    }
-    let combined = Arc::new(DenseMultilinearExtension::from_evaluations_vec(
-        num_vars, combined,
-    ));
-    let (kzg, _) = check(Pcs::open(pcs, &combined, a), "opening commitments")?;
-    Ok(BatchOpening {
-        sumcheck,
-        evaluations,
-        kzg,
     })
 }
